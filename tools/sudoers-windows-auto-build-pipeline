@@ -1,0 +1,74 @@
+# Scoped NOPASSWD sudoers rules for markw's windows-auto-build-pipeline project.
+#
+# Grants passwordless root for exactly the disk-prep tooling this project's
+# offline Windows image-apply pipeline needs: attaching a qcow2 via qemu-nbd,
+# partitioning/formatting the resulting nbd block device, and mounting the
+# two filesystem types this project uses (vfat for the ESP, ntfs-3g for the
+# Windows volume). Nothing else - no shell, no su, no package management,
+# no systemctl, no arbitrary command execution.
+#
+# SCOPE NOTE, read before installing: sudoers command matching is a glob-
+# string match against the literal command line, not a true per-argument
+# ACL. The rules below restrict *which binaries* can run passwordless (the
+# real security value here) and, where each tool's CLI convention puts the
+# device path in a fixed position, restrict it to /dev/nbd* devices only
+# (never a real host disk). For qemu-nbd's own file argument and mount's
+# option string, full flexibility remains after the pinned prefix - e.g.
+# qemu-nbd could in principle attach a file outside this project's own
+# directories. This is an appropriate tradeoff for a single-user lab/dev
+# host, not a hardened multi-tenant security boundary. Wimapply, bcd-sys.sh,
+# and the hivex tools are deliberately NOT in this file - they run as the
+# normal user against nbd-mounted partitions created with uid=/gid= mount
+# options, so they never need root at all.
+#
+# Update: BCD-SYS (tools/vendor/BCD-SYS/Linux/bcd-sys.sh) internally shells
+# out to `sudo sfdisk -l <disk>` (read-only partition-table query) to
+# confirm the ESP's disk uses a GPT/DOS scheme, when invoked in our exact
+# shape - a plain mounted-directory source plus `-s <esp-mountpoint>` for
+# UEFI firmware. Traced the script directly rather than guessing: in this
+# invocation shape it does NOT reach its efibootmgr/NVRAM-entry code (that
+# path is explicitly skipped whenever --syspath is used, confirmed by
+# reading the source) and does not reach its own mount/unmount helpers
+# either (those are gated on flags that are only set when BCD-SYS mounted
+# the ESP itself, not when handed an already-mounted path via -s, which is
+# our case). So `sfdisk -l` is the only addition needed for this tool.
+#
+# Update 2: BCD-SYS's Linux/update_device.sh (used to compute the BCD's
+# device-locator element pointing at the Windows partition) separately
+# calls `sudo sfdisk -o Device,UUID -l <disk>` - a different flag shape
+# than plain `sfdisk -l <disk>` above, so it did NOT match the existing
+# rule and was silently failing every run. This is a read-only listing
+# mode regardless of which columns are requested (sfdisk only mutates a
+# partition table when given a script on stdin, never in `-l`/list mode),
+# so widening the pinned suffix to match any `-o <columns> -l <disk>`
+# invocation carries the same read-only safety property as the original
+# rule, not a materially bigger grant.
+
+markw ALL=(root) NOPASSWD: /usr/sbin/sfdisk -o * -l /dev/nbd[0-9]*
+#
+# Install (do not just `cp` this into place - validate first):
+#   visudo -cf /home/markw/Documents/Projects/windows-auto-build-pipeline/tools/sudoers-windows-auto-build-pipeline
+#   sudo install -m 0440 -o root -g root \
+#     /home/markw/Documents/Projects/windows-auto-build-pipeline/tools/sudoers-windows-auto-build-pipeline \
+#     /etc/sudoers.d/windows-auto-build-pipeline
+#   sudo visudo -c
+
+markw ALL=(root) NOPASSWD: /usr/sbin/modprobe nbd max_part=8
+markw ALL=(root) NOPASSWD: /usr/sbin/modprobe -r nbd
+
+markw ALL=(root) NOPASSWD: /usr/bin/qemu-nbd -c /dev/nbd[0-9]* *
+markw ALL=(root) NOPASSWD: /usr/bin/qemu-nbd -d /dev/nbd[0-9]*
+
+markw ALL=(root) NOPASSWD: /usr/sbin/sgdisk * /dev/nbd[0-9]*
+markw ALL=(root) NOPASSWD: /usr/sbin/partprobe /dev/nbd[0-9]*
+
+markw ALL=(root) NOPASSWD: /usr/sbin/mkfs.vfat * /dev/nbd[0-9]*
+markw ALL=(root) NOPASSWD: /usr/sbin/mkntfs * /dev/nbd[0-9]*
+markw ALL=(root) NOPASSWD: /usr/sbin/mkfs.ntfs * /dev/nbd[0-9]*
+
+markw ALL=(root) NOPASSWD: /usr/bin/mount -t vfat -o * /dev/nbd[0-9]* /tmp/win-build-mnt/*
+markw ALL=(root) NOPASSWD: /usr/bin/mount -t ntfs-3g -o * /dev/nbd[0-9]* /tmp/win-build-mnt/*
+markw ALL=(root) NOPASSWD: /usr/bin/umount /tmp/win-build-mnt/*
+markw ALL=(root) NOPASSWD: /usr/bin/umount /dev/nbd[0-9]*
+
+markw ALL=(root) NOPASSWD: /usr/sbin/sfdisk -l /dev/nbd[0-9]*
