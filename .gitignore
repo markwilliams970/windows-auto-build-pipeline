@@ -3,10 +3,10 @@
 # Infrastructure, Still" principle - nothing here is meant to be long-lived.
 image-apply/output/
 
-# ISO cache - large binary media. Same convention as the sibling project
-# (../windows-server-vm-automation/iso_cache/): only .meta/.sha256 sidecars are
-# small enough to consider tracking, and even those aren't tracked yet here.
-iso_cache/
+# ISO cache lives at ../iso_cache/ - one level above this repo, shared with
+# ../windows-server-vm-automation/, not inside this repo's tree at all. No
+# ignore rule needed here for it (nothing under this repo's iso_cache/ exists
+# anymore); see CLAUDE.md's "Relationship to ../windows-server-vm-automation/".
 
 # External tool dependencies - fetched via the clone step documented in
 # PREREQUISITES.md, not vendored into this repo. BCD-SYS in particular carries

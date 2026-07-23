@@ -1,13 +1,19 @@
 # Phase 2 Engineering Log: First BCD-SYS Experiment (Windows Server 2025)
 
-Status as of this writing (session paused mid-investigation, resuming later — see **"STATUS AND
-NEXT STEPS ON RESUMPTION"** at the bottom of this document for the current state and the
-recommended next move): **Phase 2 sub-milestone 1 (make the disk bootable) is confirmed working**
+Status as of this writing: **Phase 2 sub-milestone 1 (make the disk bootable) is confirmed working**
 for Windows Server 2025 via BCD-SYS, with zero WinPE boot cycles and zero exposure to the
 sibling project's "press any key" UEFI landmine. The disk fails at `INACCESSIBLE_BOOT_DEVICE
-(0x7B)` on real boot because the boot-critical VirtIO storage driver isn't registered yet — Stage 2
-(driver injection) turned into a much deeper investigation than expected, is not yet resolved, and
-a promising architectural pivot was identified but not yet attempted. See
+(0x7B)` on real boot because the boot-critical VirtIO storage driver isn't registered yet.
+Session 2's DISM-in-WinPE and offline-registry attempts at fixing that both failed; **Session 3
+picked up the Finding 15 pivot (reuse Setup.exe's own driver-injection mechanism instead of
+hand-rolling it) and confirmed its core premise: `boot.wim` index 2, booted as a plain disk,
+launches Setup.exe automatically and reaches its real GUI, no landmine of any kind (Finding 18)**.
+Session 3 then attached a real target disk and confirmed the viostor driver, hardware ID, and
+disk-attachment architecture all work perfectly (Finding 20 — `wmic diskdrive` shows the 40GB
+target disk healthy once the driver loads) — but found that autounattend.xml's `DriverPaths`
+doesn't automatically feed the specific gate that needs it (Finding 19), with a concrete,
+not-yet-attempted fix lined up (Finding 21: `drvload` from our own `startnet.cmd` before Setup
+even launches, reusing Finding 12's already-proven technique). See
 `PHASE2_BOOTSTRAP_ARCHITECTURE.md` for the design reasoning that predicted the BCD-SYS approach and
 `CLAUDE.md` for current phase status.
 
@@ -693,3 +699,269 @@ continuing to debug either.
 - `ntoseye` (`github.com/dmaivel/ntoseye`) is the tool for Linux-native Windows kernel debugging
   over serial KD — actively maintained, real `analyze`/`drivers` commands, exactly suited to this
   project's needs if the debugging thread is resumed.
+
+---
+
+## Session 3: Setup.exe pivot (Finding 15) — assumption 1 confirmed. Setup.exe boots and reaches
+## its real GUI from a plain-disk `boot.wim` index 2 medium, no landmine. Two operational gotchas
+## hit and resolved along the way.
+
+Picked up Finding 15's pivot directly: rebuild the WinPE-style boot medium against `boot.wim`
+**index 2** ("Microsoft Windows Setup") instead of index 1, using the exact same proven recipe
+(`wimapply` → BCD-SYS → patch the three WinPE-mode BCD booleans), then boot it and see whether
+Setup.exe launches cleanly.
+
+### Finding 16: this sandbox's Bash tool does not let backgrounded/daemonized child processes
+survive between separate tool calls — `qemu-nbd -c` (which forks and detaches) can silently die
+between one call and the next
+
+**Symptom:** `qemu-nbd -c /dev/nbd0 <file>` succeeded, and partitioning/formatting/`wimapply`/
+BCD-SYS all worked correctly across several subsequent (separate) tool invocations against that
+same nbd device — then a later `hivexregedit --merge` against the BCD file on the mounted ESP
+failed mid-commit with `Input/output error`, leaving the BCD file **truncated to 0 bytes**.
+`dmesg` showed real block-layer I/O errors against `/dev/nbd0`/`nbd0p1` (both WRITE, from the
+failed commit, and READ, from later commands trying to use the now-dead device), and `ps aux`
+showed **no `qemu-nbd` process running at all** — the server side of the nbd connection was gone,
+leaving the kernel client device attached to nothing. `dmesg -T` also showed a ~3-minute window
+where "OOM killer disabled" then "OOM killer enabled" bracketed the failure, consistent with a
+per-tool-call cgroup/session teardown reaping a detached background process rather than an actual
+out-of-memory event.
+
+**Diagnosis:** this is not a hivex/vfat compatibility bug (the initial suspicion) — it's that
+`qemu-nbd`'s normal daemonizing behavior (fork, detach, keep serving the nbd device) cannot be
+relied upon to survive past the end of the Bash tool call that started it, in this specific
+sandboxed environment. It happened to survive several calls by luck (nothing needed the device in
+between) before finally being reaped mid-operation.
+
+**Fix:** do every step that depends on a given `qemu-nbd` attachment — attach, partition, format,
+mount, `wimapply`, BCD-SYS, patch, unmount, detach — inside **one single Bash tool invocation**,
+never split across separate calls. Confirmed working end-to-end once restructured this way.
+**Standing rule for the rest of this project**: never assume a backgrounded `qemu-nbd -c` survives
+between tool calls; a long-running `qemu-system-x86_64 ... -daemonize` VM, by contrast, *did*
+survive across many separate calls in this same session (used for the whole boot-watch sequence
+below) — the distinction observed so far is `-daemonize`'s real double-fork vs. `qemu-nbd`'s own
+backgrounding, not backgrounding in general, but treat this as one data point, not a fully
+root-caused guarantee.
+
+### Finding 17: self-inflicted `INACCESSIBLE_BOOT_DEVICE (0x7B)` on the boot medium itself — caused
+by attaching it via `virtio-blk-pci` instead of the AHCI device Finding 12 actually used
+
+**Symptom:** first boot attempt of the freshly-built index-2 medium reached Windows Boot Manager
+cleanly (no landmine), then hit `INACCESSIBLE_BOOT_DEVICE (0x7B)` on itself — the same stop code
+this project already has for the *main OS disk's* still-unsolved driver-injection problem, which
+briefly looked like a new, Setup-specific landmine.
+
+**Root cause:** re-reading Finding 12 closely before treating this as a real finding
+(`CLAUDE.md`'s "verify before trusting" standard) showed the discrepancy immediately: Finding 12's
+working WinPE test had **the WinPE boot medium itself on `disk 0`, AHCI-attached** — only the
+*separate target* main OS disk was `virtio-blk-pci` (`disk 1`). This session's `qemu-system-x86_64`
+invocation attached the boot medium itself via `-device virtio-blk-pci`, which needs a boot-critical
+storage driver that was never registered for it (same class of problem as the main disk, just now
+self-inflicted on the wrong disk). Not a new Setup.exe-specific UEFI/boot landmine at all — a
+device-model mistake in this session's own test command.
+
+**Fix:** rebuilt the boot command with the medium attached via `-device ide-hd,drive=disk0,bus=ide.0`
+(q35's built-in ICH9 AHCI controller, no explicit `-device ich9-ahci` needed), matching Finding 12
+exactly. Booted clean on retry.
+
+### Finding 18 (the actual pivot result): `boot.wim` index 2, booted as a plain AHCI disk, launches
+Setup.exe automatically and reaches its real graphical Setup UI — Finding 15's assumption 1
+confirmed
+
+With the device-model bug fixed, the rebuilt medium (WIM index verified directly via
+`wimlib-imagex info boot.wim` as `Index 2, Name: Microsoft Windows Setup (amd64)` before use, not
+assumed) booted to a real **"Windows Server Setup"** window within seconds of Windows Boot Manager
+handing off — watched via `tools/qmp-screenshot.py`/`qmp-watch.sh`, no VNC viewer. No UEFI
+boot-key prompt, no CD-ROM-landmine-class failure of any kind, confirming this applies to
+`boot.wim` index 2 exactly as it did to index 1 in Finding 10→11.
+
+**Unexpected, not yet explained:** Setup reached the disk-selection page (showing "Install driver
+to show hardware" because no target disk was attached in this test — expected, since none was
+attached) within the first ~5 seconds of the watch starting, with **no simulated keyboard/mouse
+input sent at all**. This implies Setup auto-skipped the language-select, "Install now", license,
+and edition-selection screens entirely on its own, most likely because this eval WIM has only one
+language and one edition to choose from — plausible but **not confirmed**, flagged here rather than
+asserted as fact. Worth understanding properly once autounattend.xml is in the mix (an explicit
+unattend answers these same screens regardless, so this may never need root-causing further, but
+noting it in case a future session sees different behavior on Server 2022/Windows 11 media that
+does carry multiple editions).
+
+**What this confirms:** the core premise of Finding 15's pivot — that the "press any key" UEFI
+landmine is CD-ROM-boot-specific, not Setup.exe-specific, and that a self-built plain-disk boot
+medium can run real Setup.exe — is no longer a reasoned assumption, it's an observed result.
+
+**Explicitly still unconfirmed** (unchanged from Finding 15's list, not yet attempted this
+session):
+- Whether a secondary, non-boot-attached `install.wim`/install source is reachable and usable by
+  Setup from this configuration.
+- Whether the sibling project's `DriverPaths` mechanism, invoked this way, actually resolves the
+  virtio-blk target disk and lets Setup proceed past disk selection.
+- Whether `setup.exe /unattend:<path>` explicit invocation (vs. relying on autodetection) is even
+  necessary given how much Setup already appears to auto-resolve on its own — worth testing
+  autodetection first now that it looks like the interactive screens mostly don't need answering
+  for this specific eval media.
+
+**Artifacts from this session so far:** `image-apply/output/winpe-boot-index2.qcow2` (index-2 boot
+medium, BCD-SYS-built + WinPE-mode-flagged, confirmed booting) and
+`image-apply/output/winpe-boot-index1.qcow2.bak` (safety copy of the previous, still-working
+index-1 WinPE medium, made before this session's rebuild, in case the kernel-debugging fallback is
+needed later).
+
+### Finding 19: autounattend.xml's `DriverPaths` (`Microsoft-Windows-PnpCustomizationsWinPE`) does
+not feed the specific gate that shows "Install driver to show hardware" — confirmed via direct
+`setupact.log` evidence, not assumption, after two placement variants and real community research
+
+**Setup:** attached a fresh 40GB target disk (`image-apply/output/win2025-target.qcow2`) via
+`virtio-blk-pci` (matching this project's already-established device-model convention), plus the
+cached Server 2025 ISO and `virtio-win-0.1.285.iso` as secondary, non-boot `media=cdrom` CD-ROMs —
+confirming Finding 15's "secondary attached source is unaffected by the CD-ROM boot landmine"
+assumption in passing (both attached and read cleanly with no issue). Built a concrete
+`Autounattend.xml` (resolved from the sibling project's `autounattend.xml.pkrtpl`: `<NAME>` =
+`Windows Server 2025 SERVERSTANDARD` per Finding 0, virtio driver dir = `2k25`, confirmed present on
+the cached virtio-win ISO by direct `7z l` listing rather than assumed).
+
+**Attempt 1 — placed at `X:\Autounattend.xml` and `X:\sources\Autounattend.xml`** (the boot
+medium's own partition, matching what looked like search-order entries 6/8 in Microsoft's own
+["Implicit Answer File Search Order"](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)
+table): Setup.exe reached "Install driver to show hardware" with an empty list, no target disk
+visible. Direct log inspection (pulled out via `copy ... A:\`, since `findstr` doesn't exist in
+this minimal WinPE and there's no scrollback capture) showed `UnattendSearchExplicitPath: Found
+usable unattend file for pass [windowsPE] at [X:\autounattend.xml]` — **the answer file WAS found**,
+ruling out the first-guessed "X: isn't a valid search location" theory.
+
+**Attempt 2 — added a floppy (`image-apply/output/answer-floppy.img`, built via `mtools`
+`mcopy`/`mmd`, no `sudo`/loop-mount needed) with `Autounattend.xml` at its root**, matching
+Microsoft's own documented example and a real proven community template
+([jakobadam/packer-qemu-templates](https://github.com/jakobadam/packer-qemu-templates/blob/master/windows/floppy/windows-2012-R2-standard/Autounattend.xml))
+that puts driver files on the *same* floppy as the answer file. Same empty-list result. Then
+copied `viostor`'s 4 files directly onto the floppy alongside the XML (matching that same
+community template's convention exactly) and pointed `DriverPaths` at `A:\viostor\2k25\amd64` —
+still no change.
+
+**Root cause, confirmed via `setupact.log`, not inferred:** `UnattendDriverInstall`'s **Prepare**
+method runs every time (`UnattendDriverInstall: Entering/Leaving Prepare Method`), but its
+**Execute** method never appears anywhere in the log before Setup reaches and blocks on
+`EarlyF6DriverInstall`'s own gate (`EarlyF6DriverInstall: Entering Execute Method` →
+`Driver: Starting Wait`, with nothing in between). `EarlyF6DriverInstall` is Setup's legacy
+"press F6 to load a third-party mass-storage driver" mechanism (the name is a direct callback to
+that Windows XP/2003-era feature) — a **different, separate action from the modern
+`DriverPaths`/`UnattendDriverInstall` mechanism**, and in this flow it runs first and blocks
+disk enumeration before `UnattendDriverInstall` ever gets a chance to execute. Two rounds of
+targeted web research (the exact symptom, then the mechanism itself) turned up real, relevant
+threads but no primary source definitively documenting this specific execution-order interaction —
+recorded as a genuine gap in public documentation, not a search shortcut skipped.
+
+### Finding 20: manually loading the same driver via the "Browse" UI succeeds completely — the
+target disk becomes fully visible (confirmed via `wmic diskdrive`), proving the driver/hardware
+pairing itself is entirely sound and the gap is specifically in *automated* delivery to this gate
+
+Drove the entire "Install driver to show hardware" dialog via `tools/qmp-sendkey.py` (Tab/arrow-key
+navigation, no mouse needed) rather than fighting the automation further: Browse → selected
+`A:\viostor\2k25\amd64` → Setup itself listed **"Red Hat VirtIO SCSI controller"** matched from
+`viostor.inf` → Install. `setupact.log` confirmed `Driver: Install successfully completed.` on the
+first attempt (an accidental *second* click produced the `0x80070103`/`ERROR_NO_MORE_ITEMS`
+"Error installing driver" message actually seen on screen — a harmless side effect of re-installing
+an already-loaded driver, not a real failure; worth remembering so this exact message doesn't get
+mistaken for a real error again).
+
+**Decisively confirmed via direct inspection, not the Setup UI** (which stayed on the same page —
+its own "Back" button was disabled and it doesn't auto-refresh after a driver install; not yet
+investigated further since the next finding makes it moot): opened a command prompt (`Shift+F10`)
+and ran `wmic diskdrive get caption,size,status`:
+```
+Caption                          Size          Status
+QEMU HARDDISK                    2146798080    OK
+Red Hat VirtIO SCSI Disk Device  42944186880   OK
+```
+The 40GB target disk is fully visible and healthy. **This proves, empirically, that every piece of
+this project's driver-injection puzzle already works** — the real hardware ID, the driver file,
+the boot-medium architecture, the secondary-disk attachment — the only unsolved piece is
+*automating* the load rather than clicking through it by hand.
+
+### Finding 21 (recommendation, not yet attempted): reuse Finding 12's already-proven `drvload`
+technique instead of fighting `EarlyF6DriverInstall`/`DriverPaths` automation
+
+Finding 12 already proved, in this same project, that running `drvload X:\drivers\viostor\viostor.inf`
+from our **own** `startnet.cmd` — *before* ever launching `setup.exe` — successfully loads a boot-
+critical VirtIO driver into a running WinPE session. That technique was used there to let WinPE see
+the *target* disk for `diskpart`/`bcdboot` purposes; the same technique, applied one step earlier
+(before Setup even starts, rather than after WinPE boots for a different purpose), should mean the
+virtio-blk-pci target disk is *already* visible the moment Setup performs its own first disk
+enumeration — never triggering `EarlyF6DriverInstall`'s gate, and its interactive-only "Install
+driver to show hardware" page, at all. This sidesteps the undocumented execution-order gap in
+Finding 19 entirely rather than continuing to search for a way to make `DriverPaths` feed it
+automatically. **Not yet attempted** — the concrete next step for this pivot.
+
+**New tooling from this session**, promoted to `tools/` (same "thin wrapper around an existing
+protocol" pattern as `qmp-screenshot.py`): `tools/qmp-sendkey.py` (QMP `human-monitor-command
+sendkey`, for driving dialogs via Tab/arrow-key/Enter with no mouse or VNC viewer needed) and
+`tools/qmp-type.py` (types literal ASCII strings the same way, for running diagnostic commands in
+a Shift+F10 command prompt). Both were essential to reaching Findings 19-20's conclusions and are
+now permanent, reusable project tooling, not one-off scratch scripts.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 3)
+
+**Where things stand:** the Setup.exe pivot (Finding 15) is now substantially de-risked. Every
+individual mechanical piece is confirmed working: `boot.wim` index 2 boots clean with no landmine
+(Finding 18), the real viostor driver correctly matches the real virtio-blk-pci hardware ID and
+successfully brings up the 40GB target disk (Finding 20). The only remaining gap is automation:
+autounattend.xml's `DriverPaths` doesn't feed the specific `EarlyF6DriverInstall` gate that shows
+"Install driver to show hardware" (Finding 19) — manual Browse works, automated DriverPaths doesn't.
+
+**Recommended next step:** implement Finding 21 — customize `winpe-boot-index2.qcow2`'s own
+`Windows\System32\startnet.cmd` (mount the NTFS partition directly, same technique used for
+`Autounattend.xml` placement this session, no need to re-mount the WIM) to run
+`drvload A:\viostor\2k25\amd64\viostor.inf` (or bake the driver files into the boot medium itself
+under a fixed path, matching Finding 12's `%SystemDrive%\drivers\viostor\` convention, to avoid
+depending on the floppy still being attached at exactly the right moment) **before** the stock
+`winpeshl.ini` launches `setup.exe`. If the target disk is already visible the moment Setup starts,
+`EarlyF6DriverInstall`'s gate should never trigger at all. Test end-to-end with the same
+`Autounattend.xml` already built this session (still valid, no changes needed) plus the target
+disk + Server 2025 ISO + virtio-win ISO already attached the same way.
+
+**If that works:** the disk should partition/format/apply `install.wim`/create its own BCD
+entirely via Setup itself, per the answer file's `DiskConfiguration`/`ImageInstall` sections —
+watch for it reaching `oobeSystem`'s `FirstLogonCommands` (WinRM enablement) and then attempt a
+real WinRM connection, which is Phase 2's actual success criterion.
+
+**If `drvload` alone isn't enough** (e.g. if Setup re-runs its own disk enumeration in a way that
+doesn't pick up a driver loaded before it started): fall back to actually attempting the
+`setup.exe /unattend:<path>` explicit-invocation approach from `startnet.cmd` (Finding 15's
+original step 4) instead of relying on stock `winpeshl.ini` autodetection — not yet tried, since
+autodetection has worked fine for the answer file itself throughout this session (Finding 19).
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `winpe-boot-index2.qcow2` — the working index-2 (Setup) boot medium. Current state: stock,
+  unmodified `startnet.cmd`/`winpeshl.ini` (launches `setup.exe` automatically on its own);
+  `Autounattend.xml` present at both its partition root and `\sources\`. **Needs its
+  `startnet.cmd` customized per the recommended next step above** — not yet done.
+- `winpe-boot-index1.qcow2.bak` — safety copy of the previous, still-working index-1 WinPE medium
+  (Findings 11-12), kept in case the kernel-debugging fallback thread is ever resumed instead.
+- `win2025-target.qcow2` — fresh 40GB blank target disk, virtio-blk-pci, never yet actually
+  partitioned by Setup (Setup's own `DiskConfiguration`/`WillWipeDisk` will handle that once the
+  driver-load gate is cleared).
+- `answer-floppy.img` — floppy with `Autounattend.xml` + `viostor/2k25/amd64/*` at its root,
+  confirmed working for both answer-file autodetection and (manually) driver loading.
+
+**Ephemeral state that will NOT survive to a new session:** everything under `/tmp/`, including
+the extracted `boot.wim`/`virtio-extract` scratch files and the `qmp-sendkey.py`/`qmp-type.py`
+scratchpad originals (their permanent copies are now in `tools/`, so no need to re-extract those
+specifically — just the ISO content, which is a cheap `7z e` away).
+
+**Key facts worth remembering:**
+- Server 2025's `install.wim` index 2 = `Windows Server 2025 SERVERSTANDARD` (Finding 0).
+- virtio-win-0.1.285.iso's driver folders for Server 2025 are named `2k25` (confirmed via `7z l`,
+  not assumed) — `vioscsi/2k25/amd64`, `viostor/2k25/amd64`, `NetKVM/2k25/amd64`.
+- The boot medium (whatever WinPE/Setup image is actually booting) must be attached via a
+  non-virtio device (AHCI/IDE, e.g. `-device ide-hd,bus=ide.0`) — **never** `virtio-blk-pci` for
+  the boot medium itself, or it self-inflicts the exact same `INACCESSIBLE_BOOT_DEVICE` this whole
+  pivot exists to solve (Finding 17). `virtio-blk-pci` is only for the *target* disk.
+- Any `qemu-nbd`-dependent sequence (attach/partition/format/mount/patch/detach) must run inside a
+  **single** Bash tool call in this sandbox — backgrounded `qemu-nbd` processes do not reliably
+  survive between separate tool invocations (Finding 16). A `qemu-system-x86_64 ... -daemonize`
+  VM, by contrast, survives fine across many separate calls (used throughout this session's
+  boot-watch sequences).
+- `mtools` (`mcopy`/`mmd`/`mdir`) builds/edits FAT floppy images without `sudo`/loop-mount at all —
+  simpler than the `mount -o loop` approach that needs root.

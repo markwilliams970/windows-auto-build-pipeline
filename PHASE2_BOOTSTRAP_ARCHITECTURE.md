@@ -251,7 +251,7 @@ Replacing the sequence in `CLAUDE.md`/`HANDOFF_FROM_UNATTENDED_INSTALL.md`'s Pha
 
 1. **Partition + apply WIM** (unchanged from original plan) — `qemu-nbd` + `sgdisk` + `mkfs.ntfs`,
    then `wimapply` targeting Windows Server 2025's confirmed image index, per the existing
-   `iso_cache/` reuse plan.
+   `../iso_cache/` reuse plan (shared cache directory, `ISO_CACHE_DIR`-parameterized).
 2. **Attempt BCD-SYS against the applied partition** (new first experiment, replacing the
    WinPE-boot-medium experiment as the first thing tried). Success criterion: the disk boots to
    Windows Boot Manager and begins loading Windows under QEMU/OVMF (Secure Boot disabled, per the
@@ -267,7 +267,7 @@ Replacing the sequence in `CLAUDE.md`/`HANDOFF_FROM_UNATTENDED_INSTALL.md`'s Pha
    the `hivex` driver-injection work from Stage 2 is unaffected by which bootability mechanism wins.
 
 This sequence should be attempted against Windows Server 2025 first, per the existing "Starting
-point" direction in the handoff doc (its `iso_cache/` entry and WIM image-index work already exist)
+point" direction in the handoff doc (its `../iso_cache/` entry and WIM image-index work already exist)
 — and per the cross-cutting analysis above, there's no principled reason to expect the result to
 differ for Windows 11 or Server 2022 once it's proven for Server 2025.
 

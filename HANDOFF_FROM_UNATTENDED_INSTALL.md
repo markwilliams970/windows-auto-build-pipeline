@@ -166,12 +166,15 @@ possibly a local KMS host inside the lab) that hasn't been made and shouldn't be
 
 These are independent of *how* Windows gets onto the disk, and should be reusable close to as-is:
 
-- **`iso_cache/` and its currency-check convention.** Version-keyed ISO filenames, `.sha256`
+- **`../iso_cache/` and its currency-check convention.** Version-keyed ISO filenames, `.sha256`
   sidecars (standard `sha256sum` format), `.meta` sidecars recording source URL + an upstream
   freshness fingerprint (ETag, or a resolved versioned filename), checked via a cheap `curl -I`
   before deciding to re-download. Already has Server 2022, Server 2025, and Windows 11 Enterprise
-  Eval ISOs cached with this convention — copy or symlink from the sibling repo's `iso_cache/`
-  rather than re-downloading multi-GB files.
+  Eval ISOs cached with this convention. The cache directory itself now lives one level above both
+  repos (`../iso_cache/`, relative to either repo root), shared between this project and the
+  sibling rather than duplicated per-repo — no copying/symlinking needed, just resolve it the same
+  way the sibling project's `build.sh`/`build-windows11.sh` do: default to
+  `${REPO_ROOT}/../iso_cache`, overridable via the `ISO_CACHE_DIR` environment variable.
 - **The role-provisioning layer entirely — these are drop-in reusable, verbatim, no changes
   needed.** They only assume a booted VM with WinRM reachable and two specific files already
   uploaded to it; nothing in any of them depends on *how* Windows got installed. All live at
@@ -381,5 +384,6 @@ research above.
 Windows Server 2025 first, per explicit direction — it's evaluation media in the same eval-channel
 pattern already well-understood (see the sibling project's Finding 5 for how eval-channel edition
 selection actually works, which still applies here for choosing the right WIM image index), and
-the `iso_cache/` entry, checksum, and WIM image-name investigation for it already exist in the
-sibling project and can be copied over rather than redone.
+the `../iso_cache/` entry, checksum, and WIM image-name investigation for it already exist (the
+cache directory is now shared directly with the sibling project rather than needing to be copied
+over).
