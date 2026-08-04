@@ -901,6 +901,146 @@ now permanent, reusable project tooling, not one-off scratch scripts.
 
 ---
 
+## Session 4
+
+### Finding 22: `winpe-boot-index2.qcow2` has no `winpeshl.ini` at all — `startnet.cmd`'s presence
+does not mean it actually runs before `setup.exe` launches
+
+Before implementing Finding 21 as written, mounted the index-2 medium's NTFS partition directly
+(same technique as always: `qemu-nbd` + mount, single Bash call) to check what's actually in
+`startnet.cmd`/`winpeshl.ini` rather than assume, per this project's own "verify before trusting"
+standard. Found:
+
+- `Windows\System32\startnet.cmd` exists and contains only `wpeinit` — but a full-volume
+  `find -iname winpeshl.ini` turned up **zero results**. No such file exists anywhere on the image.
+- `Windows\System32\winpeshl.log` shows `winpeshl.exe` launching `WallpaperHost.exe`, then
+  attempting `X:\$Windows.~BT\sources\setup.exe` (fails, doesn't exist), then succeeding on
+  `X:\setup.exe` — with **no log entry for `startnet.cmd` or `wpeinit` ever running**, on any of the
+  four prior boot attempts recorded in that log.
+- The `SYSTEM` hive's `\Setup\CmdLine` = `winpeshl.exe` (checked via `hivexregedit --export`),
+  confirming `smss.exe` launches `winpeshl.exe` directly (the classic GUI-setup-phase mechanism) —
+  and with no `winpeshl.ini` present, it falls back to a built-in default app list, not the
+  `startnet.cmd`/`wpeinit` convention that custom WinPE builds (`copype`) normally rely on.
+
+**Conclusion:** this is genuine, unmodified Setup media (only `Autounattend.xml` added), and it
+likely never executes `startnet.cmd` in this boot path at all. Finding 21's plan (edit
+`startnet.cmd`, expect it to run before `setup.exe`) rested on an assumption the evidence
+contradicts.
+
+### Finding 23: creating `winpeshl.ini` ourselves, verified against Microsoft's own reference,
+successfully makes `drvload` run before `setup.exe` — the driver loads correctly, but this does
+**not** avoid the "Install driver to show hardware" gate (see Finding 24 for why)
+
+Fetched the actual [Winpeshl.ini reference](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpeshlini-reference-launching-an-app-when-winpe-starts)
+directly (not just a search summary) to confirm syntax rather than guess: `[LaunchApps]` entries
+run strictly sequentially, each waited-on before the next starts; one app per line; comma-separated
+argument string. Wrote `Windows\System32\winpeshl.ini`:
+
+```
+[LaunchApps]
+%SYSTEMROOT%\System32\drvload.exe, A:\viostor\2k25\amd64\viostor.inf
+%SYSTEMDRIVE%\setup.exe
+```
+
+Booted (boot medium on `ide.0`, target disk `win2025-target.qcow2` on `virtio-blk-pci`, Server 2025
+ISO + `virtio-win-0.1.285.iso` as secondary `media=cdrom`, answer floppy — same shape as every prior
+session's test). Confirmed via `Shift+F10` + `wmic diskdrive get caption,size,status` that the
+**target disk is fully visible and healthy before Setup's UI even finishes rendering** —
+`drvload` from `winpeshl.ini` works exactly as documented:
+
+```
+Caption                          Size          Status
+QEMU HARDDISK                    2146798080    OK
+Red Hat VirtIO SCSI Disk Device  42944186880   OK
+```
+
+**But Setup's UI still showed "Install driver to show hardware" with an empty list anyway.** This
+is the actual, more important finding — see Finding 24.
+
+### Finding 24: `EarlyF6DriverInstall` enters its wait state unconditionally and immediately at
+Setup start — confirmed via `setupact.log` timestamps, not inferred — so no amount of pre-loading
+a driver before `setup.exe` launches can avoid this gate
+
+Pulled `setupact.log` from `X:\$WINDOWS.~BT\Sources\Panther\setupact.log` (note: **not**
+`X:\Windows\Panther\setupact.log`, which doesn't exist in this WinPE session — there are four
+different `setupact.log` copies on `X:\`, and this is the one Setup is actively writing to) via the
+established `Shift+F10` → `copy` → floppy → `mcopy` technique. The timestamps are decisive:
+
+```
+15:58:00  EarlyF6DriverInstall: Entering Execute Method
+15:58:00  Driver: Starting Wait
+16:00:21  Driver: Scan requested          <- ~2.5 minutes later, first manual interaction
+```
+
+`EarlyF6DriverInstall`'s Execute method starts waiting for interactive input in the **very same
+second** as Setup's Prepare phase — before any user action, and after `drvload` (from Finding 23)
+had already loaded the driver and made the disk visible. This proves the gate is not conditioned on
+disk/driver visibility at all; it is a hardcoded, unconditional wait for interactive input the
+moment this WinPE-based Setup flow reaches disk configuration. Finding 21 (and Finding 23's cleaner
+version of it) **cannot** work — there's nothing to pre-load around, because the gate doesn't check
+what's already loaded.
+
+### Finding 25: manual click-through (Finding 20's technique) reproduced with mouse clicks instead
+of keyboard, including a genuinely clean install with zero errors — and `setupact.log` proves the
+dialog loops back to waiting even after real success. No exit from this dialog was found via UI
+interaction alone.
+
+**Relative (PS/2) mouse input does not work this early in this WinPE/Setup environment.** QMP
+`input-send-event` with `type: rel` accepts events with no error, but the guest's on-screen cursor
+never moves — confirmed by direct calibration (a 300/300 relative move produced zero visible
+movement across two separate attempts). `type: abs` events fail outright with `"Input handler not
+found for event type abs"` unless a USB tablet device is attached. **Fix:** hot-launch (well,
+cold-relaunch — QEMU has no hot-add path for a new PCI controller here) the VM with
+`-device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0` added. With that, absolute-position
+clicks work correctly and reliably. Promoted the click helper to `tools/qmp-click.py` (supports
+`--double` for double-clicks, used for tree-view folder expansion in the driver Browse dialog).
+
+Two runs, both driven entirely by mouse clicks (Browse → double-click through
+`A:\viostor\2k25\amd64` in the folder tree → select the matched driver row → Install):
+
+1. **With the driver already loaded via `winpeshl.ini`** (Finding 23's state): clicking Install
+   reproduced Finding 20's known-harmless `0x80070103` "already installed" error exactly.
+2. **A genuinely clean run** (reverted `winpeshl.ini` back to just `%SYSTEMDRIVE%\setup.exe`,
+   rebooted fresh, confirmed the driver list was empty beforehand): clicking Install produced
+   **no error at all**. `setupact.log` confirms a real, clean success:
+   ```
+   16:17:39  Driver: Succeeded in loading driver from path [A:\viostor\2k25\amd64\viostor.inf].
+   16:17:39  Driver: Install successfully completed.
+   16:17:39  Driver: Starting Wait          <- loops right back to waiting anyway
+   ```
+
+**This is decisive, not just "not yet found a way past it": success, failure, and "already loaded"
+all lead to the identical `Driver: Starting Wait` state.** Waited 60+ seconds after the clean
+success with no auto-advance (ruling out a timeout/grace-period mechanism). Tried maximizing the
+window in case a "Next" affordance was hidden below the fold — no change, no new controls appear.
+Tried the window's own close (`X`) button specifically to check whether it dismisses just this
+sub-dialog: it does not — it raises "Are you sure you want to quit?" and clicking Yes would abort
+all of Setup, confirming this is the main wizard window, not a dismissible modal with a hidden
+escape hatch.
+
+**Net result: there is no known way to get this Setup.exe-driven flow past the disk-configuration
+step once `EarlyF6DriverInstall`'s dialog appears, whether reached automatically (Finding 24) or
+resolved manually via full mouse-driven UI automation (this finding).** This is a real, currently
+unresolved blocker for the Setup.exe pivot as a whole, not just an automation nicety — worse than
+Session 3's "Status" summary assumed, since Session 3 left off believing Finding 20's manual
+click-through was a complete, if manual, workaround (its own words: "not yet investigated further
+since the next finding makes it moot" — Finding 21 was expected to make the whole question moot,
+and it didn't).
+
+**One real, not-yet-tested theory for why**, worth checking before concluding the whole pivot is
+dead: `EarlyF6DriverInstall` is explicitly named after Windows' legacy "press F6 to load a
+third-party mass-storage driver" mechanism. It's possible this legacy code path only triggers
+because `Autounattend.xml`'s `DiskConfiguration`/`ImageInstall` sections drive Setup straight into
+automated disk configuration, skipping past the *modern* interactive "Where do you want to install
+Windows" screen entirely — which has its own, different, non-legacy "Load driver" link. If Setup
+were allowed to reach that modern screen instead (e.g. by not fully specifying `DiskConfiguration`
+in the answer file, accepting a manual/scripted partition-selection step), the modern driver-load
+mechanism there might not have the same dead-end behavior. **Not yet attempted** — a materially
+bigger change to test (rebuilding how much of the disk-configuration phase the answer file drives)
+than anything tried so far, deferred to the next session pending a decision on direction.
+
+---
+
 ## STATUS AND NEXT STEPS ON RESUMPTION (Session 3)
 
 **Where things stand:** the Setup.exe pivot (Finding 15) is now substantially de-risked. Every
@@ -965,3 +1105,65 @@ specifically — just the ISO content, which is a cheap `7z e` away).
   boot-watch sequences).
 - `mtools` (`mcopy`/`mmd`/`mdir`) builds/edits FAT floppy images without `sudo`/loop-mount at all —
   simpler than the `mount -o loop` approach that needs root.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 4)
+
+**Where things stand: worse than Session 3 believed, in one specific, important way.** Session 3's
+own status section (above) treated Finding 20's manual click-through as a complete, if manual,
+fallback, and treated Finding 21 (pre-load the driver before `setup.exe` starts) as very likely to
+remove the need for it entirely. Session 4 implemented Finding 21 properly (Finding 23: a real,
+Microsoft-reference-verified `winpeshl.ini`, not a `startnet.cmd` edit that Finding 22 showed
+probably never even runs) and it **did** successfully load the driver before Setup started — but
+`EarlyF6DriverInstall`'s gate showed anyway, and `setupact.log` timestamps prove it's unconditional
+(Finding 24). Worse: Finding 25 shows the manual click-through itself — the fallback Session 3 was
+relying on — doesn't actually lead anywhere either. A **genuinely clean, error-free** Install click
+was tested for the first time this session (Session 3 only ever saw either a real success followed
+immediately by an accidental duplicate-click error, or nothing further), and `setupact.log` proves
+even that loops back to `Driver: Starting Wait` forever. No hidden "Next" button, no timeout, and
+the window's close button quits all of Setup rather than dismissing just this sub-dialog.
+
+**Net effect: the Setup.exe pivot (Finding 15) does not currently have any known path past
+disk configuration, whether automated or manual.** This is the single most important thing to
+internalize before resuming — do not re-attempt Finding 21/23's pre-load approach again believing
+it might work with a small tweak; the evidence in Finding 24 is timestamp-based proof, not
+inference, that it fundamentally cannot.
+
+**The one real open thread (Finding 25's closing theory, not yet attempted):** `EarlyF6DriverInstall`
+may only be reachable because `Autounattend.xml`'s `DiskConfiguration`/`ImageInstall` sections drive
+Setup directly into automated disk configuration, bypassing the *modern* interactive "Where do you
+want to install Windows" screen — which has a different, non-legacy "Load driver" link that has
+never been tested in this project at all. Testing this means rebuilding the answer file to *not*
+fully automate disk configuration (or omit `DiskConfiguration` entirely) and seeing what screen
+Setup actually shows instead, then testing whether **that** screen's driver-load mechanism, once
+satisfied, actually lets Setup proceed (unlike the legacy F6 dialog). This is a bigger change than
+anything tried so far and needs a clear decision to pursue before spending a session on it — it
+might not pan out either, and if it doesn't, the honest conclusion is that the Setup.exe pivot
+itself (not just its automation) needs to be reconsidered against the two-tier bootstrap plan's
+original fallback path (`PHASE2_BOOTSTRAP_ARCHITECTURE.md`), which this pivot was chosen over.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `winpe-boot-index2.qcow2` — **currently reverted back to stock** (`winpeshl.ini` present but
+  containing only `%SYSTEMDRIVE%\setup.exe`, no `drvload` line) after Session 4's clean-install
+  test. `Autounattend.xml` still present at both its partition root and `\sources\`, unchanged and
+  still valid.
+- `win2025-target.qcow2` — still blank/unpartitioned; Setup has never gotten far enough to touch it.
+- `answer-floppy.img` — unchanged, still has `Autounattend.xml` + `viostor/2k25/amd64/*`.
+- `OVMF_VARS_setup-test4.fd` — this session's OVMF vars copy, paired with a boot command that now
+  also needs `-device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0` (see Finding 25) for
+  mouse automation to work at all — earlier sessions' boot commands (AHCI boot medium + virtio-blk
+  target + secondary CD-ROMs + floppy) are otherwise unchanged and still correct.
+- A VM from this session may still be running (`qmp-setup-test4.sock`) depending on whether it was
+  left up at session end — check `pgrep -fa qemu-system-x86_64` before assuming either way.
+
+**New permanent tooling:** `tools/qmp-click.py` (promoted from this session's scratchpad) — QMP
+absolute-position mouse clicks, supports `--double`. Requires the `usb-tablet` device above; a
+plain PS/2 relative mouse does not produce any visible cursor movement in this environment (tried
+and confirmed not to work, not just "not attempted" — see Finding 25).
+
+**Process note confirmed again this session:** the "verify before trusting" discipline directly
+paid off twice — Finding 22 (checking what's actually in `winpeshl.ini`/`startnet.cmd` before
+editing, rather than assuming Finding 21's premise) and Finding 24 (pulling real `setupact.log`
+timestamps instead of guessing why the dialog wouldn't advance) both overturned an assumption the
+previous session's writeup had treated as settled.

@@ -393,28 +393,36 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** in progress, **the Setup.exe pivot (see below) is substantially de-risked but not yet
-complete — read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION" (Session 3)
-section before doing anything else here.** Sub-milestone 1 (make the disk bootable) is **solved,
-twice over**: BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both
-independently produce a correctly-booting BCD, and this now also applies to `boot.wim` index 2
-("Microsoft Windows Setup"), which boots clean as a plain disk with zero UEFI landmine exposure.
-Sub-milestone driver injection (clearing `INACCESSIBLE_BOOT_DEVICE (0x7B)`) went through two failed
-hand-rolled attempts (offline `hivex` registry edits following `virt-v2v`'s recipe, and a
-`DISM`-via-WinPE attempt root-caused to an out-of-process COM hosting failure) before pivoting to
-**reusing Setup.exe's own mechanism instead — now confirmed largely working**: the real viostor
-driver correctly matches the virtio-blk-pci hardware ID and brings up a real 40GB target disk
-cleanly (confirmed via `wmic diskdrive`) once loaded. The one open gap is automation-only:
-autounattend.xml's `DriverPaths` doesn't feed the specific gate that needs it, though manually
-loading the identical driver through the same UI works perfectly — a fix already identified
-(reuse the project's own already-proven `drvload`-from-`startnet.cmd` technique) but not yet
-attempted. This pivot **reconsiders** (not yet formally changed pending the fix above succeeding)
-the "do not reuse `autounattend.xml`'s `Microsoft-Windows-Setup` component" rule under
-"Relationship to `../windows-server-vm-automation/`" above, since that rule assumed Setup.exe was
-permanently blocked, which this project's findings now contradict (the UEFI landmine turned out to
-be specific to `media=cdrom` boot, not to Setup.exe itself). See `PHASE2_ENGINEERING_LOG.md` for
-the complete, detailed record — it's long, but everything needed to resume without re-deriving it
-is there.
+**Status:** in progress, **and less settled than it looked at the end of Session 3 — read
+`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 4)" section before
+doing anything else here.** Sub-milestone 1 (make the disk bootable) remains **solved, twice over**:
+BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
+produce a correctly-booting BCD, and this also applies to `boot.wim` index 2 ("Microsoft Windows
+Setup"), which boots clean as a plain disk with zero UEFI landmine exposure. Sub-milestone driver
+injection (clearing `INACCESSIBLE_BOOT_DEVICE (0x7B)`) went through two failed hand-rolled attempts
+(offline `hivex` registry edits following `virt-v2v`'s recipe, and a `DISM`-via-WinPE attempt
+root-caused to an out-of-process COM hosting failure) before pivoting to reusing Setup.exe's own
+mechanism instead. The real viostor driver still correctly matches the virtio-blk-pci hardware ID
+and brings up a real 40GB target disk cleanly once loaded (confirmed via `wmic diskdrive`) — that
+part is solid. **But the gap once described as "automation-only, fix already identified" turned out
+not to have the fix it looked like it had**: pre-loading the driver via a Microsoft-reference-verified
+`winpeshl.ini` (running `drvload` before `setup.exe` starts) does load the driver successfully, but
+`setupact.log` timestamps prove `EarlyF6DriverInstall`'s "Install driver to show hardware" gate
+enters its wait state unconditionally, before any user interaction and regardless of driver state —
+so pre-loading cannot skip it. Worse, manually clicking through that same gate (mouse-driven, via a
+newly-required `usb-tablet` device — relative PS/2 mouse input doesn't work this early) also does
+not lead anywhere: a genuinely clean, error-free driver install was tested for the first time this
+session, and the dialog loops back to waiting regardless of success, failure, or "already
+installed." **There is currently no known path past Setup's disk-configuration step, automated or
+manual.** One real, not-yet-tested theory remains open (whether avoiding full `DiskConfiguration`
+automation in `Autounattend.xml` lets Setup reach a *different*, modern driver-load screen instead
+of this legacy one) — see the engineering log for the detail. Until that's tried and either works or
+doesn't, this pivot's **reconsideration** of the "do not reuse `autounattend.xml`'s
+`Microsoft-Windows-Setup` component" rule (under "Relationship to `../windows-server-vm-automation/`"
+above) remains unresolved rather than trending toward confirmed — the UEFI landmine really is
+specific to `media=cdrom` boot, not Setup.exe itself, but that finding alone no longer implies this
+pivot is close to done. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's
+long, but everything needed to resume without re-deriving it is there.
 
 ---
 

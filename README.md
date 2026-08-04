@@ -8,11 +8,12 @@ upstream Packer/QEMU/OVMF issue. See `HANDOFF_FROM_UNATTENDED_INSTALL.md` for th
 full background on why this project exists as a separate repo from its sibling,
 `../windows-server-vm-automation/`.
 
-## Status (as of Session 3, 2026-07-23)
+## Status (as of Session 4, 2026-08-04)
 
 **Phase 1 (architecture): done.**
 
-**Phase 2 (offline installation mechanism): in progress, substantially de-risked.**
+**Phase 2 (offline installation mechanism): in progress; a blocker Session 3 thought
+was "just automation" turned out to be a real, currently-unresolved dead end.**
 
 - **Solved:** making an offline-applied disk boot at all under UEFI/OVMF, via two
   independent methods (BCD-SYS from Linux with zero boots, and real `bcdboot` from
@@ -20,15 +21,20 @@ full background on why this project exists as a separate repo from its sibling,
   Setup") booting clean as a plain disk with no exposure to the "press any key"
   UEFI landmine that blocks the sibling project.
 - **Solved, empirically:** the driver/hardware chain for clearing
-  `INACCESSIBLE_BOOT_DEVICE (0x7B)` — pivoted from two failed hand-rolled
-  offline-injection attempts to reusing Setup.exe's own driver-loading mechanism.
-  The real viostor driver correctly matches the virtio-blk-pci hardware ID and
-  brings up a real 40GB target disk cleanly.
-- **Open gap (automation only):** `autounattend.xml`'s `DriverPaths` doesn't feed
-  the specific gate that needs it during Setup.exe's disk-selection screen, though
-  loading the identical driver manually through the same UI works perfectly. A fix
-  is already identified (reuse this project's own proven `drvload`-from-
-  `startnet.cmd` technique) but not yet attempted.
+  `INACCESSIBLE_BOOT_DEVICE (0x7B)`. The real viostor driver correctly matches the
+  virtio-blk-pci hardware ID and brings up a real 40GB target disk cleanly, both
+  loaded manually and pre-loaded automatically before Setup starts.
+- **Not solved — a real blocker, not an automation gap:** `autounattend.xml`'s
+  `DriverPaths` doesn't feed `EarlyF6DriverInstall`'s "Install driver to show
+  hardware" gate, and `setupact.log` timestamps prove that gate is unconditional —
+  it starts waiting before any driver state is even checked. Worse, manually
+  clicking through it (mouse-driven UI automation, confirmed working) doesn't lead
+  anywhere either: even a genuinely clean, error-free driver install loops back to
+  waiting forever, with no timeout and no hidden "Next" button. There is currently
+  no known path past Setup's disk-configuration step, automated or manual. One
+  real, untested theory remains (whether avoiding full unattend-driven disk
+  configuration lets Setup reach a different, modern driver-load screen instead) —
+  see `PHASE2_ENGINEERING_LOG.md`'s Session 4 section for full detail.
 
 **Phases 3-5** (Windows role configuration, Datadog integration, lifecycle
 automation) are not started — gated on Phase 2 succeeding for all three target
