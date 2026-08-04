@@ -20,7 +20,7 @@ this order:
    (avoids WinPE entirely) was confirmed true for bootability specifically, but driver injection
    needed WinPE anyway, which changes the calculus. Read for the reasoning, not as current
    direction. **Its fallback path (real `bcdboot` from a self-built WinPE session) may become
-   relevant again** if neither of Session 5's two open tracks (below) pans out.
+   relevant again** if neither of the two open tracks below pans out.
 4. `HANDOFF_FROM_UNATTENDED_INSTALL.md` — the original prior-art research (why this project exists,
    what the sibling project already solved vs. couldn't). Still accurate; nothing here has changed.
 5. `PREREQUISITES.md` — host tooling this project needs beyond the sibling project. Already
@@ -234,13 +234,17 @@ before assuming the whole pivot is dead. **Not yet tested** — see "What to do 
 
 ## Housekeeping note
 
-This directory **is** a git repository. Recent commits (as of end of Session 3) include
-"Session 3: Setup.exe pivot confirmed working end-to-end, minus one automation gap" and "Add README
-summarizing project status ahead of a pause in work" — both already committed, working tree was
-clean at the start of Session 4. Session 4 has since modified `CLAUDE.md`, `PHASE2_ENGINEERING_LOG.md`,
-and `START_PROMPT.md` (this file), plus added `tools/qmp-click.py` — none of this is committed yet
-as of the end of Session 4. Ask before committing (or squashing into a single commit vs. several) —
-don't assume either way, same standard as any other action with lasting effect. Given Session 3's
-commit message ("...working end-to-end, minus one automation gap") turned out to be more optimistic
-than Session 4's findings support, consider whether the new commit message should be explicit about
-the walked-back status rather than reading as straightforward progress.
+This directory **is** a git repository, and the working tree is clean as of the end of Session 4 —
+both of Session 4's commits are already made *and pushed* to `origin/main`:
+`f6fae6b` ("Session 4: walk back Setup.exe pivot status — EarlyF6DriverInstall is a confirmed dead
+end, not an automation gap") and `826c744` ("Add Finding 26: $WinPEDriver$ prior art gives a
+cheaper, better-documented track than the modern-screen theory"). Don't assume there's anything
+uncommitted waiting from Session 4 — check `git status`/`git log` fresh rather than trusting this
+note's memory of it, same standard as everything else in this project. Still ask before committing
+*new* changes (or squashing vs. several commits) — this note only describes what was already true
+at Session 4's end, not a standing exemption from that rule.
+
+**A VM from Session 4 may still be running** (`qmp-setup-test4.sock`, PID varies) — check
+`pgrep -fa qemu-system-x86_64` before assuming either way. If still up, it's sitting at the stuck
+`EarlyF6DriverInstall` dialog with a blank target disk and `winpe-boot-index2.qcow2`'s
+`winpeshl.ini` in the stock/reverted state — harmless to leave running or kill, your call.
