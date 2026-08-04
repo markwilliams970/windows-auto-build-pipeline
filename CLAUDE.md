@@ -414,10 +414,16 @@ newly-required `usb-tablet` device — relative PS/2 mouse input doesn't work th
 not lead anywhere: a genuinely clean, error-free driver install was tested for the first time this
 session, and the dialog loops back to waiting regardless of success, failure, or "already
 installed." **There is currently no known path past Setup's disk-configuration step, automated or
-manual.** One real, not-yet-tested theory remains open (whether avoiding full `DiskConfiguration`
-automation in `Autounattend.xml` lets Setup reach a *different*, modern driver-load screen instead
-of this legacy one) — see the engineering log for the detail. Until that's tried and either works or
-doesn't, this pivot's **reconsideration** of the "do not reuse `autounattend.xml`'s
+manual — but proper multi-angle research afterward (not yet acted on) turned up a real,
+better-documented, cheaper lead than the first theory considered.** `$WinPEDriver$` is a documented
+Setup.exe feature (Microsoft KB 2686316) — a fixed folder name Setup automatically scans on
+`C:`/`D:`/`E:`/`X:` (the boot volume itself) and loads discovered drivers from, with zero
+`unattend.xml` configuration, architecturally distinct from both `drvload` and `DriverPaths`. This
+should be tried before the original, bigger-change theory (whether avoiding full
+`DiskConfiguration` automation in `Autounattend.xml` lets Setup reach a *different*, modern
+driver-load screen instead of this legacy one) — see the engineering log for the detail on both.
+Until one of these is tried and either works or doesn't, this pivot's **reconsideration** of the
+"do not reuse `autounattend.xml`'s
 `Microsoft-Windows-Setup` component" rule (under "Relationship to `../windows-server-vm-automation/`"
 above) remains unresolved rather than trending toward confirmed — the UEFI landmine really is
 specific to `media=cdrom` boot, not Setup.exe itself, but that finding alone no longer implies this

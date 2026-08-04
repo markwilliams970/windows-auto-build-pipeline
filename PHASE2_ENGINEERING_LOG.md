@@ -1039,6 +1039,74 @@ mechanism there might not have the same dead-end behavior. **Not yet attempted**
 bigger change to test (rebuilding how much of the disk-configuration phase the answer file drives)
 than anything tried so far, deferred to the next session pending a decision on direction.
 
+### Finding 26: real, multi-angle web research (done properly this time, per the project's own
+"research first" standard, after being steered back to it) turned up a documented, much cheaper
+mechanism to try before the modern-screen theory — `$WinPEDriver$` — plus corroborating community
+prior art confirming the *general shape* of the real fix is "register the driver in the image
+before Setup starts," not "load it live via any runtime mechanism"
+
+After Finding 25 concluded with a speculative theory, a proper multi-angle search (the literal
+symptom, then the capability — "has anyone solved unattended virtio driver injection for Windows
+Setup without hitting this exact wall" — rather than jumping straight to designing a new experiment)
+turned up two genuinely useful, verified-at-the-primary-source results:
+
+**1. `$WinPEDriver$` — a documented, decades-old, still-current Setup.exe feature (Microsoft KB
+2686316, fetched and quoted directly, not taken from a search summary), architecturally distinct
+from both `drvload` and `DriverPaths`.** Setup.exe automatically scans four fixed locations for a
+folder literally named `$WinPEDriver$`, and recursively loads any `.INF` files found there into the
+driver store — no `unattend.xml` configuration needed at all. The KB's own `setupact.log` excerpt
+(quoted verbatim, and matching this project's own log format exactly):
+```
+PnPIBS: Checking for pre-configured driver paths ...
+PnPIBS: Checking for pre-configured driver directory C:$WinPEDriver$.
+PnPIBS: Checking for pre-configured driver directory D:$WinPEDriver$.
+PnPIBS: Checking for pre-configured driver directory E:$WinPEDriver$.
+PnPIBS: Checking for pre-configured driver directory X:$WinPEDriver$.
+```
+**Note the checked drive letters: `C:`, `D:`, `E:`, `X:` — not `A:`.** Our answer floppy is `A:`, so
+`$WinPEDriver$` placed there would never be found; it needs to live on `X:` (the boot medium
+itself, which this project already fully controls offline via the existing `qemu-nbd`-mount
+routine — no registry hacking, no DISM, just a plain file copy into
+`X:\$WinPEDriver$\viostor\2k25\amd64\`) or on `D:`/`E:` (the Server 2025 ISO / virtio-win ISO
+themselves, not writable without rebuilding the ISO). The KB itself documents this as **item 4** in
+its own list of five distinct driver-inclusion methods — explicitly separate from `drvload` (item 2:
+"Doesn't propagate the driver to the installed OS") and from `unattend.xml`'s `DriverPaths` (item
+5, the mechanism Finding 19 already showed doesn't reach `EarlyF6DriverInstall` at all) — and its
+own wording ("Setup.exe will attempt to load all drivers in the `$WinPEDriver$` directory into
+memory, **and also will schedule them for injection into the installing OS**") suggests deeper
+integration with Setup's own driver bookkeeping than a bare runtime PnP load. **Not yet tested** —
+this is the cheapest, best-documented next experiment: no `winpeshl.ini` change, no
+`Autounattend.xml` rewrite, just copy 4 files into the boot medium's own `X:\$WinPEDriver$\` and
+boot exactly as before.
+
+**2. Corroborating (not directly reusable) prior art: the Proxmox community's standard fix for this**
+**exact problem is DISM-slipstreaming the driver into *both* `boot.wim` and `install.wim` offline,
+before ever booting Setup** (confirmed via a real GitHub tool,
+[`zer0coolx/proxmox-windows-slipstream-virtio-drivers`](https://github.com/zer0coolx/proxmox-windows-slipstream-virtio-drivers),
+fetched and inspected directly) — `dism /Add-Driver /image:<mount> /driver:<inf> /Recurse
+/ForceUnsigned` run against *both* WIMs from a real Windows+ADK host. This confirms the general
+shape of the real, working fix in the wider community is "the driver must be present in `boot.wim`'s
+own driver store at WinPE-boot time," not "loaded afterward by any means" — consistent with
+`$WinPEDriver$` being the right kind of fix, and inconsistent with anything this project has tried
+so far (`drvload`, `DriverPaths`) ever having been likely to work. **Not directly usable as-is**:
+it requires a real Windows host with ADK, conflicting with this project's Linux-only offline-prep
+constraint — Findings 7-8's hivex-based `CriticalDeviceDatabase`/`DriverDatabase` registry attempts
+were a Linux-only attempt at the same underlying goal (register a driver into an image's own driver
+database) and failed for unknown reasons on the *main OS disk*; whether the same technique would
+behave differently applied to `boot.wim` specifically (a different boot code path than a full NT
+kernel boot) is unknown and not planned to be re-attempted while `$WinPEDriver$` remains untested
+and much cheaper to try first.
+
+A related, third, low-confidence, **not verified** community folklore data point surfaced in the
+same research pass and worth a mention only because it's nearly free to try if `$WinPEDriver$`
+doesn't pan out: several forum threads (manual troubleshooting, not automated-deployment context)
+mention that clicking **Cancel** on the "Install driver to show hardware" dialog and restarting the
+partition-selection step (rather than clicking Install/Back) sometimes lets Setup re-enumerate and
+proceed. Nothing in this project's own `setupact.log` evidence supports or contradicts this — a
+"Cancel" button was never identified/tried in Findings 20/25 (only Browse/Install/Back/the window's
+own close control were tried). Cheap to test if `$WinPEDriver$` fails, but not a priority given how
+thin the sourcing is.
+
 ---
 
 ## STATUS AND NEXT STEPS ON RESUMPTION (Session 3)
@@ -1130,18 +1198,35 @@ internalize before resuming — do not re-attempt Finding 21/23's pre-load appro
 it might work with a small tweak; the evidence in Finding 24 is timestamp-based proof, not
 inference, that it fundamentally cannot.
 
-**The one real open thread (Finding 25's closing theory, not yet attempted):** `EarlyF6DriverInstall`
-may only be reachable because `Autounattend.xml`'s `DiskConfiguration`/`ImageInstall` sections drive
-Setup directly into automated disk configuration, bypassing the *modern* interactive "Where do you
-want to install Windows" screen — which has a different, non-legacy "Load driver" link that has
-never been tested in this project at all. Testing this means rebuilding the answer file to *not*
-fully automate disk configuration (or omit `DiskConfiguration` entirely) and seeing what screen
-Setup actually shows instead, then testing whether **that** screen's driver-load mechanism, once
-satisfied, actually lets Setup proceed (unlike the legacy F6 dialog). This is a bigger change than
-anything tried so far and needs a clear decision to pursue before spending a session on it — it
-might not pan out either, and if it doesn't, the honest conclusion is that the Setup.exe pivot
-itself (not just its automation) needs to be reconsidered against the two-tier bootstrap plan's
-original fallback path (`PHASE2_BOOTSTRAP_ARCHITECTURE.md`), which this pivot was chosen over.
+**Two open threads now, not one — try the cheaper, better-documented one first.** Finding 25 closed
+with a speculative theory (the "modern screen" idea, below); proper multi-angle research afterward
+(Finding 26) turned up a real, primary-source-documented mechanism that's cheaper to test and more
+likely to work. Recommended order:
+
+1. **`$WinPEDriver$` (Finding 26 — try this first).** Mount `winpe-boot-index2.qcow2` (existing
+   `qemu-nbd` routine, single Bash call as always), create `X:\$WinPEDriver$\viostor\2k25\amd64\`,
+   copy in the 4 viostor driver files (already known-good, same files used throughout this project).
+   **No `winpeshl.ini` change, no `Autounattend.xml` change.** Boot exactly as every prior test this
+   session. Watch `setupact.log` for `PnPIBS: Checking for pre-configured driver directory
+   X:$WinPEDriver$.` and whatever follows it — if the driver gets picked up this way and
+   `EarlyF6DriverInstall` never shows (or shows and immediately proceeds), this is a real, much
+   smaller permanent fix than either alternative. If it doesn't help, the `setupact.log` evidence of
+   *why* (does the scan even find the folder? does it load the driver but still hit the same gate?)
+   is itself valuable and should be recorded before moving to option 2.
+2. **The "modern screen" theory (Finding 25's original idea).** `EarlyF6DriverInstall` may only be
+   reachable because `Autounattend.xml`'s `DiskConfiguration`/`ImageInstall` sections drive Setup
+   directly into automated disk configuration, bypassing the *modern* interactive "Where do you want
+   to install Windows" screen — which has a different, non-legacy "Load driver" link never tested in
+   this project. Testing this means rebuilding the answer file to *not* fully automate disk
+   configuration (or omit `DiskConfiguration` entirely) and seeing what screen Setup shows instead,
+   then testing whether **that** screen's driver-load mechanism actually lets Setup proceed. A
+   materially bigger change than option 1, and still just a theory — try it second.
+
+**If neither works**, the honest conclusion is that the Setup.exe pivot itself (not just its
+automation) needs reconsidering against the two-tier bootstrap plan's original fallback path
+(`PHASE2_BOOTSTRAP_ARCHITECTURE.md`), which this pivot was chosen over — possibly combined with
+revisiting Findings 7-8's hivex-based driver-database registration technique applied to `boot.wim`
+specifically rather than the main OS disk (untested; a different boot code path, per Finding 26).
 
 **Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
 - `winpe-boot-index2.qcow2` — **currently reverted back to stock** (`winpeshl.ini` present but

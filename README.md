@@ -31,10 +31,14 @@ was "just automation" turned out to be a real, currently-unresolved dead end.**
   clicking through it (mouse-driven UI automation, confirmed working) doesn't lead
   anywhere either: even a genuinely clean, error-free driver install loops back to
   waiting forever, with no timeout and no hidden "Next" button. There is currently
-  no known path past Setup's disk-configuration step, automated or manual. One
-  real, untested theory remains (whether avoiding full unattend-driven disk
-  configuration lets Setup reach a different, modern driver-load screen instead) —
-  see `PHASE2_ENGINEERING_LOG.md`'s Session 4 section for full detail.
+  no known path past Setup's disk-configuration step, automated or manual.
+- **Two open tracks, not yet attempted, in priority order:** (1) `$WinPEDriver$` —
+  a documented Setup.exe feature (Microsoft KB 2686316) that automatically loads
+  drivers from a fixed folder on the boot volume itself, with no `unattend.xml`
+  config at all; cheaper and better-documented, try this first. (2) whether
+  avoiding full unattend-driven disk configuration lets Setup reach a different,
+  modern driver-load screen instead of the legacy one. See
+  `PHASE2_ENGINEERING_LOG.md`'s Session 4 section for full detail on both.
 
 **Phases 3-5** (Windows role configuration, Datadog integration, lifecycle
 automation) are not started — gated on Phase 2 succeeding for all three target

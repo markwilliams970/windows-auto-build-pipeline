@@ -20,7 +20,7 @@ this order:
    (avoids WinPE entirely) was confirmed true for bootability specifically, but driver injection
    needed WinPE anyway, which changes the calculus. Read for the reasoning, not as current
    direction. **Its fallback path (real `bcdboot` from a self-built WinPE session) may become
-   relevant again** if Session 5's one open theory (below) doesn't pan out.
+   relevant again** if neither of Session 5's two open tracks (below) pans out.
 4. `HANDOFF_FROM_UNATTENDED_INSTALL.md` — the original prior-art research (why this project exists,
    what the sibling project already solved vs. couldn't). Still accurate; nothing here has changed.
 5. `PREREQUISITES.md` — host tooling this project needs beyond the sibling project. Already
@@ -68,30 +68,51 @@ manual.** This is a real setback, not a small remaining gap — internalize this
 anything that looks like "just pre-load the driver a bit differently" or "just click through it more
 carefully." The evidence is timestamp-based proof from `setupact.log`, not inference.
 
+**After Finding 25's dead end, real multi-angle web research (Finding 26) — not another guess —
+turned up a cheaper, better-documented lead than the "modern screen" theory below.**
+`$WinPEDriver$` is a real, primary-source-documented Setup.exe feature (Microsoft KB 2686316,
+quoted directly): Setup automatically scans `C:$WinPEDriver$`, `D:$WinPEDriver$`,
+`E:$WinPEDriver$`, and **`X:$WinPEDriver$`** (the boot volume itself — fully under this project's
+control offline) and loads any `.INF`-described drivers found there, with no `unattend.xml`
+configuration at all. It's explicitly a different mechanism from both `drvload` and `DriverPaths`
+(Setup's own KB lists all three as separate methods), which is exactly why it's worth testing
+before assuming the whole pivot is dead. **Not yet tested** — see "What to do first" below.
+
 ---
 
 ## What to do first this session
 
-1. Confirm you've read the engineering log's Session 4 resumption section in full, then decide,
-   together with whoever you're working with, whether to pursue the one open theory below or step
-   back to reconsider architecture — **this is a real decision point, not a "just try the next
-   thing" continuation.** Don't silently start rebuilding `Autounattend.xml` without checking in
-   first; Session 4 already spent a full session on what looked like a small remaining gap turning
-   into a real blocker, and this next step is a bigger change than anything tried so far.
-2. **The one real open thread, not yet attempted:** `EarlyF6DriverInstall` is Windows Setup's legacy
-   "press F6 to load a mass-storage driver" mechanism. It may only be reachable because
-   `Autounattend.xml`'s `DiskConfiguration`/`ImageInstall` sections drive Setup directly into
-   automated disk configuration, skipping past the *modern* interactive "Where do you want to install
-   Windows" screen — which has a different, non-legacy "Load driver" link never tested in this
-   project. To test this: rebuild `Autounattend.xml` to *not* fully automate disk configuration (or
-   omit `DiskConfiguration` entirely), boot, see what screen Setup actually shows instead, and test
-   whether *that* screen's driver-load mechanism actually lets Setup proceed once satisfied (unlike
-   the legacy F6 dialog, which doesn't). If this also dead-ends, the honest conclusion is that the
-   Setup.exe pivot itself needs reconsidering against `PHASE2_BOOTSTRAP_ARCHITECTURE.md`'s original
-   fallback (real `bcdboot` from a self-built WinPE session, driver injection handled some other way
-   — possibly revisiting the `virt-v2v`/hivex approach with fresh eyes, or the DISM COM-hosting
-   failure from Findings 7-13 with the newer `ntoseye` kernel-debugging tooling now available).
-3. **Check what's ephemeral before assuming it's still there.** Everything under `/tmp/` from
+1. Confirm you've read the engineering log's Session 4 resumption section in full (including
+   Finding 26), then decide, together with whoever you're working with, which of the two open
+   tracks to pursue — **this is a real decision point, not a "just try the next thing"
+   continuation.** Don't silently start rebuilding `Autounattend.xml` (track 2) without checking in
+   first; track 1 is cheaper and better-documented and should be tried first regardless.
+2. **Track 1 — try this first (Finding 26, not yet attempted):** copy the 4 known-good `viostor`
+   driver files into `X:\$WinPEDriver$\viostor\2k25\amd64\` on `winpe-boot-index2.qcow2` (same
+   `qemu-nbd`-mount routine as always, single Bash call). **No `winpeshl.ini` change, no
+   `Autounattend.xml` change needed.** Boot exactly as every Session 4 test. Watch `setupact.log`
+   for `PnPIBS: Checking for pre-configured driver directory X:$WinPEDriver$.` and whatever follows
+   it. If `EarlyF6DriverInstall` never shows (or shows and lets Setup proceed once the driver's
+   found this way), this is a real, much smaller permanent fix than either alternative. If it
+   doesn't help, record why (does the scan even find the folder? does it load the driver but still
+   hit the same gate?) before moving to track 2 — that evidence is valuable either way.
+3. **Track 2 — the "modern screen" theory (Finding 25's original idea, bigger change, try second):**
+   `EarlyF6DriverInstall` is Windows Setup's legacy "press F6 to load a mass-storage driver"
+   mechanism. It may only be reachable because `Autounattend.xml`'s `DiskConfiguration`/
+   `ImageInstall` sections drive Setup directly into automated disk configuration, skipping past the
+   *modern* interactive "Where do you want to install Windows" screen — which has a different,
+   non-legacy "Load driver" link never tested in this project. To test: rebuild `Autounattend.xml`
+   to *not* fully automate disk configuration (or omit `DiskConfiguration` entirely), boot, see what
+   screen Setup actually shows instead, and test whether *that* screen's driver-load mechanism
+   actually lets Setup proceed once satisfied (unlike the legacy F6 dialog, which doesn't).
+4. **If neither track works**, the honest conclusion is that the Setup.exe pivot itself needs
+   reconsidering against `PHASE2_BOOTSTRAP_ARCHITECTURE.md`'s original fallback (real `bcdboot` from
+   a self-built WinPE session, driver injection handled some other way — possibly revisiting the
+   `virt-v2v`/hivex approach applied to `boot.wim` specifically rather than the main OS disk it
+   failed against in Findings 7-8, since WinPE's own boot code path differs from a full NT kernel
+   boot; or the DISM COM-hosting failure from Findings 7-13 with the newer `ntoseye`
+   kernel-debugging tooling now available).
+5. **Check what's ephemeral before assuming it's still there.** Everything under `/tmp/` from
    Session 4 is gone (extracted logs, scratchpad copies of `qmp-click.py`/`qmp-dblclick.py` — the
    *permanent* copy of `qmp-click.py` is in `tools/`, already there, no need to re-extract).
    Everything under this project's own `image-apply/output/` persisted:
@@ -110,10 +131,15 @@ carefully." The evidence is timestamp-based proof from `setupact.log`, not infer
 ## Process reminders (still not optional)
 
 - **Research first — search for existing tooling or a documented mechanism before building
-  anything new.** See `CLAUDE.md`'s "Research-first discipline" section. This is exactly how
-  BCD-SYS, the `virt-v2v` driver-injection pattern, and Microsoft's own "Implicit Answer File Search
-  Order"/`winpeshl.ini` reference documentation were all found and used directly instead of guessed
-  at.
+  anything new, and do it before proposing the next experiment, not just before writing code.**
+  See `CLAUDE.md`'s "Research-first discipline" section. This is exactly how BCD-SYS, the
+  `virt-v2v` driver-injection pattern, Microsoft's own "Implicit Answer File Search
+  Order"/`winpeshl.ini` reference documentation, and (Session 4, Finding 26) `$WinPEDriver$` were
+  all found and used directly instead of guessed at. **This one needed an explicit reminder from
+  the user mid-session** ("remember our research-first philosophy... I'm having to steer us back to
+  this often") after Finding 25 closed with a speculative theory instead of a proper search pass —
+  when a finding ends in "here's a theory, not yet tested," do the multi-angle web research pass
+  *before* presenting that theory as the recommended next step, not after being asked to.
 - **Verify before trusting — this discipline directly overturned a settled-looking assumption
   twice in Session 4 alone.** Checking what was actually in `winpeshl.ini`/`startnet.cmd` before
   editing (rather than trusting Finding 21's premise) and pulling real `setupact.log` timestamps
