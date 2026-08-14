@@ -395,43 +395,38 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** in progress — read
-`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 6)" section before
+**Status:** in progress, **and the core blocker is now solved** — read
+`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 7)" section before
 doing anything else here. Sub-milestone 1 (make the disk bootable) remains **solved, twice over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
-produce a correctly-booting BCD, and this also applies to `boot.wim` index 2 ("Microsoft Windows
-Setup"), which boots clean as a plain disk with zero UEFI landmine exposure. **The Setup.exe pivot
-(Finding 15) is now being set aside** after five independent attempts to get past
-`EarlyF6DriverInstall`'s "Install driver to show hardware" gate all failed: `autounattend.xml`'s
-`DriverPaths` (doesn't feed the gate at all), pre-loading the driver via a real, Microsoft-verified
-`winpeshl.ini` before `setup.exe` starts (loads the driver successfully, per `wmic diskdrive`, but
-`setupact.log` timestamps prove the gate enters its wait state unconditionally regardless), manual
-UI click-through (mouse-driven, via a required `usb-tablet` device — even a genuinely clean,
-error-free driver install loops back to waiting forever, no timeout, no hidden "Next" button),
-Microsoft KB 2686316's `$WinPEDriver$` autoload folder (driver files verified present at the
-documented `X:\$WinPEDriver$\...` location — `X:` in this boot flow is the physical boot-medium
-partition itself, not a separate RAM-disk copy, a previously-wrong assumption this project had held
-implicitly — yet `setupact.log` shows zero evidence Setup ever scanned for it), and disabling
-`DiskConfiguration`/`InstallTo` automation entirely to try to reach a different, modern
-driver-load screen (the "modern screen" theory — ruled out in Session 6: `setupact.log` shows
-`EarlyF6DriverInstall` firing at identical timestamps whether disk configuration is automated or
-not, proving the gate is a fixed, unconditional stage of Setup's own PE-hosted execution, not
-something the answer file's disk-configuration choices route around). **Recommended path forward:
-stop pursuing Setup.exe.** Sub-milestone 1 is already solved two ways that never invoke Setup.exe
-at all — BCD-SYS and real `bcdboot` from a plain (non-Setup) WinPE session — so neither ever
-reaches this gate. The remaining problem reverts to Stage 2's original form from before the
-Setup.exe pivot began: getting the virtio storage driver registered into the offline-applied
-image's own driver database before first real boot. The two hand-rolled attempts at this from
-before the pivot (offline `hivex` registry edits following `virt-v2v`'s recipe, and a
-`DISM`-via-WinPE attempt root-caused to an out-of-process COM hosting failure) are worth
-revisiting with the tooling and lessons this project has gained since, rather than assumed still
-equally broken — see `PHASE2_ENGINEERING_LOG.md`'s Session 6 section for specific suggestions.
-This also means the "do not reuse `autounattend.xml`'s `Microsoft-Windows-Setup` component" rule
-(under "Relationship to `../windows-server-vm-automation/`" above) should be treated as **back in
-force** — the UEFI landmine really is specific to `media=cdrom` boot, not Setup.exe itself, but
-that finding alone didn't end up leading anywhere usable, and the pivot that reconsidered the rule
-is the thing being set aside. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record —
-it's long, but everything needed to resume without re-deriving it is there.
+produce a correctly-booting BCD. The Setup.exe pivot (Finding 15, Sessions 3-5) was **abandoned in
+Session 6** after five independent attempts to get past `EarlyF6DriverInstall`'s "Install driver to
+show hardware" gate all failed — see Findings 19, 24, 25, 27, 28 for the full record; the short
+version is that the gate is a fixed, unconditional stage of Setup's own PE-hosted execution, not
+something any answer-file configuration routes around. **The "do not reuse `autounattend.xml`'s
+`Microsoft-Windows-Setup` component" rule (under "Relationship to `../windows-server-vm-automation/`"
+above) is back in force as a result.**
+
+Returning to the original plan (plain, non-Setup WinPE + real `bcdboot` + offline driver injection)
+then **worked**: Session 7 root-caused why the project's first `hivex` driver-injection attempt
+(Findings 7-8, Session 2) failed silently — its `DriverDatabase` registry edits went under the wrong
+parent key (`ControlSet001\Control\DriverDatabase`, a reasonable-looking but wrong guess);
+`DriverDatabase` actually lives at the **SYSTEM hive root**, a sibling of `ControlSet001`, confirmed
+empirically against a real applied image via `hivexsh`. Re-deriving the full registration recipe
+directly from `virt-v2v`'s actual source (`libguestfs/libguestfs-common`,
+`mlcustomize/inject_virtio_win.ml` — cloned and read line-by-line, not worked from memory) and
+fixing the parent-key path (now `tools/gen-viostor-ddb-reg.py`) produced a disk that **boots
+cleanly past `INACCESSIBLE_BOOT_DEVICE (0x7B)` all the way to a real Windows Server 2025 OOBE
+screen**, confirmed via `tools/qmp-screenshot.py` at each stage of the boot sequence. See Finding
+29 for the complete verification trail.
+
+**What's left for Phase 2**: this test used no `unattend.xml`/specialize pass, so it correctly
+stopped at interactive OOBE rather than an automated WinRM-reachable state — the offline
+specialize pass (Build step 6 below: `\Windows\Panther\unattend.xml`, computer name, WinRM
+enablement) is what turns this into the actual Phase 2 success criterion. Re-verifying the fix on a
+disk built fully fresh (rather than the Session-2-era disk reused for Session 7's test) is also
+still open. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but
+everything needed to resume without re-deriving it is there.
 
 ---
 

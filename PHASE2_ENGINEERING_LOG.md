@@ -1510,3 +1510,192 @@ floppy (`A:`), the boot medium's `\sources\` folder, and the boot medium's own r
 candidates, and editing only one is not sufficient to guarantee a test reflects the intended
 change. Any future `Autounattend.xml` experiment must update **all** locations Setup can find one
 (or remove the file from the ones not being tested) before trusting a "nothing changed" result.
+
+---
+
+## Session 7: the hivex driver-injection experiment, re-run against the plain WinPE path with the
+## recipe verified fresh against virt-v2v's real source — root cause found, fix confirmed working.
+## `INACCESSIBLE_BOOT_DEVICE (0x7B)` is cleared; a real Windows Server 2025 disk now boots to OOBE.
+
+### Finding 29: Findings 7-8's original hivex attempt failed because the `DriverDatabase` registry
+edits were very likely written under the wrong parent key — `DriverDatabase` lives at the **SYSTEM
+hive root** (a sibling of `ControlSet001`), not nested under `ControlSet001\Control`. Registering
+under the wrong parent is a silent no-op with no error from `hivexregedit`, which matches Finding
+8's own unexplained symptom exactly. Corrected and re-tested: **the target disk now boots cleanly
+past 0x7B, all the way to a real Windows Server 2025 OOBE screen.**
+
+**Setup:** per the research-first discipline (and Session 6's own recommendation to re-verify
+Findings 7-8's reconstruction against the primary source rather than re-apply it as remembered),
+cloned `libguestfs/libguestfs-common` fresh and read `mlcustomize/inject_virtio_win.ml` directly —
+the exact file Finding 7 cited by name but, in hindsight, was summarized from rather than fully
+transcribed. Two concrete, verifiable facts fell out of reading the real source line-by-line rather
+than trusting the prior summary:
+
+1. **`add_guestor_to_registry`'s CDB-vs-DDB branch is a strict either/or**, decided by
+   `g#hivex_node_get_child root "DriverDatabase"` — if that node exists, *only* the DDB regedits
+   run; if not, *only* the CDB ones do. Finding 8's description ("added DriverDatabase registration
+   on top of CDB") did both at once, which the real code never does — a divergence, though probably
+   a harmless one on its own (extra CDB entries a modern OS ignores), not the actual bug.
+2. **The real bug: `ddb_regedits`'s returned paths all start directly with `"DriverDatabase"`, with
+   no `ControlSetNNN`/`"Control"` prefix at all** — unlike `cdb_regedits`, whose paths explicitly
+   include `t.inspection.i_windows_current_control_set; "Control"; ...`. Both lists get imported via
+   the same `reg_import` call against the same `root`, and `root` is `g#hivex_root ()` — **the
+   literal top of the SYSTEM hive**, confirmed by reading `mltools/registry.ml`'s
+   `with_hive_write`/`create_path`. So `DriverDatabase\...` in the source really does mean
+   `SYSTEM\DriverDatabase\...`, not `SYSTEM\ControlSet001\Control\DriverDatabase\...`.
+
+**Verified empirically against our own real target disk, not just inferred from the OCaml source:**
+mounted `win2025-test.qcow2` (a 64GB disk with `install.wim` already applied from Session 2, still
+around and reusable) read-only and ran `hivexsh` interactively against its `SYSTEM` hive:
+`ls` at hive root shows `DriverDatabase` as a **direct sibling of `ControlSet001`, `Select`,
+`Setup`, etc.** — not a child of `ControlSet001\Control` — and it already has real, non-empty
+`DeviceIds`/`DriverFiles`/`DriverInfFiles`/`DriverPackages` subkeys (populated by `DISM`/`wimapply`
+at image-apply time, not empty as `virt-v2v`'s "never booted" assumption implies). This is
+concrete, first-party confirmation, not a guess: **if Finding 8 wrote its DDB entries under
+`ControlSet001\Control\DriverDatabase\...` (a reasonable-looking but wrong assumption, and the
+placement its own prose description suggests, coming directly after CDB paths that correctly use
+that prefix), the edit would have silently created a brand-new, never-read key — exactly matching
+Finding 8's "byte-for-byte identical 0x7B, no error" symptom.**
+
+**Rebuilt the whole recipe from the verified source, output-checked before applying:** wrote
+`tools/gen-viostor-ddb-reg.py` (new permanent tooling) to generate a `.reg` file transcribing
+`add_guestor_to_registry`/`cdb_regedits`(the `Services` key)/`ddb_regedits` byte-for-byte —
+including the `DriverInfFiles\guestor.inf` `REG_MULTI_SZ` default value, the `DeviceIds\PCI\<pciid>`
+entry (value name is the *bare* `guestor.inf`, not the arch-suffixed label — another place Finding
+8's prose was ambiguous enough to plausibly have gotten wrong), the 48-byte `DriverPackages\<label>`
+`Version` blob, and the `Configurations`/`Descriptors` subkeys — all rooted directly under
+`DriverDatabase`, not `ControlSet001\Control\DriverDatabase`. One mechanical wrinkle hit and fixed:
+`hivexregedit --merge` requires every intermediate key to already exist in the file before a child
+under it can be created (it does not auto-create multiple levels of nesting the way real
+`regedit.exe` does) — the first `--merge` attempt died with `cannot create ... since parent ...
+does not exist`; fixed by adding explicit, empty `[...\Configurations]`/`[...\Descriptors]`/
+`[...\Descriptors\PCI]` sections before their populated children.
+
+**Also needed, not previously working on this exact disk:** `winpe-boot-index1.qcow2.bak` turned
+out to carry **Finding 14's leftover debug-setup `startnet.cmd`** (the `bcdedit /debug on` /
+`ntoseye` experiment), not Finding 12's `drvload`+`diskpart`+`bcdboot` script — it has no `drvload`
+call at all, so `diskpart`'s `select disk 1` silently failed to find the (invisible, undriverd)
+target disk on every boot, confirming Finding 14's own unresolved suspicion from last session.
+Reverted `startnet.cmd` to bare `wpeinit` and drove the rest **interactively** via `Shift+F10`
+instead of trusting another unattended script blindly: `drvload X:\drivers\viostor\viostor.inf`
+(succeeded — `diskpart`'s `list disk` went from showing only Disk 0 to showing both Disk 0 and the
+64GB Disk 1 immediately after), `diskpart /s X:\diskpart-assign.txt` (assigned `S:`/`W:` correctly),
+then **a real `bcdboot W:\Windows /s S: /f UEFI`** — `"Boot files successfully created."` — giving
+this target disk a genuine Microsoft-tool-built BCD (not BCD-SYS's), directly addressing Session 6's
+own flagged concern about which BCD mechanism was actually in play during Findings 7-8. Copied
+`viostor.sys` to `W:\Windows\System32\drivers\viostor.sys` (not present on this disk before this
+session), then `wpeutil shutdown`.
+
+**Applied the corrected `.reg` file** via `hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SYSTEM'
+<SYSTEM hive> tools/gen-viostor-ddb-reg.py`'s output — clean exit 0 this time. Verified every value
+landed correctly via `hivexregedit --export` before ever attempting a boot (the `Services\viostor`
+key, both `DeviceIds\PCI\<pciid>` entries, and the full `DriverPackages\<label>` tree all present
+and byte-correct).
+
+**Result: booted the target disk alone** (`virtio-blk-pci`, fresh `OVMF_VARS`, no WinPE, no floppy,
+no Setup.exe involved at any point) **and watched it progress cleanly through the full boot
+sequence — TianoCore splash → Windows boot animation → "Getting ready" → a real Windows Server 2025
+OOBE screen ("Hi there" / region-and-language setup)** — confirmed via `tools/qmp-screenshot.py` at
+each stage, not assumed from a lack of error. This is unambiguous: OOBE only ever renders after a
+fully successful boot through the storage driver, kernel, HAL, session manager, and graphics stack —
+there is no path to this screen with the storage driver still unregistered. **`INACCESSIBLE_BOOT_DEVICE
+(0x7B)` is cleared, via the originally-planned offline `hivex` mechanism, on the plain (non-Setup.exe)
+WinPE + real-`bcdboot` bootstrap path** — the path Session 6 recommended returning to after the
+Setup.exe pivot's five-way dead end.
+
+**What this does and doesn't prove yet:** this proves Phase 2's core technical blocker — offline
+driver injection clearing 0x7B without any interactive Setup.exe involvement — is solved. It does
+**not** yet prove the full Phase 2 success criterion (`CLAUDE.md`'s "installs and becomes
+WinRM-reachable without manual interaction"): this boot used no `unattend.xml`/specialize pass at
+all, so it correctly stopped at interactive OOBE rather than an automated WinRM-reachable state.
+The remaining Phase 2 work is exactly what `CLAUDE.md`'s Build step 6 already specifies — an offline
+specialize/unattend pass (`\Windows\Panther\unattend.xml`, computer name, WinRM enablement) applied
+before this same first real boot — not a new unknown.
+
+**Not yet re-verified on this exact disk, flagged for the next session:** this test reused
+`win2025-test.qcow2`, a disk originally built in Session 2 before this project's Windows Server 2025
+WIM-index/edition conventions were as settled as they are now, and its `install.wim` apply predates
+several since-learned lessons. The fix itself (the corrected `.reg` recipe) is verified against
+Microsoft/virt-v2v-documented registry semantics, not against any disk-specific quirk, so there's
+good reason to expect it generalizes — but per this project's own "verify before trusting" standard,
+a clean, fully-fresh disk (freshly partitioned, freshly `wimapply`'d, per `image-apply/` process) run
+through this same sequence end-to-end has not yet been done and should be the first thing confirmed
+next, before building the specialize/unattend layer on top.
+
+**New permanent tooling:** `tools/gen-viostor-ddb-reg.py` — generates the corrected, source-verified
+`.reg` file for offline viostor `DriverDatabase` registration. Confirmed byte-identical output to
+the `.reg` file actually used in this session's successful test.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 7)
+
+**Where things stand: Phase 2's core blocker is solved.** The offline `hivex` driver-injection
+mechanism (Findings 7-8's original approach, abandoned in Session 2 as an unexplained dead end) has
+been root-caused (wrong `DriverDatabase` parent key, Finding 29) and confirmed working end-to-end
+on the plain WinPE + real-`bcdboot` bootstrap path Session 6 recommended returning to: a real
+Windows Server 2025 disk now boots cleanly past `INACCESSIBLE_BOOT_DEVICE (0x7B)` to a genuine OOBE
+screen, using only offline mechanisms (`qemu-nbd`, `wimapply`/DISM-applied image, `bcdboot` run from
+a one-time WinPE boot, `hivexregedit`) — no Setup.exe, no interactive install, no `media=cdrom`
+boot of any kind.
+
+**Recommended next steps, in order:**
+1. **Re-verify end-to-end on a completely fresh disk**, not the Session-2-era `win2025-test.qcow2`
+   reused this session — partition + `wimapply` + BCD-SYS or WinPE `bcdboot` + this session's
+   corrected driver injection, from scratch, to confirm the fix generalizes and isn't accidentally
+   dependent on some quirk already baked into that specific disk from its Session 2 history.
+2. **Build the offline specialize/unattend pass** (`CLAUDE.md`'s Build step 6): drop a
+   `\Windows\Panther\unattend.xml` onto the offline-mounted image before first boot (computer name,
+   WinRM enablement — the sibling project's own `autounattend.xml` `specialize`/`oobeSystem` content
+   is a proven starting point for the actual settings, even though its *delivery mechanism* here is
+   different: offline file placement, not Setup.exe consuming it during install). This is what turns
+   "boots to OOBE" into Phase 2's actual success criterion, a real unattended WinRM connection.
+3. **Consider whether to formalize this session's ad hoc sequence into real `image-apply/` scripts**
+   (`partition-disk.sh`, `apply-image.sh`, `make-bootable.sh`, per `CLAUDE.md`'s repository sketch) —
+   `image-apply/` is still empty of actual implementation as of this session; everything so far has
+   been ad hoc Bash run directly per session, appropriate for the R&D phase this has been, but now
+   that the core mechanism is proven end-to-end, scripting it may be due. Not done this session -
+   flagged as a decision point, not a default next action, per `CLAUDE.md`'s "explain the design,
+   ask before generating significant implementation code" instruction.
+4. **Once WinRM-reachable for Server 2025**, repeat for Server 2022 and Windows 11 per the explicit
+   phase-gating requirement — Phase 3 does not start until all three OSes are proven.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `win2025-test.qcow2` — **now has a working, verified fix applied**: real `bcdboot`-built BCD,
+  `viostor.sys` present, and the corrected `DriverDatabase` registration. Confirmed booting cleanly
+  to OOBE. Worth keeping as a known-good reference disk, though see the caveat above about
+  re-verifying the fix on a disk built fully fresh too.
+- `winpe-boot-index1-work.qcow2` — working copy of the plain WinPE medium, `startnet.cmd` reverted
+  to bare `wpeinit` this session (was Finding 14's leftover debug script before that). Use this one
+  going forward, not the `.bak`, which remains untouched as the original safety copy.
+- `OVMF_VARS_hivex-test.fd` / `OVMF_VARS_hivex-boot-test.fd` — this session's fresh OVMF vars
+  copies. Note for next time: **always start from a fresh `OVMF_VARS_4M.fd` copy per distinct boot
+  target** — reusing a vars file across unrelated qcow2s carries over stale NVRAM boot entries
+  (hit this once this session: `winpe-boot-index1-work.qcow2` tried to boot from a stale
+  `Boot0008` pointing at a completely different disk's ESP before a fresh vars file fixed it).
+- No VM left running at the end of Session 7 (confirmed via `pgrep`).
+
+**Key facts worth remembering:**
+- **`DriverDatabase` lives at the SYSTEM hive root, a sibling of `ControlSet001`** — not nested
+  under `ControlSet001\Control`. This is the single most important correction from this session;
+  get it wrong and `hivexregedit` will succeed with zero errors while silently doing nothing.
+- **`hivexregedit --merge` needs every intermediate key declared explicitly** — unlike real
+  `regedit.exe`, it will not auto-create more than one missing level of nesting per `[...]` section.
+  Declare empty parent-key sections before any deeply-nested child key.
+- **Plain WinPE (`boot.wim` index 1) cannot see a virtio-blk-pci disk without `drvload`ing viostor
+  first** — confirmed directly (`diskpart list disk` showed only WinPE's own boot disk until
+  `drvload` ran, then immediately showed both). This was Finding 14's own flagged-but-unconfirmed
+  suspicion from Session 2; now confirmed. Any future WinPE-driven script touching a virtio-blk
+  target must `drvload` before any `diskpart`/disk-enumeration step, unconditionally.
+- **Startnet.cmd customizations don't survive between experiments unless deliberately reset** — the
+  `.bak` WinPE medium had accumulated Finding 14's debug-setup script, not Finding 12's
+  drvload/bcdboot script, from whatever was baked in last. Always inspect (`cat`) a reused boot
+  medium's `startnet.cmd` before trusting what it will do, per this project's own "verify before
+  trusting" standard — this cost real time this session before being caught.
+- `qmp-type.py` cannot type `%`, `|`, or `&` (no `CHAR_MAP` entries) — avoid environment-variable
+  references (`%SystemDrive%`), pipes, or `2>&1`-style redirection in any command typed through it.
+  Use literal drive letters (`X:`, `W:`) instead of `%SystemDrive%`/`%SystemRoot%` where possible,
+  and redirect stdout/stderr separately if needed rather than combining with `&`.
+- `win2025-test.qcow2` (64GB, `install.wim`-applied) and `winpe-boot-index1.qcow2.bak`
+  (plain WinPE, no Setup.exe) are both real, reusable, non-trivial-to-rebuild assets from Session 2 —
+  worth knowing they still exist in `image-apply/output/` rather than assuming a rebuild is needed.

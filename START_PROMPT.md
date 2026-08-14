@@ -3,23 +3,20 @@ in-progress investigation behind it. Read documents before doing or suggesting a
 this order:
 
 1. **`PHASE2_ENGINEERING_LOG.md` — read this first, especially its final section, "STATUS AND NEXT
-   STEPS ON RESUMPTION (Session 6)."** This is the actual current state of the investigation: what's
-   solved, what's not, what was tried and failed (with root causes where we found them), and the
-   specific next action already agreed on. Don't skip this to save time — it exists precisely so
-   nothing in it has to be re-derived, and re-deriving it has already burned full sessions before.
-   **Session 6 closed out the Setup.exe pivot entirely** — the recommended direction has reversed
-   from every prior session's resumption notes. Read the Session 6 section in full even if you
-   remember earlier sessions', don't skim on the assumption nothing changed.
+   STEPS ON RESUMPTION (Session 7)."** This is the actual current state of the investigation:
+   **Phase 2's core blocker is now solved** — a real Windows Server 2025 disk boots cleanly past
+   `INACCESSIBLE_BOOT_DEVICE (0x7B)` to a genuine OOBE screen, using only offline mechanisms.
+   Read the Session 7 section (Finding 29) in full — it's the most important finding in the whole
+   log, and everything before it (Sessions 3-6, the entire Setup.exe pivot and its abandonment) is
+   now historical context for *why* this path was returned to, not the current blocker.
 2. `CLAUDE.md` — project goals, architectural principles (no golden image, ever — the eval-media
    expiration reasoning is a hard constraint), tool responsibilities, and the phased development
    plan. Its Phase 2 status line and the "Do not reuse" note under "Relationship to
    `../windows-server-vm-automation/`" both have update markers pointing back at the engineering
-   log — read those two spots specifically even if skimming the rest. **The "Do not reuse
-   `Microsoft-Windows-Setup`" rule is back in force** after being provisionally relaxed for the
-   Setup.exe pivot across Sessions 3-5.
+   log — read those two spots specifically even if skimming the rest.
 3. `PHASE2_BOOTSTRAP_ARCHITECTURE.md` — the design reasoning behind BCD-SYS and the WinPE
-   `bcdboot` fallback. **This is current direction again, not historical context** — the Setup.exe
-   pivot that had superseded it is now set aside.
+   `bcdboot` fallback. **This is exactly the path that just worked** — read it as current, accurate
+   design reasoning, not historical context.
 4. `HANDOFF_FROM_UNATTENDED_INSTALL.md` — the original prior-art research (why this project exists,
    what the sibling project already solved vs. couldn't). Still accurate; nothing here has changed.
 5. `PREREQUISITES.md` — host tooling this project needs beyond the sibling project. Already
@@ -27,193 +24,173 @@ this order:
 
 ---
 
-## Where things actually stand (updated end of Session 6)
+## Where things actually stand (updated end of Session 7)
 
-**Still solved:** making an offline-applied Windows Server 2025 disk boot at all, via UEFI/OVMF,
-with zero exposure to the sibling project's "press any key" landmine — confirmed two independent
-ways, **neither of which involves Setup.exe**: BCD-SYS (zero boots required) and real `bcdboot` run
-from a self-built plain WinPE session (`boot.wim` index 1). A third method, `boot.wim` index 2
-("Microsoft Windows Setup") booting clean as a plain disk, is also confirmed to work for
-*bootability* — but see below for why this path is now being abandoned anyway.
+**Phase 2's core technical blocker — offline virtio driver injection clearing
+`INACCESSIBLE_BOOT_DEVICE (0x7B)` without any interactive Setup.exe involvement — is solved.**
 
-**Still solved, empirically:** the driver/hardware/disk chain itself. A real 40GB target disk via
-`virtio-blk-pci`, loaded with the real `viostor` driver, comes up fully healthy via `wmic
-diskdrive`, confirmed multiple ways. The driver file and hardware ID match are not in question —
-only *how* to get the driver registered before the disk's first real boot remains open.
+The full working sequence, confirmed end-to-end this session:
+1. A target disk with `install.wim` already applied (`win2025-test.qcow2`, reused from Session 2).
+2. Boot a **plain, non-Setup WinPE medium** (`boot.wim` index 1, not index 2 — Setup.exe is not
+   involved anywhere in this path) with the target disk attached via `virtio-blk-pci`.
+3. Inside WinPE: `drvload X:\drivers\viostor\viostor.inf` (the target disk is **not visible at
+   all** to WinPE before this — `diskpart list disk` shows only WinPE's own boot disk until the
+   driver loads, then immediately shows both).
+4. `diskpart` to assign drive letters to the target's ESP (`S:`) and Windows partition (`W:`).
+5. **Real `bcdboot W:\Windows /s S: /f UEFI`** — a genuine Microsoft-tool-built BCD, not BCD-SYS's
+   approximation (BCD-SYS remains a fully valid alternative for this step; this session used real
+   `bcdboot` specifically to eliminate it as a confound versus Session 2's original failed attempt).
+6. Copy `viostor.sys` to the target's `Windows\System32\drivers\viostor.sys`.
+7. Shut down WinPE cleanly.
+8. **Offline, from the Linux host**: `hivexregedit --merge` a corrected `.reg` file
+   (`tools/gen-viostor-ddb-reg.py`) into the target's `SYSTEM` hive, registering `viostor` in
+   `DriverDatabase` — the actual fix; see below for what was wrong before.
+9. Boot the target disk **alone** (no WinPE, no floppy, no Setup.exe) — clean progression through
+   TianoCore → Windows boot animation → "Getting ready" → a real Windows Server 2025 OOBE screen.
 
-**The Setup.exe pivot (Finding 15) is being set aside. Five independent attempts to get past
-`EarlyF6DriverInstall`'s "Install driver to show hardware" gate have now failed, each for a
-different, well-evidenced reason:**
+**The root cause of Session 2's original failure (Findings 7-8), found by reading `virt-v2v`'s
+actual source instead of working from a prior summary:** `DriverDatabase` lives at the **SYSTEM
+hive root**, a direct sibling of `ControlSet001` — not nested under `ControlSet001\Control` as a
+reasonable-looking (but wrong) assumption would suggest, and as Finding 8's own prose description
+suggests it was placed (written immediately after CDB paths that correctly use that prefix).
+Registering under the wrong parent key is a **silent no-op** — `hivexregedit` raises no error, and
+Windows never sees the registration — which matches Finding 8's "byte-for-byte identical 0x7B, no
+error" symptom exactly. Confirmed empirically (not just inferred from source) via `hivexsh` against
+a real applied image: `DriverDatabase` is a direct child of the hive root, already populated with
+real `DeviceIds`/`DriverFiles`/`DriverInfFiles`/`DriverPackages` content from `wimapply` time.
 
-1. `Autounattend.xml`'s `DriverPaths` — doesn't feed the gate at all (Finding 19).
-2. Pre-loading the driver via a real, Microsoft-reference-verified `winpeshl.ini` before Setup
-   starts — driver loads successfully (confirmed via `wmic`), but the gate shows anyway.
-   `setupact.log` timestamps prove the gate's Execute method starts waiting for interactive input
-   in the same second as Setup's own Prepare phase, unconditionally (Finding 24).
-3. Manually clicking through the gate (mouse-driven, via a required `usb-tablet` device) — even a
-   genuinely clean, error-free install loops right back to `Driver: Starting Wait` forever. No
-   timeout, no hidden "Next" button (Finding 25).
-4. `$WinPEDriver$` (Microsoft KB 2686316's documented driver-autoload folder) — driver files
-   verified present at the exact documented location (`X:\$WinPEDriver$\...`), yet the same empty
-   dialog appeared and `setupact.log` shows zero evidence Setup ever scanned for the folder
-   (Finding 27).
-5. **Disabling `DiskConfiguration`/`InstallTo` automation** to test whether Setup would reach a
-   different, modern driver-load screen instead of the legacy gate (the "modern screen" theory) —
-   **ruled out this session (Finding 28).** After catching and fixing a real confound (Setup's
-   implicit answer-file search checks multiple locations — the answer floppy, the boot medium's
-   `\sources\`, and its root — and treats more than one as "usable"; the first test's edit only
-   reached two of three, so the floppy's unmodified copy may have won), a clean re-test with all
-   three locations agreeing produced `setupact.log` timestamps **identical** to every prior test.
-   This proves `EarlyF6DriverInstall` is a fixed, unconditional stage of Setup's own PE-hosted
-   execution — not something the answer file's disk-configuration choices route around.
+**Still solved, unchanged from before:** making an offline-applied disk boot at all under UEFI/OVMF
+(BCD-SYS or real `bcdboot`, both confirmed multiple times now), and the driver/hardware match
+itself (`viostor` correctly matches the real `virtio-blk-pci` hardware ID).
 
-**Net effect: there is no known path past Setup's disk-configuration step, in any of five
-independently-motivated ways tried, and the theory that a bigger `Autounattend.xml` rewrite might
-find one is now also closed.** This is a firm conclusion, not a remaining gap — internalize this
-before considering any further Setup.exe-based experiment.
+**Abandoned this project, now historical context:** the Setup.exe pivot (Finding 15, Sessions 3-5) —
+five independent attempts to get past Setup.exe's own `EarlyF6DriverInstall` gate all failed
+(Findings 19, 24, 25, 27, 28), leading Session 6 to recommend returning to the plain-WinPE path
+above, which then worked. The "do not reuse `autounattend.xml`'s `Microsoft-Windows-Setup`
+component" rule is back in force. No need to revisit this pivot's detail unless something about the
+current working path breaks and Setup.exe starts looking attractive again — treat it as closed.
 
 ---
 
 ## What to do first this session
 
-1. Confirm you've read the engineering log's Session 6 resumption section in full, then start
-   planning the return to the bootstrap architecture's original path — this is a real pivot back,
-   not a small continuation, so it's worth re-grounding in `PHASE2_BOOTSTRAP_ARCHITECTURE.md`
-   before writing any code.
-2. **The problem now reverts to its original Stage 2 form** (see the engineering log's "Open items
-   carried forward to the next session," right after Finding 6, from before the Setup.exe pivot
-   ever began): register the virtio storage driver into the offline-applied Windows image's own
-   driver database, so that when the disk — made bootable via BCD-SYS or real `bcdboot` from a
-   **plain, non-Setup** WinPE session (`boot.wim` index 1, already proven working in Findings 6/12)
-   — boots for real, the kernel already knows about the viostor device and `INACCESSIBLE_BOOT_DEVICE`
-   never occurs. Two hand-rolled attempts at this were made and shelved before the Setup.exe pivot
-   started chasing an easier-looking path instead — worth revisiting with what this project has
-   learned since, not assumed still equally broken:
-   - **Offline `hivex` registry edits following `virt-v2v`'s recipe** (original Findings 7-8) —
-     failed for reasons never fully root-caused, against the *main OS disk* specifically. Worth
-     first checking whether that failure was specific to something about the main-OS-disk boot path
-     (a full NT kernel boot) before assuming the technique itself is unsound — re-reading
-     `virt-v2v`'s actual source for the exact registry keys/values it writes (rather than working
-     from this project's own possibly-incomplete reconstruction) is a reasonable first step.
-   - **A `DISM`-via-WinPE attempt** (original Findings 9-13) — root-caused to an out-of-process COM
-     hosting failure. This project's QMP-based tooling (`qmp-click.py`, `qmp-type.py`,
-     `qmp-sendkey.py`) is much more mature now than when this was first tried; may be worth another
-     look if the `hivex` route doesn't pan out.
-3. **Re-verify `winpe-boot-index1.qcow2.bak`** (the plain, non-Setup WinPE medium `bcdboot` was
-   proven against in Findings 6/12) still boots cleanly before building on it — it hasn't been
-   touched since Session 2/3, and this project's own "verify before trusting" standard applies here
-   too.
-4. **Check what's ephemeral before assuming it's still there.** Everything under `/tmp/` from
-   Session 6 is gone. Everything under this project's own `image-apply/output/` persisted:
-   - `winpe-boot-index2.qcow2` — `Autounattend.xml` (both partition-root and `\sources\` copies)
-     reverted to the original, working version this session, after two experiments swapped in a
-     modified variant. The `\$WinPEDriver$\viostor\2k25\amd64\` folder added in Finding 27 is still
-     present at its partition root — harmless, inert now that this pivot is set aside; leave it or
-     clean it up, doesn't matter. `winpeshl.ini` still in Session 4's reverted-to-stock state.
-     **This qcow2 is no longer the medium to build on going forward** — see point 3 above.
-   - `winpe-boot-index1.qcow2.bak` — the plain WinPE medium (no Setup.exe) this project should
-     actually build on now. Not touched since Session 2/3; re-verify before relying on it.
-   - `win2025-target.qcow2` — still blank/unpartitioned.
-   - `answer-floppy.img` — `Autounattend.xml` reverted to the original this session too (it's also
-     one of the locations Setup's implicit search checks — see the "new fact" note below).
-   - No VM left running at the end of Session 6 (confirmed via `pgrep` before ending).
+1. Confirm you've read the engineering log's Session 7 section (Finding 29) in full, then decide
+   with whoever you're working with which of the recommended next steps to prioritize:
+2. **Re-verify end-to-end on a completely fresh disk.** Session 7's success reused
+   `win2025-test.qcow2`, a disk originally built in Session 2, before some of this project's
+   current conventions were as settled. The fix is verified against Microsoft/`virt-v2v`-documented
+   registry semantics, not against any disk-specific quirk, so it should generalize — but this
+   hasn't actually been confirmed on a disk partitioned + `wimapply`'d from scratch this session.
+   Do this before building anything else on top.
+3. **Build the offline specialize/unattend pass** (`CLAUDE.md`'s Build step 6): drop a
+   `\Windows\Panther\unattend.xml` onto the offline-mounted image before first boot (computer name,
+   WinRM enablement). The sibling project's own `autounattend.xml` `specialize`/`oobeSystem` content
+   is a proven starting point for the actual *settings* — but the *delivery mechanism* here is
+   different: offline file placement onto the mounted image, not Setup.exe consuming it during
+   install. This is what turns "boots to OOBE" into Phase 2's actual success criterion (a real,
+   unattended WinRM connection).
+4. **Consider formalizing this into real `image-apply/` scripts.** `image-apply/` is still empty of
+   actual implementation — everything through Session 7 has been ad hoc Bash run directly per
+   session, appropriate for the R&D phase this has been. Now that the core mechanism is proven
+   end-to-end, scripting it (`partition-disk.sh`, `apply-image.sh`, `make-bootable.sh`, per
+   `CLAUDE.md`'s repository sketch) may be due — but this is a real decision point, not a default
+   next action. Per `CLAUDE.md`'s Claude Instructions, explain the design and check in before
+   generating significant implementation code.
+5. **Once WinRM-reachable for Server 2025**, repeat for Server 2022 and Windows 11 Enterprise
+   Evaluation — Phase 3 does not start until all three OSes are independently proven, per the
+   explicit phase-gating rule.
+6. **Check what's ephemeral before assuming it's still there.** Everything under `/tmp/` from
+   Session 7 is gone (including the intermediate `.reg` file — regenerate with
+   `tools/gen-viostor-ddb-reg.py`, confirmed to reproduce byte-identical output). Everything under
+   `image-apply/output/` persisted — see the persistent-state list below.
 
 ---
 
 ## Process reminders (still not optional)
 
-- **Research first — search for existing tooling or a documented mechanism before building
-  anything new, and do it before proposing the next experiment, not just before writing code.**
-  See `CLAUDE.md`'s "Research-first discipline" section. This is exactly how BCD-SYS, the
-  `virt-v2v` driver-injection pattern, and `$WinPEDriver$` were all found and used directly instead
-  of guessed at — even the leads that ultimately didn't pan out (`$WinPEDriver$`, the modern-screen
-  theory) were still right to try first: cheap relative to a bigger rewrite, well-documented or
-  clearly falsifiable, and their failures produced real evidence rather than burning a session on
-  an unproven bigger change first.
-- **Verify before trusting — this discipline caught a real confound in Session 6 itself.** The
-  first "modern screen" test looked like a clean negative result until checking `setupact.log`'s
-  own `UnattendSearchExplicitPath` lines revealed the answer floppy's *old*, unedited
-  `Autounattend.xml` was still one of three "usable" files Setup could have used — a confound that
-  would have produced a false negative if not caught. Don't trust a "nothing changed" result from
-  an answer-file experiment without confirming every location Setup's implicit search can find one.
+- **Research first — read the actual primary source, not a summary of it, including your own
+  project's prior summary of it.** This is the single biggest lesson from Session 7: Finding 7/8's
+  original summary of `virt-v2v`'s recipe was detailed and looked complete, but was subtly wrong in
+  a way that silently broke everything, and nobody caught it across two full sessions because
+  nobody re-read the actual `.ml` source file until Session 7 did. When a research-derived
+  technique doesn't work and the failure has no clear error message, re-verify the *transcription*
+  against the primary source before concluding the *technique* is broken.
+- **Verify before trusting — caught real problems twice this session.** (1) Checking `hivexsh`
+  directly against a real hive confirmed `DriverDatabase`'s actual parent, rather than trusting
+  either the old summary or a fresh-but-unverified reading of the OCaml source. (2) Inspecting a
+  reused WinPE medium's actual `startnet.cmd` before trusting it (`cat`, not assumption) caught that
+  it carried Finding 14's leftover debug script, not Finding 12's drvload/bcdboot script — would
+  have produced a confusing, silent failure (`diskpart` unable to find the target disk) if not
+  caught. Always inspect what a reused artifact actually contains before relying on it.
 - **Give periodic status updates during long-running steps** (boot watches, `wimapply`, anything
   that takes more than a couple minutes) — don't go silent until the very end. This is a standing
   preference, not a one-off ask.
-- **Work in small, verified steps and document as you go — including dead ends, and especially
-  including a whole pivot turning out not to pan out.** Findings 15-28 (the entire Setup.exe pivot,
-  across Sessions 3-6) are recorded in exactly the same detail as any success, for the same reason
-  as always: re-treading the same ground is the actual cost this discipline avoids, and the next
-  session (or a different investigator entirely) should be able to see exactly why this pivot was
-  abandoned without re-running any of these five experiments.
+- **Work in small, verified steps and document as you go.** Finding 29 (Session 7) is recorded in
+  the same detail as every dead end before it, for the same reason as always.
 - **Any `qemu-nbd`-dependent sequence must run inside a single Bash tool call.** This sandbox does
   not reliably keep a backgrounded `qemu-nbd -c` process alive between separate tool invocations
   (Finding 16). A `qemu-system-x86_64 ... -daemonize` VM, by contrast, survives fine across many
-  separate calls. Also note: the mount point directory under `/tmp/win-build-mnt/` does not
-  reliably survive between separate tool calls either (plain `/tmp` cleanup, not a qemu-nbd issue) —
-  `mkdir -p` it fresh inside the same atomic sequence rather than assuming a prior session's
-  mountpoint directory still exists.
-- **A `usb-tablet` device is required for any mouse-driven UI automation** (relative PS/2 mouse
-  input does not produce visible cursor movement this early in boot, confirmed) — likely less
-  relevant going forward since the WinPE `bcdboot` path doesn't need Setup's GUI at all, but keep in
-  mind if any interactive debugging is needed.
-- **`tools/qmp-type.py` cannot type `&`** (no `CHAR_MAP` entry) — avoid `2>&1`-style redirection in
-  any command typed via this tool; run separate commands per target instead.
+  separate calls. The mount point directory under `/tmp/win-build-mnt/` does not reliably survive
+  between separate tool calls either — `mkdir -p` it fresh inside the same atomic sequence.
+- **Always start from a fresh `OVMF_VARS_4M.fd` copy per distinct boot target.** Reusing a vars file
+  across unrelated qcow2s carries over stale NVRAM boot entries — hit this directly in Session 7
+  (a stale `Boot0008` pointed at a completely different disk's ESP until a fresh vars file fixed
+  it). Cheap to avoid, confusing to debug if not.
+- **`hivexregedit --merge` needs every intermediate registry key declared explicitly** — unlike real
+  `regedit.exe`, it will not auto-create more than one missing level of nesting per `[...]` section
+  in one jump; it dies with "cannot create ... since parent ... does not exist" instead. Declare
+  empty parent-key sections before any deeply-nested child key (see
+  `tools/gen-viostor-ddb-reg.py` for the pattern).
+- **Plain WinPE cannot see a virtio-blk-pci disk without `drvload`ing viostor first.** Confirmed
+  directly this session (Finding 14's own unconfirmed Session-2 suspicion). Any WinPE script
+  touching a virtio-blk target must `drvload` before any `diskpart`/disk-enumeration step,
+  unconditionally.
+- **`tools/qmp-type.py` cannot type `%`, `|`, or `&`** (no `CHAR_MAP` entries) — avoid
+  environment-variable references (`%SystemDrive%`), pipes, or `2>&1`-style redirection in any
+  command typed through it. Use literal drive letters (`X:`, `W:`) instead of
+  `%SystemDrive%`/`%SystemRoot%`, and avoid combining stdout/stderr redirection with `&`.
 - **Phase gating still applies**: no Phase 3 (service-layer/role-provisioning) work starts until
   Server 2025, Server 2022, *and* Windows 11 have each independently bootstrapped through Phase 2.
-  Server 2025 is still the only one attempted so far, and Phase 2 itself is not yet working end to
-  end even for Server 2025.
 
 ---
 
 ## Key facts worth their weight in gold (expensive to re-derive, cheap to just remember)
 
-- Server 2025's `install.wim` index 2 = `Windows Server 2025 SERVERSTANDARD` (Finding 0) — the
-  `<NAME>` value used in `Autounattend.xml`'s `/IMAGE/NAME` metadata filter, still relevant if
-  driver injection ends up needing an unattend pass of any kind.
-- `boot.wim` index 1 = plain WinPE (no Setup.exe) — **the medium to build on now.** `boot.wim`
-  index 2 = `Microsoft Windows Setup (amd64)`, the medium the now-abandoned pivot used. Both share
-  the same WinPE-mode BCD boolean elements (`26000010`, `26000022`, `260000b0`, all `hex:01` on the
-  OS loader entry, per Finding 11).
+- **`DriverDatabase` lives at the SYSTEM hive root, a sibling of `ControlSet001`** — not nested
+  under `ControlSet001\Control`. Get this wrong and `hivexregedit` succeeds with zero errors while
+  silently doing nothing. This is Session 7's single most important correction.
+- The full, correct offline driver-registration recipe is transcribed directly from `virt-v2v`'s
+  real source (`libguestfs/libguestfs-common`, `mlcustomize/inject_virtio_win.ml`) into
+  `tools/gen-viostor-ddb-reg.py` — regenerate rather than hand-write if this needs adjusting for a
+  different driver (e.g. `vioscsi`) or OS.
+- `win2025-test.qcow2` (in `image-apply/output/`) is a 64GB disk with `install.wim` applied
+  (Session 2) that Session 7 confirmed boots to OOBE with the corrected driver registration and a
+  real `bcdboot`-built BCD. A real, working, non-trivial-to-rebuild reference asset.
+- `winpe-boot-index1-work.qcow2` — working copy of the plain WinPE medium (no Setup.exe),
+  `startnet.cmd` reverted to bare `wpeinit` in Session 7. Use this one going forward, not the
+  `.bak`, which remains untouched as the original safety copy.
+- Server 2025's `install.wim` index 2 = `Windows Server 2025 SERVERSTANDARD` (Finding 0).
+  `boot.wim` index 1 = plain WinPE (no Setup.exe) — the medium to build on. `boot.wim` index 2 =
+  `Microsoft Windows Setup (amd64)`, the medium the abandoned pivot used.
 - `virtio-win-0.1.285.iso`'s driver folders for Server 2025 are named `2k25` (confirmed via `7z l`)
   — `vioscsi/2k25/amd64`, `viostor/2k25/amd64`, `NetKVM/2k25/amd64`.
-- **Device model matters and is easy to get backwards**: the *boot medium* (whichever WinPE image
-  is actually booting) must be attached via a non-VirtIO device — AHCI/IDE, e.g.
-  `-device ide-hd,bus=ide.0` (q35's built-in ICH9 AHCI controller, no separate controller device
-  needed). `virtio-blk-pci` is only for the *target* disk. Getting this backwards self-inflicts the
-  exact `INACCESSIBLE_BOOT_DEVICE` this whole project exists to solve (Finding 17).
+- **Device model matters and is easy to get backwards**: the *boot medium* must be attached via a
+  non-VirtIO device — AHCI/IDE, e.g. `-device ide-hd,bus=ide.0`. `virtio-blk-pci` is only for the
+  *target* disk. Getting this backwards self-inflicts the exact `INACCESSIBLE_BOOT_DEVICE` this
+  whole project exists to solve (Finding 17).
 - Real hardware ID of the virtio-blk-pci target device (confirmed via QMP `query-pci`): vendor
-  `0x1AF4`, device `0x1001` — matches `viostor.inf`'s legacy entry exactly.
-- `mtools` (`mcopy`/`mmd`/`mdir`) builds and edits FAT floppy images directly, with no `sudo` or
-  loop-mount needed at all — much simpler than `mount -o loop`, which needs root. `mcopy -o` (or
-  `-n`) overwrites a file already on the image in place.
-- **`X:` during a booted WinPE/Setup session is the physical boot-medium NTFS partition itself**,
-  not a separate RAM-disk copy of `boot.wim`'s contents (Finding 27 — confirmed via `wmic
-  logicaldisk`). Any file placed on the mounted qcow2's NTFS partition is directly visible as
-  `X:\...` inside the running session.
-- **Windows Setup's implicit answer-file search checks multiple locations and can treat more than
-  one as "usable" for the same pass simultaneously** (`setupact.log`'s `UnattendSearchExplicitPath`
-  lines) — in this project's boot configuration: the answer floppy (`A:`), the boot medium's
-  `\sources\` folder, and the boot medium's own root. Editing only one is not sufficient to trust a
-  test reflects the intended change (Finding 28) — update all locations, or remove the file from
-  the ones not under test.
-- **`EarlyF6DriverInstall`'s "Install driver to show hardware" gate is a fixed, unconditional stage
-  of Setup.exe's own PE-hosted execution** (Findings 24, 25, 27, 28) — it fires at identical timing
-  regardless of driver pre-loading, `$WinPEDriver$`, or whether disk configuration is automated in
-  the answer file. This is why the pivot is being abandoned; don't re-attempt any Setup.exe-based
-  workaround expecting a different result without new information not already covered above.
-- `setupact.log` actually lives at `X:\$WINDOWS.~BT\Sources\Panther\setupact.log` during a live
-  Setup session — **not** `X:\Windows\Panther\setupact.log` (doesn't exist yet at this stage).
-  `cd /d` into that directory first if typing the literal path via `qmp-type.py` — a `\$` sequence
-  typed directly seems to lose the preceding backslash somehow (observed once, not root-caused).
+  `0x1AF4`, device `0x1001` — matches `viostor.inf`'s legacy entry exactly. Both the legacy
+  (`DEV_1001`) and modern (`DEV_1042`) PCI IDs are registered by `gen-viostor-ddb-reg.py`.
+  `mtools` (`mcopy`/`mmd`/`mdir`) builds and edits FAT floppy images directly, with no `sudo` or
+  loop-mount needed at all.
 - To pull a log or any small file out of a running WinPE session without a network share: open a
   command prompt with `Shift+F10` (`tools/qmp-sendkey.py ... shift-f10`), `copy` the file to the
   attached answer floppy, then read it directly from the host with `mcopy -i answer-floppy.img
   ::filename /host/path`. Files redirected via `dir ... > A:\file.txt` come back UTF-16-encoded —
-  decode with Python's `bytes.decode('utf-16-be')` if `utf-16-le`/plain `utf-16` look garbled; check
-  both. Still the most reliable way to get real diagnostic detail.
-- **`tools/qmp-click.py`** — QMP absolute-position mouse clicks (`--double` for double-clicks).
-  Requires a `usb-tablet` device on the VM — relative PS/2 mouse movement does not work in this
-  environment at all. Likely less needed going forward (see Process reminders above).
+  decode with Python's `bytes.decode('utf-16-be')` if `utf-16-le`/plain `utf-16` look garbled.
+- **`tools/qmp-click.py`** — QMP absolute-position mouse clicks. Requires a `usb-tablet` device on
+  the VM. Not needed for the current WinPE-based path (interactive `Shift+F10` + keyboard typing is
+  sufficient), but kept for reference.
 
 ---
 
@@ -221,12 +198,14 @@ before considering any further Setup.exe-based experiment.
 
 This directory **is** a git repository. Check `git status`/`git log` fresh at the start of this
 session rather than trusting any note here about what was committed — this file describes state as
-of when it was last edited, not necessarily the true current state. As of Session 6 being written,
-`PHASE2_ENGINEERING_LOG.md`, `README.md`, `CLAUDE.md`, and this file have all been updated to
-reflect Findings 27-28 and the pivot reversal, and are expected to be committed as a normal
-end-of-session commit. Still ask before committing *new* changes (or squashing vs. several
-commits).
+of when it was last edited, not necessarily the true current state. As of Session 7 being written,
+`PHASE2_ENGINEERING_LOG.md`, `README.md`, `CLAUDE.md`, this file, and the new
+`tools/gen-viostor-ddb-reg.py` have all been added/updated to reflect Finding 29, and are expected
+to be committed as a normal end-of-session commit. Still ask before committing *new* changes (or
+squashing vs. several commits).
 
-**No VM was left running at the end of Session 6** (confirmed via `pgrep -fa qemu-system-x86_64`
-before ending). `winpe-boot-index2.qcow2`'s `Autounattend.xml` and the answer floppy's copy were
-both reverted to their original, working versions; `win2025-target.qcow2` is still blank.
+**No VM was left running at the end of Session 7** (confirmed via `pgrep -fa qemu-system-x86_64`
+before ending). `win2025-test.qcow2` now carries a working fix (real `bcdboot`-built BCD +
+corrected driver registration) and boots to OOBE — treat it as a valuable reference asset, not
+disposable scratch state, even though a fresh-disk re-verification is still recommended before
+relying on it as the actual build output.

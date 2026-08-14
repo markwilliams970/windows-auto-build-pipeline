@@ -8,46 +8,43 @@ upstream Packer/QEMU/OVMF issue. See `HANDOFF_FROM_UNATTENDED_INSTALL.md` for th
 full background on why this project exists as a separate repo from its sibling,
 `../windows-server-vm-automation/`.
 
-## Status (as of Session 6, 2026-08-14)
+## Status (as of Session 7, 2026-08-14)
 
 **Phase 1 (architecture): done.**
 
-**Phase 2 (offline installation mechanism): the Setup.exe pivot (Finding 15) is
-being set aside — five independent attempts to get past its driver-load gate have
-now failed. Returning to the bootstrap architecture's original, already-solved
-path instead.**
+**Phase 2 (offline installation mechanism): the core blocker is solved.** A real
+Windows Server 2025 disk now boots cleanly past `INACCESSIBLE_BOOT_DEVICE (0x7B)`
+to a genuine OOBE screen, using only offline mechanisms — no Setup.exe, no
+interactive install, no `media=cdrom` boot of any kind.
 
 - **Solved:** making an offline-applied disk boot at all under UEFI/OVMF, via two
   independent methods (BCD-SYS from Linux with zero boots, and real `bcdboot` from
-  a self-built WinPE session) — including `boot.wim` index 2 ("Microsoft Windows
-  Setup") booting clean as a plain disk with no exposure to the "press any key"
-  UEFI landmine that blocks the sibling project. Neither of these two methods
-  involves Setup.exe, so neither is affected by the blocker below.
-- **Solved, empirically:** the driver/hardware chain for clearing
-  `INACCESSIBLE_BOOT_DEVICE (0x7B)`. The real viostor driver correctly matches the
-  virtio-blk-pci hardware ID and brings up a real 40GB target disk cleanly, both
-  loaded manually and pre-loaded automatically before Setup starts.
-- **Abandoned — a real blocker that survived every fix attempted:**
-  `EarlyF6DriverInstall`'s "Install driver to show hardware" gate inside
-  Setup.exe fires unconditionally, as a fixed early stage of Setup's own
-  PE-hosted execution, before any driver state is checked and regardless of
-  whether disk configuration is automated. Five independent approaches all
-  failed against it: `autounattend.xml`'s `DriverPaths`, pre-loaded `drvload`,
-  manual UI click-through, Microsoft KB 2686316's `$WinPEDriver$` autoload
-  folder, and disabling `DiskConfiguration`/`InstallTo` automation to try to
-  reach a different, modern driver-load screen instead (the "modern screen"
-  theory — ruled out in Session 6: `setupact.log` shows identical gate timing
-  whether disk configuration is automated or not, proving the theory's premise
-  was wrong). See `PHASE2_ENGINEERING_LOG.md`'s Findings 19, 24, 25, 27, and 28.
-- **Recommended path forward:** stop pursuing Setup.exe. Sub-milestone 1 (make
-  the disk bootable) is already solved two ways that never invoke Setup.exe at
-  all — BCD-SYS and real `bcdboot` from a plain (non-Setup) WinPE session — so
-  neither ever reaches this gate. The remaining problem reverts to Stage 2's
-  original form from before the Setup.exe pivot: getting the virtio storage
-  driver registered into the offline-applied image's own driver database before
-  first real boot, via the offline `hivex` technique (`virt-v2v`'s pattern),
-  revisited with the tooling and lessons this project has gained since its first
-  attempt. See `PHASE2_ENGINEERING_LOG.md`'s Session 6 section for full detail.
+  a self-built WinPE session).
+- **Solved:** offline virtio driver injection, clearing `INACCESSIBLE_BOOT_DEVICE
+  (0x7B)` on first real boot. Session 2's original `hivex` attempt (Findings 7-8)
+  failed silently because its `DriverDatabase` registry edits went under the wrong
+  parent key (`ControlSet001\Control\DriverDatabase`, a reasonable-looking but
+  wrong guess) — `DriverDatabase` actually lives at the **SYSTEM hive root**, a
+  sibling of `ControlSet001`, confirmed empirically against a real applied image.
+  Session 7 re-derived the full registration recipe directly from `virt-v2v`'s
+  actual source (not memory), fixed the parent-key path, and confirmed it working
+  end-to-end: `wimapply` → real `bcdboot` (run once from a plain, non-Setup WinPE
+  session) → offline `hivexregedit` driver registration → boot the target disk
+  alone → clean progression through the Windows boot animation to a real OOBE
+  screen. See `PHASE2_ENGINEERING_LOG.md`'s Finding 29 for the full verification
+  trail, and `tools/gen-viostor-ddb-reg.py` for the resulting reusable tooling.
+- **Abandoned along the way — the Setup.exe pivot (Finding 15):** five independent
+  attempts to get past Setup.exe's own `EarlyF6DriverInstall` driver-load gate all
+  failed (it fires as a fixed, unconditional stage of Setup's execution, not
+  something any answer-file configuration routes around) before this project
+  returned to the original plan above, which then worked. See Findings 19, 24,
+  25, 27, and 28 for that dead end's full record.
+- **Not yet done:** this boot used no `unattend.xml`/specialize pass, so it
+  correctly stopped at interactive OOBE rather than an automated, WinRM-reachable
+  state — that offline specialize pass (`CLAUDE.md`'s Build step 6) is the
+  remaining piece of Phase 2's actual success criterion. Re-verifying the fix on
+  a disk built fully fresh (rather than the Session-2-era disk reused for this
+  test) is also still open.
 
 **Phases 3-5** (Windows role configuration, Datadog integration, lifecycle
 automation) are not started — gated on Phase 2 succeeding for all three target
@@ -58,13 +55,14 @@ OSes (Server 2025, Server 2022, Windows 11), not just the first one proven.
 Read, in order:
 
 1. `PHASE2_ENGINEERING_LOG.md` — especially its final section, "STATUS AND NEXT
-   STEPS ON RESUMPTION (Session 6)." This is the authoritative current state:
+   STEPS ON RESUMPTION (Session 7)." This is the authoritative current state:
    what's solved, what's not, and the specific next action already agreed on.
 2. `CLAUDE.md` — project goals, architectural principles, tool responsibilities,
    phased plan. Read its Phase 2 status line and the "Do not reuse" note under
    "Relationship to `../windows-server-vm-automation/`" specifically.
 3. `PHASE2_BOOTSTRAP_ARCHITECTURE.md` — design reasoning behind trying BCD-SYS
-   first; now historical context, superseded in part by the Setup.exe pivot.
+   first. Current direction again — the Setup.exe pivot that had superseded it
+   was abandoned in Session 6 and this plan is what Session 7 confirmed working.
 4. `HANDOFF_FROM_UNATTENDED_INSTALL.md` — original prior-art research and why
    this project exists; still accurate.
 5. `PREREQUISITES.md` — host tooling this project needs beyond the sibling
@@ -80,7 +78,10 @@ written for handing to a fresh Claude Code session.
   are gitignored — regenerated on every real run, never source.
 - `tools/` — host-side Linux dev/debug tooling: QMP-based screenshot/keystroke
   injection for inspecting and driving VMs without a VNC viewer
-  (`qmp-screenshot.py`, `qmp-watch.sh`, `qmp-sendkey.py`, `qmp-type.py`), plus a
+  (`qmp-screenshot.py`, `qmp-watch.sh`, `qmp-sendkey.py`, `qmp-type.py`,
+  `qmp-click.py`), `gen-viostor-ddb-reg.py` (generates the source-verified `.reg`
+  file that offline-registers the virtio-blk boot driver, clearing
+  `INACCESSIBLE_BOOT_DEVICE` — see `PHASE2_ENGINEERING_LOG.md` Finding 29), plus a
   scoped sudoers file for the disk-prep commands this pipeline needs
   (`tools/sudoers-windows-auto-build-pipeline`; not installed automatically —
   see the file's own header for the `visudo`-checked install step).
