@@ -1386,3 +1386,127 @@ directly visible as `X:\...` inside the running session — useful to know for a
 `Autounattend.xml`/driver-placement experiment, not just this one. Also worth remembering: this
 boot configuration has **no `C:` drive at all** — only `D:` (Server 2025 ISO), `E:` (virtio-win
 ISO), `X:` (boot medium), `A:` (answer floppy).
+
+### Finding 28: the "modern screen" theory (Finding 26's second, costlier lead) tested and ruled
+out too — `EarlyF6DriverInstall` fires at identical timestamps whether `DiskConfiguration`/
+`InstallTo` are present in the answer file or not, proving the gate isn't routed by disk-config
+automation at all
+
+**Setup:** built a variant `Autounattend.xml` identical to the working one except with the entire
+`<DiskConfiguration>` element and `<ImageInstall>/<OSImage>/<InstallTo>` removed (keeping
+`<InstallFrom>`'s image-name metadata, `<UserData>`, and every later-pass setting unchanged), per
+Microsoft's documented behavior that omitting these lets Setup show the interactive "Where do you
+want to install Windows" screen instead of driving straight into automated partitioning. The
+theory being tested: that screen's non-legacy "Load driver" link might not be gated the same way
+`EarlyF6DriverInstall`'s legacy dialog is.
+
+**First attempt — confound caught before drawing any conclusion.** Swapped this variant onto
+`winpe-boot-index2.qcow2`'s `Autounattend.xml` (both partition root and `\sources\`) and booted.
+The dialog was pixel-identical to every prior test — but `setupact.log`'s own
+`UnattendSearchExplicitPath` lines showed **three** "usable" answer files found for pass
+`windowsPE`: `A:\autounattend.xml` (the answer floppy — still the *old*, unmodified version, never
+touched by this edit), `X:\Sources\autounattend.xml`, and `X:\autounattend.xml` (both edited).
+Per this project's own "verify before trusting" standard, this was caught as a real confound
+rather than accepted as a negative result — the floppy's old copy could plausibly have been the
+one actually applied, silently invalidating the test.
+
+**Second attempt — confound removed, result confirmed clean.** Overwrote `A:\autounattend.xml` on
+the floppy with the same variant (`mcopy -o`, no `qemu-nbd` needed for FAT media) so all three
+locations Setup finds agree, then rebooted. **Identical dialog again.** `setupact.log` this time
+shows the exact same sequence and timing as every prior test, down to the second:
+`EarlyF6DriverInstall: Entering Prepare Method` → `Leaving Prepare Method` → (`UnattendDriverInstall`
+and `LateF6DriverInstall`'s own Prepare/Leave pairs, unrelated) → `EarlyF6DriverInstall: Entering
+Execute Method` → `Driver: Starting Wait`, one second later — matching Finding 24's original
+timestamps pattern and Finding 27's repeat of it almost exactly, despite `DiskConfiguration` and
+`InstallTo` being completely absent from every answer file Setup could find this time.
+
+**Diagnosis:** `EarlyF6DriverInstall` is not conditionally reached based on whether the answer file
+automates disk configuration — its Prepare/Execute sequence runs as a fixed stage of Setup's
+PE-hosted execution, immediately after `SetupCore` registers the various F6/driver-related actions
+and well before `ImageInstall`/`DiskConfiguration` processing would even begin. Whatever screen
+Setup would eventually show for interactive disk selection, it doesn't get there until *after* this
+gate — meaning there is no way to reach a "different, modern" driver-load mechanism by skipping
+disk-configuration automation, because the same legacy gate sits in front of both paths
+unconditionally.
+
+**Root cause:** the original theory's premise (that `DiskConfiguration` automation is what routes
+Setup toward the legacy F6 dialog) is false. `EarlyF6DriverInstall` is simply an earlier,
+unavoidable phase of Setup's own boot sequence, not a fork in a decision tree the answer file
+controls.
+
+**Net effect: both threads in Finding 26's priority list are now ruled out** (Finding 27:
+`$WinPEDriver$`; this finding: the modern-screen theory), on top of Findings 19/24/25's three
+earlier failed approaches. Five independent approaches have now failed against the same gate. Per
+Finding 26's own fallback framing, the honest conclusion is that **the Setup.exe pivot itself
+(Finding 15) should be set aside** in favor of the bootstrap architecture's already-solved
+alternative: sub-milestone 1 is proven working via real `bcdboot` run from a plain, self-built
+WinPE session (Findings 6/12) — a path that never invokes Setup.exe at all, and therefore never
+hits this gate — with driver injection needing to be solved on *that* path instead (most likely
+revisiting the offline `hivex` registry technique from Findings 7-8, applied to a disk made
+bootable via `bcdboot` rather than the main OS disk it was originally tried against).
+
+**Cleanup performed before ending the session:** both `winpe-boot-index2.qcow2`'s `Autounattend.xml`
+copies (partition root and `\sources\`) and the answer floppy's copy were reverted to the original,
+working version (with `DiskConfiguration`/`InstallTo` intact) via the same backup-then-restore
+technique, confirmed via `grep -c DiskConfiguration` returning 2 on both restored files. No VM left
+running (confirmed via `pgrep`).
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 6)
+
+**Where things stand:** every lead Finding 26 identified has now been tried and failed, on top of
+the three approaches Session 4 already ruled out. Five independent attempts to get past
+`EarlyF6DriverInstall` have failed: `DriverPaths` (Finding 19), pre-loaded `drvload` (Finding 24),
+manual UI click-through (Finding 25), `$WinPEDriver$` (Finding 27), and disabling disk-configuration
+automation entirely (Finding 28, this session). The evidence across all five is consistent and
+timestamp-based, not circumstantial — this is not a "try one more variation" situation.
+
+**Recommended next step: set aside the Setup.exe pivot (Finding 15) and return to the bootstrap
+architecture's original, already-validated path.** `PHASE2_BOOTSTRAP_ARCHITECTURE.md`'s
+sub-milestone 1 is solved two independent ways that don't involve Setup.exe at all — BCD-SYS
+(zero boots) and real `bcdboot` run from a self-built plain WinPE session (`boot.wim` index 1, not
+index 2). Neither path ever reaches `EarlyF6DriverInstall`, because neither ever runs Setup.exe.
+The remaining problem reduces to: get the virtio storage driver registered into the *offline,
+already-applied* Windows image's own driver database, so that when the disk (made bootable via
+BCD-SYS or WinPE `bcdboot`) boots for real, the kernel already knows about the viostor device
+before `INACCESSIBLE_BOOT_DEVICE` would otherwise occur. This is exactly the original Stage 2
+problem from before the Setup.exe pivot began (see "Open items carried forward" after Finding 6),
+last attempted via offline `hivex` registry edits (Findings 7-8) and a `DISM`-via-WinPE approach
+(root-caused to a COM-hosting failure, Findings 9-13) — both worth revisiting with what this
+project has learned since, rather than assumed still-broken:
+- The `hivex` `CriticalDeviceDatabase`/`DriverDatabase` registry-injection attempt (Findings 7-8)
+  failed for reasons never fully root-caused. It was tried against the *main OS disk* specifically;
+  worth first double-checking whether that attempt's failure mode was specific to something about
+  the main-OS-disk boot path (full NT kernel boot, different driver-loading code than WinPE) before
+  assuming the technique itself is unsound.
+- The `DISM`-via-WinPE attempt's COM-hosting failure (Findings 9-13) may be worth revisiting given
+  this project's much more mature QMP-based tooling now (`qmp-click.py`, `qmp-type.py`,
+  `qmp-sendkey.py`) for driving whatever interactive recovery might be needed, if any.
+- `virt-v2v`'s own production-proven offline driver-injection pattern (the original prior-art
+  research behind the `hivex` approach) is still the best-documented reference for how this is
+  supposed to work — re-reading its actual source for the specific registry keys/values it writes,
+  rather than working from this project's own possibly-incomplete reconstruction of the pattern in
+  Findings 7-8, is a reasonable first step before any new experiment.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `winpe-boot-index2.qcow2` — `Autounattend.xml` (both locations) reverted to the original, working
+  version this session; the `\$WinPEDriver$\viostor\2k25\amd64\` folder added in Finding 27 is
+  still present (harmless, inert now that this pivot is being set aside). `winpeshl.ini` still in
+  Session 4's reverted-to-stock state.
+- `winpe-boot-index1.qcow2.bak` — the plain WinPE medium (no Setup.exe), the one this project should
+  actually build on going forward per the recommendation above. Confirmed working for `bcdboot` in
+  Findings 6/12 — re-verify it still boots cleanly before relying on it, since it hasn't been
+  touched since Session 2/3.
+- `win2025-target.qcow2` — still blank/unpartitioned.
+- `answer-floppy.img` — `Autounattend.xml` reverted to the original this session; driver files and
+  historical log dumps from prior sessions still present, harmless.
+- No VM left running at the end of Session 6 (confirmed via `pgrep`).
+
+**New fact worth remembering:** Setup's implicit answer-file search checks **multiple locations
+and treats more than one as "usable" for the same pass** (`setupact.log`'s
+`UnattendSearchExplicitPath` lines) — in this project's boot configuration, that means the answer
+floppy (`A:`), the boot medium's `\sources\` folder, and the boot medium's own root are **all**
+candidates, and editing only one is not sufficient to guarantee a test reflects the intended
+change. Any future `Autounattend.xml` experiment must update **all** locations Setup can find one
+(or remove the file from the ones not being tested) before trusting a "nothing changed" result.

@@ -8,43 +8,46 @@ upstream Packer/QEMU/OVMF issue. See `HANDOFF_FROM_UNATTENDED_INSTALL.md` for th
 full background on why this project exists as a separate repo from its sibling,
 `../windows-server-vm-automation/`.
 
-## Status (as of Session 5, 2026-08-14)
+## Status (as of Session 6, 2026-08-14)
 
 **Phase 1 (architecture): done.**
 
-**Phase 2 (offline installation mechanism): in progress; the Setup.exe pivot's
-driver-load blocker has now survived four independent fix attempts.**
+**Phase 2 (offline installation mechanism): the Setup.exe pivot (Finding 15) is
+being set aside — five independent attempts to get past its driver-load gate have
+now failed. Returning to the bootstrap architecture's original, already-solved
+path instead.**
 
 - **Solved:** making an offline-applied disk boot at all under UEFI/OVMF, via two
   independent methods (BCD-SYS from Linux with zero boots, and real `bcdboot` from
   a self-built WinPE session) — including `boot.wim` index 2 ("Microsoft Windows
   Setup") booting clean as a plain disk with no exposure to the "press any key"
-  UEFI landmine that blocks the sibling project.
+  UEFI landmine that blocks the sibling project. Neither of these two methods
+  involves Setup.exe, so neither is affected by the blocker below.
 - **Solved, empirically:** the driver/hardware chain for clearing
   `INACCESSIBLE_BOOT_DEVICE (0x7B)`. The real viostor driver correctly matches the
   virtio-blk-pci hardware ID and brings up a real 40GB target disk cleanly, both
   loaded manually and pre-loaded automatically before Setup starts.
-- **Not solved — a real blocker, not an automation gap:** `autounattend.xml`'s
-  `DriverPaths` doesn't feed `EarlyF6DriverInstall`'s "Install driver to show
-  hardware" gate, and `setupact.log` timestamps prove that gate is unconditional —
-  it starts waiting before any driver state is even checked. Manually clicking
-  through it (mouse-driven UI automation, confirmed working) doesn't lead anywhere
-  either. **Session 5 also ruled out `$WinPEDriver$`** (Microsoft KB 2686316's
-  documented driver-autoload folder): verified the driver files were placed
-  correctly at the documented location (`X:\$WinPEDriver$\...` — and confirmed `X:`
-  in this boot flow is the physical boot-medium partition itself, not a separate
-  RAM-disk copy, a previously-wrong assumption this project had held implicitly),
-  yet the same empty dialog appeared and `setupact.log` shows zero evidence Setup
-  ever scanned for it. Four independent approaches have now failed:
-  `DriverPaths`, pre-loaded `drvload`, manual UI click-through, and `$WinPEDriver$`.
-- **One remaining untried track:** whether avoiding full unattend-driven disk
-  configuration lets Setup reach a different, modern driver-load screen instead of
-  the legacy one (Finding 26's "modern screen" theory) — a bigger `Autounattend.xml`
-  change than anything tried so far, and still just a theory. If that also fails,
-  the recommended fallback is reconsidering the Setup.exe pivot itself in favor of
-  the already-solved plain-WinPE + `bcdboot` path (sub-milestone 1), with driver
-  injection solved there instead via the offline `hivex` technique. See
-  `PHASE2_ENGINEERING_LOG.md`'s Session 5 section for full detail.
+- **Abandoned — a real blocker that survived every fix attempted:**
+  `EarlyF6DriverInstall`'s "Install driver to show hardware" gate inside
+  Setup.exe fires unconditionally, as a fixed early stage of Setup's own
+  PE-hosted execution, before any driver state is checked and regardless of
+  whether disk configuration is automated. Five independent approaches all
+  failed against it: `autounattend.xml`'s `DriverPaths`, pre-loaded `drvload`,
+  manual UI click-through, Microsoft KB 2686316's `$WinPEDriver$` autoload
+  folder, and disabling `DiskConfiguration`/`InstallTo` automation to try to
+  reach a different, modern driver-load screen instead (the "modern screen"
+  theory — ruled out in Session 6: `setupact.log` shows identical gate timing
+  whether disk configuration is automated or not, proving the theory's premise
+  was wrong). See `PHASE2_ENGINEERING_LOG.md`'s Findings 19, 24, 25, 27, and 28.
+- **Recommended path forward:** stop pursuing Setup.exe. Sub-milestone 1 (make
+  the disk bootable) is already solved two ways that never invoke Setup.exe at
+  all — BCD-SYS and real `bcdboot` from a plain (non-Setup) WinPE session — so
+  neither ever reaches this gate. The remaining problem reverts to Stage 2's
+  original form from before the Setup.exe pivot: getting the virtio storage
+  driver registered into the offline-applied image's own driver database before
+  first real boot, via the offline `hivex` technique (`virt-v2v`'s pattern),
+  revisited with the tooling and lessons this project has gained since its first
+  attempt. See `PHASE2_ENGINEERING_LOG.md`'s Session 6 section for full detail.
 
 **Phases 3-5** (Windows role configuration, Datadog integration, lifecycle
 automation) are not started — gated on Phase 2 succeeding for all three target
@@ -55,7 +58,7 @@ OSes (Server 2025, Server 2022, Windows 11), not just the first one proven.
 Read, in order:
 
 1. `PHASE2_ENGINEERING_LOG.md` — especially its final section, "STATUS AND NEXT
-   STEPS ON RESUMPTION (Session 5)." This is the authoritative current state:
+   STEPS ON RESUMPTION (Session 6)." This is the authoritative current state:
    what's solved, what's not, and the specific next action already agreed on.
 2. `CLAUDE.md` — project goals, architectural principles, tool responsibilities,
    phased plan. Read its Phase 2 status line and the "Do not reuse" note under

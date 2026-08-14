@@ -63,17 +63,19 @@ reinvent wherever the two overlap:
   `autounattend.xml`'s `Microsoft-Windows-Setup` disk-partitioning/image-selection component. That
   entire mechanism is what this project exists to replace.
 
-  **UNDER RECONSIDERATION as of `PHASE2_ENGINEERING_LOG.md`'s Finding 15 (not yet changed —
-  read that finding before acting on this note):** this rule was written when Setup.exe looked
-  permanently blocked by the UEFI "press any key" landmine. Later investigation found that landmine
-  is specific to `media=cdrom` boot specifically, not to Setup.exe itself — a self-built
-  Setup.exe boot medium (`boot.wim` index 2) attached as a plain disk, using the same recipe
-  already proven for plain WinPE (index 1), may avoid it entirely. If that pans out, reusing
-  Setup.exe's own `autounattend.xml`-driven install (including its `Microsoft-Windows-Setup`
-  component and the sibling project's already-validated `DriverPaths` mechanism) instead of
-  hand-rolling offline driver injection may be the better architecture. `boot_command`/VNC keystroke
-  injection specifically remain correctly banned regardless — they solved a boot-prompt problem
-  that doesn't exist in this design, since nothing is booted from `media=cdrom`.
+  **RECONSIDERATION CLOSED as of `PHASE2_ENGINEERING_LOG.md`'s Findings 15-28: rule is back in
+  force, do not reuse `Microsoft-Windows-Setup`.** This rule was temporarily relaxed when Setup.exe
+  looked like a promising pivot — the UEFI "press any key" landmine turned out to be specific to
+  `media=cdrom` boot, not Setup.exe itself, so a self-built Setup.exe boot medium (`boot.wim` index
+  2) attached as a plain disk boots clean with zero landmine exposure (Finding 15/18, confirmed).
+  But that only solved *bootability*; Setup.exe's own `EarlyF6DriverInstall` gate turned out to be
+  a separate, unconditional blocker that five independent fix attempts (across Findings 19, 24, 25,
+  27, and 28) all failed against — including deliberately testing whether avoiding disk-config
+  automation would route around it (it doesn't; the gate fires at identical timing regardless).
+  This pivot is now set aside in favor of the original plan: making the disk bootable via BCD-SYS
+  or plain (non-Setup) WinPE `bcdboot`, with driver injection solved offline via `hivex`, exactly as
+  this rule originally specified. `boot_command`/VNC keystroke injection remain correctly banned
+  regardless, for the original reason (they solve a boot-prompt problem that doesn't exist here).
 
 ---
 
@@ -394,47 +396,42 @@ Success criteria:
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
 **Status:** in progress — read
-`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 5)" section before
+`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 6)" section before
 doing anything else here. Sub-milestone 1 (make the disk bootable) remains **solved, twice over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD, and this also applies to `boot.wim` index 2 ("Microsoft Windows
-Setup"), which boots clean as a plain disk with zero UEFI landmine exposure. Sub-milestone driver
-injection (clearing `INACCESSIBLE_BOOT_DEVICE (0x7B)`) went through two failed hand-rolled attempts
-(offline `hivex` registry edits following `virt-v2v`'s recipe, and a `DISM`-via-WinPE attempt
-root-caused to an out-of-process COM hosting failure) before pivoting to reusing Setup.exe's own
-mechanism instead. The real viostor driver still correctly matches the virtio-blk-pci hardware ID
-and brings up a real 40GB target disk cleanly once loaded (confirmed via `wmic diskdrive`) — that
-part is solid. **But the gap once described as "automation-only, fix already identified" turned out
-not to have the fix it looked like it had**: pre-loading the driver via a Microsoft-reference-verified
-`winpeshl.ini` (running `drvload` before `setup.exe` starts) does load the driver successfully, but
-`setupact.log` timestamps prove `EarlyF6DriverInstall`'s "Install driver to show hardware" gate
-enters its wait state unconditionally, before any user interaction and regardless of driver state —
-so pre-loading cannot skip it. Worse, manually clicking through that same gate (mouse-driven, via a
-newly-required `usb-tablet` device — relative PS/2 mouse input doesn't work this early) also does
-not lead anywhere: a genuinely clean, error-free driver install was tested for the first time this
-session, and the dialog loops back to waiting regardless of success, failure, or "already
-installed." **There is currently no known path past Setup's disk-configuration step, automated or
-manual.** The cheaper of two research-identified leads, `$WinPEDriver$` (Microsoft KB 2686316 — a
-fixed folder name Setup automatically scans on `C:`/`D:`/`E:`/`X:` and loads discovered drivers
-from, with zero `unattend.xml` configuration), was tried in Session 5 and **ruled out**: the driver
-files were verified present at the correct documented location (`X:\$WinPEDriver$\...` — and `X:`
-in this boot flow was confirmed to be the physical boot-medium partition itself, not a separate
-RAM-disk copy, correcting a wrong assumption this project had held implicitly), yet the same empty
-"Install driver to show hardware" dialog appeared and `setupact.log` shows zero evidence Setup ever
-scanned for the folder. Four independent approaches have now failed: `DriverPaths`, pre-loaded
-`drvload`, manual UI click-through, and `$WinPEDriver$`. The one remaining untried lead is the
-bigger-change theory — whether avoiding full `DiskConfiguration` automation in `Autounattend.xml`
-lets Setup reach a *different*, modern driver-load screen instead of this legacy one. Until that's
-tried and either works or doesn't, this pivot's **reconsideration** of the "do not reuse
-`autounattend.xml`'s `Microsoft-Windows-Setup` component" rule (under "Relationship to
-`../windows-server-vm-automation/`" above) remains unresolved rather than trending toward
-confirmed — the UEFI landmine really is specific to `media=cdrom` boot, not Setup.exe itself, but
-that finding alone no longer implies this pivot is close to done. If the modern-screen theory also
-fails, the recommended fallback is reconsidering the Setup.exe pivot itself in favor of the
-already-solved plain-WinPE + `bcdboot` path, with driver injection solved there instead via the
-offline `hivex` technique applied to a target disk made bootable a different way. See
-`PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but everything needed to
-resume without re-deriving it is there.
+Setup"), which boots clean as a plain disk with zero UEFI landmine exposure. **The Setup.exe pivot
+(Finding 15) is now being set aside** after five independent attempts to get past
+`EarlyF6DriverInstall`'s "Install driver to show hardware" gate all failed: `autounattend.xml`'s
+`DriverPaths` (doesn't feed the gate at all), pre-loading the driver via a real, Microsoft-verified
+`winpeshl.ini` before `setup.exe` starts (loads the driver successfully, per `wmic diskdrive`, but
+`setupact.log` timestamps prove the gate enters its wait state unconditionally regardless), manual
+UI click-through (mouse-driven, via a required `usb-tablet` device — even a genuinely clean,
+error-free driver install loops back to waiting forever, no timeout, no hidden "Next" button),
+Microsoft KB 2686316's `$WinPEDriver$` autoload folder (driver files verified present at the
+documented `X:\$WinPEDriver$\...` location — `X:` in this boot flow is the physical boot-medium
+partition itself, not a separate RAM-disk copy, a previously-wrong assumption this project had held
+implicitly — yet `setupact.log` shows zero evidence Setup ever scanned for it), and disabling
+`DiskConfiguration`/`InstallTo` automation entirely to try to reach a different, modern
+driver-load screen (the "modern screen" theory — ruled out in Session 6: `setupact.log` shows
+`EarlyF6DriverInstall` firing at identical timestamps whether disk configuration is automated or
+not, proving the gate is a fixed, unconditional stage of Setup's own PE-hosted execution, not
+something the answer file's disk-configuration choices route around). **Recommended path forward:
+stop pursuing Setup.exe.** Sub-milestone 1 is already solved two ways that never invoke Setup.exe
+at all — BCD-SYS and real `bcdboot` from a plain (non-Setup) WinPE session — so neither ever
+reaches this gate. The remaining problem reverts to Stage 2's original form from before the
+Setup.exe pivot began: getting the virtio storage driver registered into the offline-applied
+image's own driver database before first real boot. The two hand-rolled attempts at this from
+before the pivot (offline `hivex` registry edits following `virt-v2v`'s recipe, and a
+`DISM`-via-WinPE attempt root-caused to an out-of-process COM hosting failure) are worth
+revisiting with the tooling and lessons this project has gained since, rather than assumed still
+equally broken — see `PHASE2_ENGINEERING_LOG.md`'s Session 6 section for specific suggestions.
+This also means the "do not reuse `autounattend.xml`'s `Microsoft-Windows-Setup` component" rule
+(under "Relationship to `../windows-server-vm-automation/`" above) should be treated as **back in
+force** — the UEFI landmine really is specific to `media=cdrom` boot, not Setup.exe itself, but
+that finding alone didn't end up leading anywhere usable, and the pivot that reconsidered the rule
+is the thing being set aside. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record —
+it's long, but everything needed to resume without re-deriving it is there.
 
 ---
 
