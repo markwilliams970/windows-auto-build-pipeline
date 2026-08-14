@@ -3,12 +3,12 @@ in-progress investigation behind it. Read documents before doing or suggesting a
 this order:
 
 1. **`PHASE2_ENGINEERING_LOG.md` — read this first, especially its final section, "STATUS AND NEXT
-   STEPS ON RESUMPTION (Session 4)."** This is the actual current state of the investigation: what's
+   STEPS ON RESUMPTION (Session 5)."** This is the actual current state of the investigation: what's
    solved, what's not, what was tried and failed (with root causes where we found them), and the
    specific next action already agreed on. Don't skip this to save time — it exists precisely so
    nothing in it has to be re-derived, and re-deriving it has already burned full sessions before.
-   **Session 4 overturned an assumption Session 3's own resumption notes treated as settled** — read
-   the Session 4 section in full even if you remember Session 3's, don't skim on the assumption
+   **Session 5 closed out the cheaper of Session 4's two open tracks with a real negative result** —
+   read the Session 5 section in full even if you remember Session 4's, don't skim on the assumption
    nothing changed.
 2. `CLAUDE.md` — project goals, architectural principles (no golden image, ever — the eval-media
    expiration reasoning is a hard constraint), tool responsibilities, and the phased development
@@ -19,8 +19,8 @@ this order:
    labeled historical context (it has its own update marker at the top) — BCD-SYS's core claim
    (avoids WinPE entirely) was confirmed true for bootability specifically, but driver injection
    needed WinPE anyway, which changes the calculus. Read for the reasoning, not as current
-   direction. **Its fallback path (real `bcdboot` from a self-built WinPE session) may become
-   relevant again** if neither of the two open tracks below pans out.
+   direction. **Its fallback path (real `bcdboot` from a self-built WinPE session) is looking more
+   relevant again** now that four independent driver-load-gate fixes have failed inside Setup.exe.
 4. `HANDOFF_FROM_UNATTENDED_INSTALL.md` — the original prior-art research (why this project exists,
    what the sibling project already solved vs. couldn't). Still accurate; nothing here has changed.
 5. `PREREQUISITES.md` — host tooling this project needs beyond the sibling project. Already
@@ -28,7 +28,7 @@ this order:
 
 ---
 
-## Where things actually stand (updated end of Session 4)
+## Where things actually stand (updated end of Session 5)
 
 **Still solved:** making an offline-applied Windows Server 2025 disk boot at all, via UEFI/OVMF,
 with zero exposure to the sibling project's "press any key" landmine — confirmed for **both**
@@ -42,61 +42,50 @@ driver to show hardware" dialog, or automatically via a custom `winpeshl.ini` be
 starts), comes up fully healthy via `wmic diskdrive`. The driver file, the hardware ID match, and
 the disk-attachment architecture are all proven sound, repeatedly, multiple ways.
 
-**What Session 3 believed was "just automation" turned out to be a real, currently-unresolved
-blocker.** Session 3 left off believing: (a) `DriverPaths` doesn't auto-feed `EarlyF6DriverInstall`'s
-gate, but (b) manually clicking through it (Finding 20) was a working fallback, and (c) pre-loading
-the driver before Setup starts (Finding 21, not yet attempted) would very likely remove the need for
-the gate entirely. Session 4 tested both remaining pieces properly:
+**Four independent attempts to get past `EarlyF6DriverInstall`'s gate have now failed, each for a
+different, well-evidenced reason — this is a real blocker, not a remaining automation gap:**
 
-- **Pre-loading via a real, Microsoft-reference-verified `winpeshl.ini`** (not the `startnet.cmd`
-  edit Finding 21 originally proposed — Session 4 found `startnet.cmd` most likely never even runs
-  in this boot flow, see Finding 22) **does** load the driver before Setup starts, confirmed via
-  `wmic`. **The gate still shows anyway.** `setupact.log` timestamps prove
-  `EarlyF6DriverInstall`'s Execute method starts waiting for interactive input in the same second as
-  Setup's own Prepare phase — unconditionally, before any user action could possibly matter. See
-  Finding 24. Pre-loading cannot work around this; it isn't a timing/race issue.
-- **Manually clicking through the gate** (now mouse-driven — see the tooling note below — matching
-  Finding 20's original keyboard-driven click-through) was repeated with a **genuinely clean,
-  error-free** install for the first time (Session 3 only ever saw a real success immediately
-  followed by an accidental duplicate-click error). `setupact.log` proves that even a clean success
-  loops right back to `Driver: Starting Wait`, forever. No timeout (waited 60+ seconds), no hidden
-  "Next" button (tried maximizing the window), and the window's own close button pops "Are you sure
-  you want to quit?" rather than dismissing just this sub-dialog. See Finding 25.
+1. `Autounattend.xml`'s `DriverPaths` — doesn't feed the gate at all (Session 3, Finding 19).
+2. Pre-loading the driver via a real, Microsoft-reference-verified `winpeshl.ini` before Setup
+   starts — driver loads successfully (confirmed via `wmic`), but the gate shows anyway.
+   `setupact.log` timestamps prove `EarlyF6DriverInstall`'s Execute method starts waiting for
+   interactive input in the same second as Setup's own Prepare phase, unconditionally, before any
+   user action could possibly matter (Session 4, Finding 24).
+3. Manually clicking through the gate (mouse-driven, via a required `usb-tablet` device) — even a
+   genuinely clean, error-free install loops right back to `Driver: Starting Wait` forever. No
+   timeout (waited 60+ seconds), no hidden "Next" button, and the window's own close control pops a
+   "quit Setup entirely" confirmation rather than dismissing just the sub-dialog (Session 4,
+   Finding 25).
+4. **`$WinPEDriver$`** (Microsoft KB 2686316's documented driver-autoload folder, scanned from
+   `C:`/`D:`/`E:`/`X:` with zero `unattend.xml` config) — tested properly in Session 5 (Finding 27).
+   Driver files were verified present at the exact documented location, `X:\$WinPEDriver$\viostor\
+   2k25\amd64\{viostor.inf,viostor.cat,viostor.sys}` (confirmed via `dir /s` from inside the running
+   session, not assumed). **The same empty dialog still appeared, and `setupact.log` shows zero
+   `PnPIBS`/`$WinPEDriver$`-related log lines at all** — no evidence Setup ever scanned for the
+   folder in this boot configuration. A genuine negative result, not a placement mistake.
+
+**One real, useful side-finding from Session 5, independent of the main question:** `X:` during
+this Setup boot flow is **the physical boot-medium NTFS partition itself** (confirmed via `wmic
+logicaldisk` — `X:`, `Local Fixed Disk`, `NTFS`, volume label `Windows`), not a separate RAM-loaded
+copy of `boot.wim`'s contents as this project had implicitly assumed since Session 4. Also: this
+boot configuration has **no `C:` drive at all** — only `D:` (Server 2025 ISO), `E:` (virtio-win
+ISO), `X:` (boot medium), `A:` (answer floppy).
 
 **Net effect: there is currently no known path past Setup's disk-configuration step, automated or
-manual.** This is a real setback, not a small remaining gap — internalize this before re-attempting
-anything that looks like "just pre-load the driver a bit differently" or "just click through it more
-carefully." The evidence is timestamp-based proof from `setupact.log`, not inference.
-
-**After Finding 25's dead end, real multi-angle web research (Finding 26) — not another guess —
-turned up a cheaper, better-documented lead than the "modern screen" theory below.**
-`$WinPEDriver$` is a real, primary-source-documented Setup.exe feature (Microsoft KB 2686316,
-quoted directly): Setup automatically scans `C:$WinPEDriver$`, `D:$WinPEDriver$`,
-`E:$WinPEDriver$`, and **`X:$WinPEDriver$`** (the boot volume itself — fully under this project's
-control offline) and loads any `.INF`-described drivers found there, with no `unattend.xml`
-configuration at all. It's explicitly a different mechanism from both `drvload` and `DriverPaths`
-(Setup's own KB lists all three as separate methods), which is exactly why it's worth testing
-before assuming the whole pivot is dead. **Not yet tested** — see "What to do first" below.
+manual, and the cheaper of the two remaining research leads is now also ruled out.** Only one
+untried thread remains before this project should seriously reconsider the Setup.exe pivot itself.
 
 ---
 
 ## What to do first this session
 
-1. Confirm you've read the engineering log's Session 4 resumption section in full (including
-   Finding 26), then decide, together with whoever you're working with, which of the two open
-   tracks to pursue — **this is a real decision point, not a "just try the next thing"
-   continuation.** Don't silently start rebuilding `Autounattend.xml` (track 2) without checking in
-   first; track 1 is cheaper and better-documented and should be tried first regardless.
-2. **Track 1 — try this first (Finding 26, not yet attempted):** copy the 4 known-good `viostor`
-   driver files into `X:\$WinPEDriver$\viostor\2k25\amd64\` on `winpe-boot-index2.qcow2` (same
-   `qemu-nbd`-mount routine as always, single Bash call). **No `winpeshl.ini` change, no
-   `Autounattend.xml` change needed.** Boot exactly as every Session 4 test. Watch `setupact.log`
-   for `PnPIBS: Checking for pre-configured driver directory X:$WinPEDriver$.` and whatever follows
-   it. If `EarlyF6DriverInstall` never shows (or shows and lets Setup proceed once the driver's
-   found this way), this is a real, much smaller permanent fix than either alternative. If it
-   doesn't help, record why (does the scan even find the folder? does it load the driver but still
-   hit the same gate?) before moving to track 2 — that evidence is valuable either way.
-3. **Track 2 — the "modern screen" theory (Finding 25's original idea, bigger change, try second):**
+1. Confirm you've read the engineering log's Session 5 resumption section in full (including
+   Finding 27), then decide, together with whoever you're working with, whether to pursue the one
+   remaining thread below or to pivot back to the bootstrap architecture's original fallback.
+   **This is a real decision point** — four failed attempts is a meaningful signal, not just bad
+   luck, and it's worth checking in before sinking a session into a bigger `Autounattend.xml`
+   rewrite on a theory that hasn't been tested yet.
+2. **The one remaining thread — the "modern screen" theory (bigger change, still unproven):**
    `EarlyF6DriverInstall` is Windows Setup's legacy "press F6 to load a mass-storage driver"
    mechanism. It may only be reachable because `Autounattend.xml`'s `DiskConfiguration`/
    `ImageInstall` sections drive Setup directly into automated disk configuration, skipping past the
@@ -105,26 +94,28 @@ before assuming the whole pivot is dead. **Not yet tested** — see "What to do 
    to *not* fully automate disk configuration (or omit `DiskConfiguration` entirely), boot, see what
    screen Setup actually shows instead, and test whether *that* screen's driver-load mechanism
    actually lets Setup proceed once satisfied (unlike the legacy F6 dialog, which doesn't).
-4. **If neither track works**, the honest conclusion is that the Setup.exe pivot itself needs
-   reconsidering against `PHASE2_BOOTSTRAP_ARCHITECTURE.md`'s original fallback (real `bcdboot` from
-   a self-built WinPE session, driver injection handled some other way — possibly revisiting the
-   `virt-v2v`/hivex approach applied to `boot.wim` specifically rather than the main OS disk it
-   failed against in Findings 7-8, since WinPE's own boot code path differs from a full NT kernel
-   boot; or the DISM COM-hosting failure from Findings 7-13 with the newer `ntoseye`
-   kernel-debugging tooling now available).
-5. **Check what's ephemeral before assuming it's still there.** Everything under `/tmp/` from
-   Session 4 is gone (extracted logs, scratchpad copies of `qmp-click.py`/`qmp-dblclick.py` — the
-   *permanent* copy of `qmp-click.py` is in `tools/`, already there, no need to re-extract).
-   Everything under this project's own `image-apply/output/` persisted:
-   - `winpe-boot-index2.qcow2` — **currently reverted to stock** (`winpeshl.ini` present, containing
-     only `%SYSTEMDRIVE%\setup.exe`, no `drvload` line) after Session 4's clean-install test.
-     `Autounattend.xml` still present at both its partition root and `\sources\`, unchanged.
+3. **If that also fails**, the honest conclusion is that the Setup.exe pivot itself needs
+   reconsidering against `PHASE2_BOOTSTRAP_ARCHITECTURE.md`'s original fallback: sub-milestone 1
+   (making the disk bootable) is already solved a different way — real `bcdboot` run from a
+   self-built plain WinPE session (Findings 6/12), which boots clean with **no** driver-load-gate
+   exposure at all, because it never invokes Setup.exe. Driver injection would then need solving on
+   that path instead — possibly revisiting the `virt-v2v`/hivex approach applied to `boot.wim`
+   specifically rather than the main OS disk it failed against in Findings 7-8 (WinPE's own boot
+   code path differs from a full NT kernel boot, so the same failure mode may not recur), or the
+   DISM COM-hosting failure from Findings 7-13 with newer tooling.
+4. **Check what's ephemeral before assuming it's still there.** Everything under `/tmp/` from
+   Session 5 is gone. Everything under this project's own `image-apply/output/` persisted:
+   - `winpe-boot-index2.qcow2` — **now contains a `\$WinPEDriver$\viostor\2k25\amd64\` folder** at
+     its NTFS partition root (Session 5, Finding 27), left in place — harmless, doesn't affect any
+     other test. `winpeshl.ini` unchanged from Session 4's reverted-to-stock state
+     (`%SYSTEMDRIVE%\setup.exe` only). `Autounattend.xml` still present at both its partition root
+     and `\sources\`, unchanged.
    - `win2025-target.qcow2` — still blank/unpartitioned; Setup has never gotten far enough to touch
      it.
    - `answer-floppy.img` — unchanged, still has `Autounattend.xml` + `viostor/2k25/amd64/*`.
-   - A VM from Session 4 may still be running (`qmp-setup-test4.sock`) — check
-     `pgrep -fa qemu-system-x86_64` before assuming either way; if still up, its target disk is still
-     blank and its boot medium's `winpeshl.ini` is in the stock/reverted state described above.
+   - `OVMF_VARS_setup-test5.fd` — Session 5's fresh OVMF vars copy; same boot command shape as
+     Session 4 (`usb-tablet`/`qemu-xhci` included).
+   - No VM left running at the end of Session 5 (confirmed via `pgrep` before ending).
 
 ---
 
@@ -134,27 +125,23 @@ before assuming the whole pivot is dead. **Not yet tested** — see "What to do 
   anything new, and do it before proposing the next experiment, not just before writing code.**
   See `CLAUDE.md`'s "Research-first discipline" section. This is exactly how BCD-SYS, the
   `virt-v2v` driver-injection pattern, Microsoft's own "Implicit Answer File Search
-  Order"/`winpeshl.ini` reference documentation, and (Session 4, Finding 26) `$WinPEDriver$` were
-  all found and used directly instead of guessed at. **This one needed an explicit reminder from
-  the user mid-session** ("remember our research-first philosophy... I'm having to steer us back to
-  this often") after Finding 25 closed with a speculative theory instead of a proper search pass —
-  when a finding ends in "here's a theory, not yet tested," do the multi-angle web research pass
-  *before* presenting that theory as the recommended next step, not after being asked to.
+  Order"/`winpeshl.ini` reference documentation, and `$WinPEDriver$` were all found and used
+  directly instead of guessed at — even though `$WinPEDriver$` itself ultimately didn't pan out
+  (Finding 27), it was still the right thing to try first: cheap, well-documented, and its failure
+  produced real evidence rather than burning a session on a bigger, unproven rewrite first.
 - **Verify before trusting — this discipline directly overturned a settled-looking assumption
-  twice in Session 4 alone.** Checking what was actually in `winpeshl.ini`/`startnet.cmd` before
-  editing (rather than trusting Finding 21's premise) and pulling real `setupact.log` timestamps
-  (rather than guessing why a dialog wouldn't advance) both revealed the previous session's
-  optimism was wrong. Don't assume a BCD element ID, a hardware ID, a WIM image index, or a
-  mechanism's behavior — decode a real reference, extract directly, or test it.
+  again in Session 5.** Before concluding "$WinPEDriver$ doesn't work," Session 5 verified the
+  driver files were actually present at the documented location from inside the running session
+  (`dir /s`, not just trusting the host-side copy step) — which is also what surfaced the `X:` =
+  physical-partition correction. Don't assume a BCD element ID, a hardware ID, a WIM image index,
+  a drive-letter mapping, or a mechanism's behavior — decode a real reference, extract directly, or
+  test it.
 - **Give periodic status updates during long-running steps** (boot watches, `wimapply`, anything
   that takes more than a couple minutes) — don't go silent until the very end. This is a standing
   preference, not a one-off ask.
-- **Work in small, verified steps and document as you go — including dead ends, and including when
-  a previous session's optimism turns out to be wrong.** Findings 22-25 (Session 4) are recorded in
-  exactly the same detail as any success, for the same reason as always: re-treading the same
-  ground is the actual cost this discipline avoids. If Session 3's status section had tested a
-  genuinely clean Install click and waited 60 seconds, this gap would have been caught a session
-  earlier.
+- **Work in small, verified steps and document as you go — including dead ends.** Finding 27
+  (Session 5) is recorded in exactly the same detail as any success, for the same reason as always:
+  re-treading the same ground is the actual cost this discipline avoids.
 - **Any `qemu-nbd`-dependent sequence must run inside a single Bash tool call.** This sandbox does
   not reliably keep a backgrounded `qemu-nbd -c` process alive between separate tool invocations
   (Finding 16). A `qemu-system-x86_64 ... -daemonize` VM, by contrast, survives fine across many
@@ -164,11 +151,14 @@ before assuming the whole pivot is dead. **Not yet tested** — see "What to do 
   reliably survive between separate tool calls either (plain `/tmp` cleanup, not a qemu-nbd issue) —
   `mkdir -p` it fresh inside the same atomic sequence rather than assuming a prior session's
   mountpoint directory still exists.
-- **A `usb-tablet` device is now required for any mouse-driven UI automation.** Relative PS/2 mouse
+- **A `usb-tablet` device is required for any mouse-driven UI automation.** Relative PS/2 mouse
   input does not produce visible cursor movement in this WinPE/Setup environment this early in boot
   (confirmed, not just untried) — add
   `-device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0` to any `qemu-system-x86_64`
   invocation that needs `tools/qmp-click.py`.
+- **`tools/qmp-type.py` cannot type `&`** (no `CHAR_MAP` entry, confirmed by hitting it directly in
+  Session 5) — avoid `2>&1`-style redirection in any command typed via this tool; run separate `dir`
+  invocations per target instead, or extend `CHAR_MAP` if this becomes a recurring blocker.
 - **Phase gating still applies**: no Phase 3 (service-layer/role-provisioning) work starts until
   Server 2025, Server 2022, *and* Windows 11 have each independently bootstrapped through Phase 2.
   Server 2025 is still the only one attempted so far, and Phase 2 itself is not yet working end to
@@ -201,13 +191,21 @@ before assuming the whole pivot is dead. **Not yet tested** — see "What to do 
   **not** mean it runs in this boot flow (no evidence it ever does — see Finding 22). To control
   launch order deterministically, write your own `Windows\System32\winpeshl.ini` — verified syntax:
   `[LaunchApps]` entries run strictly sequentially, one app per line, each waited-on before the next
-  starts (per Microsoft's own reference, fetched directly in Session 4, not just a search summary).
+  starts (per Microsoft's own reference, fetched directly).
+- **`X:` in this Setup boot flow is the physical boot-medium NTFS partition itself**, not a
+  separate RAM-disk copy of `boot.wim`'s contents (Session 5, Finding 27 — confirmed via `wmic
+  logicaldisk`). Any file placed on the mounted `winpe-boot-index2.qcow2` NTFS partition is directly
+  visible as `X:\...` inside the running session. This boot configuration has **no `C:` drive at
+  all** — only `D:` (Server 2025 ISO), `E:` (virtio-win ISO), `X:` (boot medium), `A:` (answer
+  floppy).
 - **`EarlyF6DriverInstall`'s "Install driver to show hardware" gate is unconditional and has no known
-  exit via UI interaction alone** (Findings 24-25) — it enters its wait state the instant Setup's
-  disk-configuration phase begins, before any driver state is checked, and loops back to waiting
-  after any driver action (success, failure, or duplicate-install error) with no timeout and no
-  hidden "Next" button. Don't re-attempt "pre-load the driver a bit earlier/differently" expecting a
-  different result — the timestamps rule this out structurally, not just empirically this one time.
+  exit via UI interaction, pre-loading, or `$WinPEDriver$`** (Findings 24, 25, 27) — it enters its
+  wait state the instant Setup's disk-configuration phase begins, before any driver state is
+  checked, loops back to waiting after any driver action (success, failure, or duplicate-install
+  error) with no timeout and no hidden "Next" button, and shows no evidence of ever scanning
+  `$WinPEDriver$` in `setupact.log`. Don't re-attempt any of these four approaches expecting a
+  different result on a retry — the evidence rules them out structurally, not just empirically this
+  one time.
 - `setupact.log` actually lives at `X:\$WINDOWS.~BT\Sources\Panther\setupact.log` during a live
   Setup session — **not** `X:\Windows\Panther\setupact.log` (doesn't exist yet at this stage; there
   are four different `setupact.log` copies on `X:\`, and this is the one Setup actively writes to).
@@ -215,36 +213,37 @@ before assuming the whole pivot is dead. **Not yet tested** — see "What to do 
   typed directly seems to lose the preceding backslash somehow (observed once, not root-caused;
   `cd /d` avoids the issue entirely rather than fighting it).
 - `tools/qmp-sendkey.py` and `tools/qmp-type.py` drive a QEMU guest's GUI via QMP keyboard events —
-  Tab/arrow-key navigation, typing literal text — no mouse, no VNC viewer. Still useful for
-  keyboard-only interaction (opening `Shift+F10` command prompts, typing commands), but **Tab
-  navigation does not reach every control** in Setup's driver-install dialog (it cycles through
-  textbox → Browse → checkbox → Support → Legal → back to textbox, skipping the driver list and the
-  Back/Install buttons entirely) — those need real mouse clicks.
-- **New this session: `tools/qmp-click.py`** — QMP absolute-position mouse clicks (`--double` for
-  double-clicks, used for folder-tree navigation in Setup's Browse dialog). Requires a `usb-tablet`
-  device on the VM (see Process reminders above) — relative PS/2 mouse movement does not work in
-  this environment at all, confirmed via direct calibration, not assumed.
+  Tab/arrow-key navigation, typing literal text — no mouse, no VNC viewer. **`qmp-type.py` has no
+  `CHAR_MAP` entry for `&`** (hit directly in Session 5) — avoid typing `&`-containing command
+  strings (e.g. `2>&1`) through it. Tab navigation also does not reach every control in Setup's
+  driver-install dialog (it cycles through textbox → Browse → checkbox → Support → Legal → back to
+  textbox, skipping the driver list and the Back/Install buttons entirely) — those need real mouse
+  clicks.
+- **`tools/qmp-click.py`** — QMP absolute-position mouse clicks (`--double` for double-clicks, used
+  for folder-tree navigation in Setup's Browse dialog). Requires a `usb-tablet` device on the VM
+  (see Process reminders above) — relative PS/2 mouse movement does not work in this environment at
+  all, confirmed via direct calibration, not assumed.
 - To pull a log or any small file out of a running WinPE/Setup session without a network share:
   open a command prompt with `Shift+F10` (`tools/qmp-sendkey.py ... shift-f10`), `copy` the file to
   the attached answer floppy, then read it directly from the host with `mcopy -i
-  answer-floppy.img ::filename /host/path`. Still the most reliable way to get real diagnostic
-  detail — much better than screen-scraping a scrolling console window.
+  answer-floppy.img ::filename /host/path`. Files redirected via `dir ... > A:\file.txt` come back
+  UTF-16-encoded (not the UTF-16LE-with-ASCII-spacing you might expect from older `cmd.exe` —
+  decode with Python's `bytes.decode('utf-16-be')` if `utf-16-le`/plain `utf-16` look garbled; check
+  both). Still the most reliable way to get real diagnostic detail — much better than screen-scraping
+  a scrolling console window.
 
 ---
 
 ## Housekeeping note
 
-This directory **is** a git repository, and the working tree is clean as of the end of Session 4 —
-both of Session 4's commits are already made *and pushed* to `origin/main`:
-`f6fae6b` ("Session 4: walk back Setup.exe pivot status — EarlyF6DriverInstall is a confirmed dead
-end, not an automation gap") and `826c744` ("Add Finding 26: $WinPEDriver$ prior art gives a
-cheaper, better-documented track than the modern-screen theory"). Don't assume there's anything
-uncommitted waiting from Session 4 — check `git status`/`git log` fresh rather than trusting this
-note's memory of it, same standard as everything else in this project. Still ask before committing
-*new* changes (or squashing vs. several commits) — this note only describes what was already true
-at Session 4's end, not a standing exemption from that rule.
+This directory **is** a git repository. Check `git status`/`git log` fresh at the start of this
+session rather than trusting any note here about what was committed — this file describes state as
+of when it was last edited, not necessarily the true current state. As of Session 5 being written,
+`PHASE2_ENGINEERING_LOG.md`, `README.md`, `CLAUDE.md`, and this file have all been updated to
+reflect Finding 27 but **not yet committed** — that's expected to happen as a normal end-of-session
+commit, not evidence of anything unusual. Still ask before committing *new* changes (or squashing
+vs. several commits).
 
-**A VM from Session 4 may still be running** (`qmp-setup-test4.sock`, PID varies) — check
-`pgrep -fa qemu-system-x86_64` before assuming either way. If still up, it's sitting at the stuck
-`EarlyF6DriverInstall` dialog with a blank target disk and `winpe-boot-index2.qcow2`'s
-`winpeshl.ini` in the stock/reverted state — harmless to leave running or kill, your call.
+**No VM was left running at the end of Session 5** (confirmed via `pgrep -fa qemu-system-x86_64`
+before ending). `winpe-boot-index2.qcow2` carries a harmless `$WinPEDriver$` folder addition (see
+above); `win2025-target.qcow2` is still blank.

@@ -393,9 +393,9 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** in progress, **and less settled than it looked at the end of Session 3 — read
-`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 4)" section before
-doing anything else here.** Sub-milestone 1 (make the disk bootable) remains **solved, twice over**:
+**Status:** in progress — read
+`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 5)" section before
+doing anything else here. Sub-milestone 1 (make the disk bootable) remains **solved, twice over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD, and this also applies to `boot.wim` index 2 ("Microsoft Windows
 Setup"), which boots clean as a plain disk with zero UEFI landmine exposure. Sub-milestone driver
@@ -414,21 +414,27 @@ newly-required `usb-tablet` device — relative PS/2 mouse input doesn't work th
 not lead anywhere: a genuinely clean, error-free driver install was tested for the first time this
 session, and the dialog loops back to waiting regardless of success, failure, or "already
 installed." **There is currently no known path past Setup's disk-configuration step, automated or
-manual — but proper multi-angle research afterward (not yet acted on) turned up a real,
-better-documented, cheaper lead than the first theory considered.** `$WinPEDriver$` is a documented
-Setup.exe feature (Microsoft KB 2686316) — a fixed folder name Setup automatically scans on
-`C:`/`D:`/`E:`/`X:` (the boot volume itself) and loads discovered drivers from, with zero
-`unattend.xml` configuration, architecturally distinct from both `drvload` and `DriverPaths`. This
-should be tried before the original, bigger-change theory (whether avoiding full
-`DiskConfiguration` automation in `Autounattend.xml` lets Setup reach a *different*, modern
-driver-load screen instead of this legacy one) — see the engineering log for the detail on both.
-Until one of these is tried and either works or doesn't, this pivot's **reconsideration** of the
-"do not reuse `autounattend.xml`'s
-`Microsoft-Windows-Setup` component" rule (under "Relationship to `../windows-server-vm-automation/`"
-above) remains unresolved rather than trending toward confirmed — the UEFI landmine really is
-specific to `media=cdrom` boot, not Setup.exe itself, but that finding alone no longer implies this
-pivot is close to done. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's
-long, but everything needed to resume without re-deriving it is there.
+manual.** The cheaper of two research-identified leads, `$WinPEDriver$` (Microsoft KB 2686316 — a
+fixed folder name Setup automatically scans on `C:`/`D:`/`E:`/`X:` and loads discovered drivers
+from, with zero `unattend.xml` configuration), was tried in Session 5 and **ruled out**: the driver
+files were verified present at the correct documented location (`X:\$WinPEDriver$\...` — and `X:`
+in this boot flow was confirmed to be the physical boot-medium partition itself, not a separate
+RAM-disk copy, correcting a wrong assumption this project had held implicitly), yet the same empty
+"Install driver to show hardware" dialog appeared and `setupact.log` shows zero evidence Setup ever
+scanned for the folder. Four independent approaches have now failed: `DriverPaths`, pre-loaded
+`drvload`, manual UI click-through, and `$WinPEDriver$`. The one remaining untried lead is the
+bigger-change theory — whether avoiding full `DiskConfiguration` automation in `Autounattend.xml`
+lets Setup reach a *different*, modern driver-load screen instead of this legacy one. Until that's
+tried and either works or doesn't, this pivot's **reconsideration** of the "do not reuse
+`autounattend.xml`'s `Microsoft-Windows-Setup` component" rule (under "Relationship to
+`../windows-server-vm-automation/`" above) remains unresolved rather than trending toward
+confirmed — the UEFI landmine really is specific to `media=cdrom` boot, not Setup.exe itself, but
+that finding alone no longer implies this pivot is close to done. If the modern-screen theory also
+fails, the recommended fallback is reconsidering the Setup.exe pivot itself in favor of the
+already-solved plain-WinPE + `bcdboot` path, with driver injection solved there instead via the
+offline `hivex` technique applied to a target disk made bootable a different way. See
+`PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but everything needed to
+resume without re-deriving it is there.
 
 ---
 

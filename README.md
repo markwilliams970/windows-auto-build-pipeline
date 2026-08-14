@@ -8,12 +8,12 @@ upstream Packer/QEMU/OVMF issue. See `HANDOFF_FROM_UNATTENDED_INSTALL.md` for th
 full background on why this project exists as a separate repo from its sibling,
 `../windows-server-vm-automation/`.
 
-## Status (as of Session 4, 2026-08-04)
+## Status (as of Session 5, 2026-08-14)
 
 **Phase 1 (architecture): done.**
 
-**Phase 2 (offline installation mechanism): in progress; a blocker Session 3 thought
-was "just automation" turned out to be a real, currently-unresolved dead end.**
+**Phase 2 (offline installation mechanism): in progress; the Setup.exe pivot's
+driver-load blocker has now survived four independent fix attempts.**
 
 - **Solved:** making an offline-applied disk boot at all under UEFI/OVMF, via two
   independent methods (BCD-SYS from Linux with zero boots, and real `bcdboot` from
@@ -27,18 +27,24 @@ was "just automation" turned out to be a real, currently-unresolved dead end.**
 - **Not solved — a real blocker, not an automation gap:** `autounattend.xml`'s
   `DriverPaths` doesn't feed `EarlyF6DriverInstall`'s "Install driver to show
   hardware" gate, and `setupact.log` timestamps prove that gate is unconditional —
-  it starts waiting before any driver state is even checked. Worse, manually
-  clicking through it (mouse-driven UI automation, confirmed working) doesn't lead
-  anywhere either: even a genuinely clean, error-free driver install loops back to
-  waiting forever, with no timeout and no hidden "Next" button. There is currently
-  no known path past Setup's disk-configuration step, automated or manual.
-- **Two open tracks, not yet attempted, in priority order:** (1) `$WinPEDriver$` —
-  a documented Setup.exe feature (Microsoft KB 2686316) that automatically loads
-  drivers from a fixed folder on the boot volume itself, with no `unattend.xml`
-  config at all; cheaper and better-documented, try this first. (2) whether
-  avoiding full unattend-driven disk configuration lets Setup reach a different,
-  modern driver-load screen instead of the legacy one. See
-  `PHASE2_ENGINEERING_LOG.md`'s Session 4 section for full detail on both.
+  it starts waiting before any driver state is even checked. Manually clicking
+  through it (mouse-driven UI automation, confirmed working) doesn't lead anywhere
+  either. **Session 5 also ruled out `$WinPEDriver$`** (Microsoft KB 2686316's
+  documented driver-autoload folder): verified the driver files were placed
+  correctly at the documented location (`X:\$WinPEDriver$\...` — and confirmed `X:`
+  in this boot flow is the physical boot-medium partition itself, not a separate
+  RAM-disk copy, a previously-wrong assumption this project had held implicitly),
+  yet the same empty dialog appeared and `setupact.log` shows zero evidence Setup
+  ever scanned for it. Four independent approaches have now failed:
+  `DriverPaths`, pre-loaded `drvload`, manual UI click-through, and `$WinPEDriver$`.
+- **One remaining untried track:** whether avoiding full unattend-driven disk
+  configuration lets Setup reach a different, modern driver-load screen instead of
+  the legacy one (Finding 26's "modern screen" theory) — a bigger `Autounattend.xml`
+  change than anything tried so far, and still just a theory. If that also fails,
+  the recommended fallback is reconsidering the Setup.exe pivot itself in favor of
+  the already-solved plain-WinPE + `bcdboot` path (sub-milestone 1), with driver
+  injection solved there instead via the offline `hivex` technique. See
+  `PHASE2_ENGINEERING_LOG.md`'s Session 5 section for full detail.
 
 **Phases 3-5** (Windows role configuration, Datadog integration, lifecycle
 automation) are not started — gated on Phase 2 succeeding for all three target
@@ -49,7 +55,7 @@ OSes (Server 2025, Server 2022, Windows 11), not just the first one proven.
 Read, in order:
 
 1. `PHASE2_ENGINEERING_LOG.md` — especially its final section, "STATUS AND NEXT
-   STEPS ON RESUMPTION (Session 3)." This is the authoritative current state:
+   STEPS ON RESUMPTION (Session 5)." This is the authoritative current state:
    what's solved, what's not, and the specific next action already agreed on.
 2. `CLAUDE.md` — project goals, architectural principles, tool responsibilities,
    phased plan. Read its Phase 2 status line and the "Do not reuse" note under

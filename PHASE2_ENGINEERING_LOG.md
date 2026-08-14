@@ -1252,3 +1252,137 @@ paid off twice — Finding 22 (checking what's actually in `winpeshl.ini`/`start
 editing, rather than assuming Finding 21's premise) and Finding 24 (pulling real `setupact.log`
 timestamps instead of guessing why the dialog wouldn't advance) both overturned an assumption the
 previous session's writeup had treated as settled.
+
+---
+
+## Session 5
+
+### Finding 27: `$WinPEDriver$` (Finding 26's cheapest, best-documented lead) tested and ruled out
+— files verifiably present at the documented location, but Setup's `EarlyF6DriverInstall` shows
+the exact same empty "Install driver to show hardware" dialog anyway, with zero evidence in
+`setupact.log` that any `$WinPEDriver$` scan was even attempted
+
+**Setup:** mounted `winpe-boot-index2.qcow2`'s NTFS partition directly (`qemu-nbd` + mount, same
+technique as Finding 22/23), copied the same known-good `viostor` driver files (already used
+throughout this project, sourced from `answer-floppy.img`'s existing copy) into
+`\$WinPEDriver$\viostor\2k25\amd64\` at the partition root. No `winpeshl.ini` change, no
+`Autounattend.xml` change — confirmed `winpeshl.ini` was still stock (`%SYSTEMDRIVE%\setup.exe`
+only) before booting, matching Session 4's end state exactly.
+
+**Result 1 — the dialog still appears, unchanged.** Booted with the exact same device shape as
+every prior session (boot medium on `ide.0`, target disk on `virtio-blk-pci`, Server 2025 ISO +
+`virtio-win-0.1.285.iso` as secondary `media=cdrom`, answer floppy). Screenshot at ~45s shows
+"Install driver to show hardware" with an empty driver list — pixel-identical in substance to
+Finding 20/23/25's dialog.
+
+**Result 2 — `setupact.log` shows no `$WinPEDriver$` scan at all.** Pulled the live log via the
+established `Shift+F10` → `copy X:\$WINDOWS.~BT\Sources\Panther\setupact.log A:\...` → `mcopy`
+technique (Finding 21's path, confirmed still correct). `grep`-ing the full log for `PnPIBS`,
+`WinPEDriver`, `checking for`, or `pre-configured` (the KB's own documented log-line vocabulary)
+returns **zero matches**. The only driver-related lines present are the same ones Finding 24 saw:
+`SetupManager: Drivers Path: []` (empty — this reflects `Autounattend.xml`'s `DriverPaths`, a
+different mechanism per Finding 26, not `$WinPEDriver$`), then `EarlyF6DriverInstall: Entering
+Prepare Method` → `Leaving Prepare Method` → (a few lines of unrelated setup activity) →
+`EarlyF6DriverInstall: Entering Execute Method` → `Driver: Starting Wait`, one second later. No
+`$WinPEDriver$`-related log line appears anywhere before, during, or after this sequence.
+
+**Result 3 — the files are genuinely present and correctly placed, not a placement mistake.**
+Before concluding "doesn't work," verified the premise itself rather than trusting the copy step:
+rebooted, `Shift+F10`, and ran `wmic logicaldisk get caption,volumename,description,filesystem`.
+This surfaced an important, previously-wrong assumption of this project's own: **`X:` in this
+Setup boot session is not a RAM-loaded copy of `boot.wim`'s contents distinct from the physical
+boot medium — `X:` *is* the physical NTFS partition itself** (`wmic` confirms: `X:`, `Local Fixed
+Disk`, `NTFS`, volume label `Windows` — the same partition `qemu-nbd`-mounted throughout this
+project to edit `Autounattend.xml`/`winpeshl.ini`). There is no `C:` at all in this boot
+configuration (only `D:` = Server 2025 ISO, `E:` = virtio-win ISO, `X:` = the boot medium,
+`A:` = answer floppy) — meaning our copy to the partition root landed exactly on `X:`, one of the
+KB's four documented scan locations, not on an unlettered or wrong volume. `dir "X:\$WinPEDriver$"
+/s` (redirected to the floppy, pulled off and decoded as UTF-16) confirms all three driver files
+present at the exact documented depth: `X:\$WinPEDriver$\viostor\2k25\amd64\{viostor.inf,
+viostor.cat, viostor.sys}`, `3 File(s) 80,324 bytes`.
+
+**Diagnosis:** the driver-placement side of Finding 26's plan was executed correctly and is not
+the reason this didn't work. Either (a) `$WinPEDriver$` is not honored by this specific Setup
+build (`10.0.26100.32230`, Windows Server 2025) in this boot configuration, despite KB 2686316
+describing it as a current mechanism, or (b) the scan happens at a point in the boot sequence this
+project hasn't captured (e.g. only from true `media=cdrom` boot, not a `wimapply`'d plain-disk
+medium — plausible, since this project deliberately never boots the medium as `media=cdrom` and
+KB 2686316's own examples assume a real burned/mounted installation disc), or (c) the scan
+requires the folder to exist at boot-media-creation time in a way `wimapply` + direct NTFS-partition
+file copy doesn't reproduce (e.g. a manifest/catalog built into `boot.wim` at Microsoft's own build
+time, not something addable after the fact by dropping files onto the applied partition). This
+project has no way to distinguish (a)/(b)/(c) further without a real optical/`media=cdrom` boot
+test or deeper reverse-engineering of `PnPIBS`'s actual scan trigger — not pursued this session,
+since Finding 26's second, costlier thread (the "modern screen" theory) was already next in line
+regardless of which of these is true.
+
+**Root cause:** not fully determined — a genuine negative result, not a mistake in this project's
+own execution. Recorded per this project's "document findings as you go" standard rather than
+treated as wasted effort: this closes out Finding 26's cheaper thread cleanly, with real evidence
+(not just "didn't get to it"), and the `X:` discovery (Result 3) is independently useful — it
+corrects a wrong mental model (`X:` as a RAM-disk copy) this project had held implicitly since
+Finding 22, without ever stating it explicitly or testing it.
+
+**Not yet tried, only because Finding 26 already ranked it second and more expensive:** placing
+`$WinPEDriver$` on the Server 2025 ISO itself (`D:`) or the virtio-win ISO (`E:`) instead of the
+boot medium (`X:`) — would require rebuilding one of those ISOs (not a bare file copy, unlike the
+boot medium which this project already mounts read-write routinely), so it's a materially bigger
+change than what was just tested and not clearly more likely to succeed given `X:` was already a
+documented, valid location per the KB. Not recommended as the next step over Finding 26's own
+option 2 below.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 5)
+
+**Where things stand:** both items in Finding 26's priority-ordered list have now been tried.
+`$WinPEDriver$` (the cheaper one) is ruled out empirically (Finding 27) — not "not attempted," a
+real negative result with `setupact.log` evidence. The Setup.exe pivot (Finding 15) still has no
+known automated or manual path past `EarlyF6DriverInstall`'s disk-configuration gate, unchanged
+from Session 4's conclusion.
+
+**Recommended next step — Finding 26's option 2, the "modern screen" theory:** rebuild
+`Autounattend.xml` to *not* fully automate `DiskConfiguration`/`ImageInstall` (or omit
+`DiskConfiguration` entirely) and observe what screen Setup shows instead of jumping straight into
+`EarlyF6DriverInstall`. The working theory is that full unattend-driven disk configuration is what
+routes Setup into the *legacy* driver-load gate tested exhaustively across Findings 19-25 and 27,
+and that the normal interactive "Where do you want to install Windows" screen has a materially
+different, non-legacy "Load driver" link never yet tested in this project. This is a bigger change
+than Finding 27's (an `Autounattend.xml` rewrite, not a file copy) and still just a theory, not a
+confirmed mechanism, per Finding 26's own original framing — treat it as an experiment, not an
+assumed fix.
+
+**If option 2 also fails:** per Finding 26's own fallback framing, the honest conclusion is that
+the Setup.exe pivot itself (not just its automation) needs reconsidering against the two-tier
+bootstrap plan's original fallback path (`PHASE2_BOOTSTRAP_ARCHITECTURE.md`) — i.e., going back to
+sub-milestone 1's already-solved, boots-clean-with-zero-driver-problems plain WinPE +
+`bcdboot`-from-WinPE path (Findings 6/12), and solving driver injection there via the offline
+`hivex` registry technique (Findings 7-8) reapplied to a target disk that's already been made
+bootable a different way — rather than continuing to chase driver-load gates inside Setup.exe's
+own UI, which has now failed four independent ways (`DriverPaths` unattend config, pre-loaded
+`drvload`, manual UI click-through, and `$WinPEDriver$`).
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `winpe-boot-index2.qcow2` — **now contains a `\$WinPEDriver$\viostor\2k25\amd64\` folder at its
+  NTFS partition root**, added this session (Finding 27), left in place (harmless, doesn't affect
+  any other test). `winpeshl.ini` unchanged from Session 4's reverted-to-stock state
+  (`%SYSTEMDRIVE%\setup.exe` only). `Autounattend.xml` still present and unchanged at both its
+  partition root and `\sources\`.
+- `win2025-target.qcow2` — still blank/unpartitioned; Setup has never gotten far enough to touch it.
+- `answer-floppy.img` — unchanged, still has `Autounattend.xml` + `viostor/2k25/amd64/*`. (This
+  session's diagnostic `.txt` log dumps written to it during testing were not preserved — copied to
+  the host and deleted from the floppy's working copy is unnecessary since the floppy image itself
+  wasn't modified by this session's `mcopy`/`dir >` runs beyond what earlier sessions already left;
+  no action needed here.)
+- `OVMF_VARS_setup-test5.fd` — this session's fresh OVMF vars copy (from `OVMF_VARS_4M.fd`,
+  Secure Boot disabled), boot command otherwise identical to Session 4's (`usb-tablet`/`qemu-xhci`
+  included even though this session's testing was log/CLI-driven, not mouse-driven).
+- No VM left running this session (confirmed via `pgrep` before ending).
+
+**Key correction to internalize before resuming:** `X:` during this Setup boot flow is **the
+physical boot-medium NTFS partition itself**, not a separate RAM-disk copy of `boot.wim`'s
+contents. Any future file placed on the mounted `winpe-boot-index2.qcow2` NTFS partition is
+directly visible as `X:\...` inside the running session — useful to know for any future
+`Autounattend.xml`/driver-placement experiment, not just this one. Also worth remembering: this
+boot configuration has **no `C:` drive at all** — only `D:` (Server 2025 ISO), `E:` (virtio-win
+ISO), `X:` (boot medium), `A:` (answer floppy).
