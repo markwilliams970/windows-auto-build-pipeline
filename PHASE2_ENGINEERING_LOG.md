@@ -1699,3 +1699,213 @@ boot of any kind.
 - `win2025-test.qcow2` (64GB, `install.wim`-applied) and `winpe-boot-index1.qcow2.bak`
   (plain WinPE, no Setup.exe) are both real, reusable, non-trivial-to-rebuild assets from Session 2 —
   worth knowing they still exist in `image-apply/output/` rather than assuming a rebuild is needed.
+
+---
+
+## Session 8: fresh-disk re-verification of the Finding 29 fix — confirmed, on a disk with none of
+## Session 2's history baked in. `INACCESSIBLE_BOOT_DEVICE (0x7B)` is cleared and real OOBE reached
+## again, this time end-to-end from a blank 40GB qcow2, plus one new sandbox-environment gotcha.
+
+### Finding 30: the fresh-disk re-run reproduced Session 7's result cleanly — same recipe, same
+outcome, this time with no Session-2-era disk history in play
+
+Per Session 7's own flagged caveat (its fix was verified against `win2025-test.qcow2`, a disk with
+history predating several of this project's since-settled conventions), this session repeated the
+entire sequence from scratch against `win2025-target.qcow2` (blank 40GB qcow2, previously set aside
+unpartitioned for exactly this purpose):
+
+1. **Partition + format**: `sgdisk` GPT (100MiB ESP `ef00` / 16MiB MSR `0c01` / rest Windows `0700`),
+   `mkfs.vfat -F32` on the ESP, `mkntfs -Q -F -L Windows -p 239616 -H 255 -S 63` on the Windows
+   partition (start sector **239616** — identical to the very first Session-1 run, confirming the
+   layout is deterministic given identical partition sizing, not a coincidence worth re-deriving).
+2. **`wimapply`**: `install.wim` (freshly `7z`-extracted from the real 2025 ISO this session, not
+   reused from any prior extraction — none was still on disk) index 2, 14m6s wall clock, matching
+   Finding 12's own "~14-15 minutes" observation.
+3. **Bootability**: `winpe-boot-index1-work.qcow2` (the plain, non-Setup.exe WinPE medium, `startnet.cmd`
+   already reverted to bare `wpeinit` per Session 7's own cleanup) attached alongside the target disk
+   (WinPE on `ide-hd`/`ide.0`, target on `virtio-blk-pci`, per Finding 17's device-model lesson) and
+   driven via a **fully unattended `startnet.cmd`** this time (see Finding 31) rather than Session 7's
+   interactive `Shift+F10` approach — `drvload`, `diskpart` (`select disk 1` correctly picked the
+   virtio-blk-attached target again), and `bcdboot W:\Windows /s S: /f UEFI` all succeeded, confirmed
+   via logs copied off to the target disk's own root before WinPE's ephemeral `X:\` vanished at
+   shutdown.
+4. **Driver injection**: `tools/gen-viostor-ddb-reg.py`'s output applied via `hivexregedit --merge`
+   against the freshly-`wimapply`'d disk's own `SYSTEM` hive — clean exit, and every value (the
+   `ControlSet001\Services\viostor` service key, both `DriverDatabase\DeviceIds\PCI\...` entries, the
+   full `DriverDatabase\DriverPackages\...` tree) confirmed present via `hivexregedit --export` before
+   ever booting (see Finding 32 for an export-syntax gotcha hit and resolved along the way).
+5. **Solo boot**: target disk alone, fresh `OVMF_VARS`, `virtio-blk-pci` — TianoCore splash → "Getting
+   ready" → **a real Windows Server 2025 OOBE screen ("Hi there" / region-and-language setup)**,
+   confirmed via `tools/qmp-screenshot.py`, screen stable/unchanging across three consecutive captures
+   25 seconds apart (`solo-8.png` through `solo-12.png`, byte-identical file sizes) — the same
+   "settled, waiting for input" signature Session 7 used to confirm OOBE rather than a mid-transition
+   frame.
+
+**Result: the fix generalizes.** This is not the same disk Session 7 booted — different `wimapply` run,
+different WinPE run, different `hivexregedit --merge` invocation, no shared state with Session 2 at
+all. Phase 2's core blocker (offline driver injection clearing 0x7B without any interactive Setup.exe
+involvement) is now confirmed twice, independently, not once with an uncontrolled variable.
+
+### Finding 31: baking the proven Session-7 interactive sequence into a real `startnet.cmd` worked
+first try, no interactive `Shift+F10` driving needed this time
+
+Session 7 drove `drvload`/`diskpart`/`bcdboot` interactively via `Shift+F10` + `qmp-type.py`, out of
+caution after discovering the boot medium's `startnet.cmd` had drifted from what was expected
+(Finding 14's leftover debug script). With the exact working command sequence now known and the
+medium's `startnet.cmd` confirmed freshly reverted to bare `wpeinit`, this session wrote the full
+sequence directly into `startnet.cmd` instead (edited offline via the same `qemu-nbd`+`mount`
+technique used throughout this project — no interactivity needed to make the edit itself):
+
+```
+wpeinit
+drvload X:\drivers\viostor\viostor.inf > X:\drvload-log.txt 2>&1
+diskpart /s X:\diskpart-assign.txt > X:\diskpart-log.txt 2>&1
+bcdboot W:\Windows /s S: /f UEFI > X:\bcdboot-log.txt 2>&1
+copy X:\drivers\viostor\viostor.sys W:\Windows\System32\drivers\viostor.sys
+copy X:\drvload-log.txt W:\session8-drvload-log.txt
+copy X:\diskpart-log.txt W:\session8-diskpart-log.txt
+copy X:\bcdboot-log.txt W:\session8-bcdboot-log.txt
+echo session8 startnet.cmd reached end > W:\session8-done-marker.txt
+wpeutil shutdown
+```
+
+Two details that mattered: the file needed **CRLF line endings** (`sed 's/$/\r/'` after writing it as
+a normal Unix text file — `cmd.exe` batch parsing is not reliably tolerant of bare LF), and each
+command's `stdout`/`stderr` was redirected to a log file on WinPE's own ephemeral `X:\` and then
+`copy`'d to the persistent target disk's `W:\` root **before** `wpeutil shutdown`, since `X:\` doesn't
+survive the reboot and there would otherwise be no way to confirm what happened after the fact.
+Screenshotted mid-run (`boot-1.png` through `boot-6.png`, all identical — confirming the whole
+sequence had already finished and the window was just sitting at its final `wpeutil shutdown` prompt
+line by the first 15-second capture) and confirmed via the copied-off logs after: `drvload` succeeded,
+`diskpart` correctly picked `disk 1` (the virtio-blk target) and assigned both letters, `bcdboot`
+reported `"Boot files successfully created."` — a fully unattended repeat of Finding 12's manual
+result. **Worth adopting as the standard approach going forward** rather than defaulting to
+interactive driving — reserve `Shift+F10`/`qmp-type.py` for cases where the medium's actual state is
+in doubt, not as a default caution.
+
+### Finding 32: `hivexregedit --export`'s `key` argument must NOT include the hive's own logical root
+name — a documentation-reading mistake, not a merge failure, initially looked exactly like Finding 8's
+silent-no-op symptom
+
+**Symptom:** immediately after a clean, zero-exit `hivexregedit --merge`, verification via
+`hivexregedit --export --prefix 'HKEY_LOCAL_MACHINE\SYSTEM' <hive> 'SYSTEM\ControlSet001\Services\viostor'`
+(and the equivalent `SYSTEM\DriverDatabase\...` paths) all returned `path not found in this hive` —
+alarmingly identical on its face to the exact failure signature Finding 29 root-caused last session.
+
+**Diagnosis, caught immediately rather than treated as a real regression:** `hivexregedit --help`
+states plainly that the `--export` `key` argument "should not contain any prefix" — the `--prefix`
+flag already establishes the `HKEY_LOCAL_MACHINE\SYSTEM` mapping, so the key path that follows must be
+relative to the hive's own physical root, which has no `SYSTEM\` segment of its own (the hive *file*
+already **is** the SYSTEM hive; `SYSTEM` is a purely logical/virtual prefix `hivexregedit` prepends
+for display and for interpreting `.reg`-file-style absolute paths, not a real top-level key inside the
+hive itself).
+
+**Fix:** drop the leading `SYSTEM\` from the export key argument (i.e.
+`hivexregedit --export --prefix 'HKEY_LOCAL_MACHINE\SYSTEM' <hive> 'ControlSet001\Services\viostor'`,
+not `'SYSTEM\ControlSet001\Services\viostor'`). Every previously-missing key exported cleanly once
+corrected, byte-consistent with what `gen-viostor-ddb-reg.py` had written. **Worth remembering
+precisely because it masquerades as Finding 29's bug**: both produce a clean merge exit code paired
+with an export that can't find anything. The distinguishing check is cheap — export the hive's own
+root (`hivexregedit --export --prefix 'HKEY_LOCAL_MACHINE\SYSTEM' <hive> '\'`) and confirm
+`DriverDatabase` and `ControlSet001` both appear as direct children before concluding the merge itself
+is broken.
+
+### Finding 33: `qemu-system-x86_64 ... -daemonize` did not survive this sandbox's per-Bash-call
+process teardown this session, contradicting Session 3's own Finding 16 data point — resolved by using
+the harness's own `run_in_background` instead
+
+**Symptom:** the combined WinPE+target boot, launched with `-daemonize` exactly per Finding 16's
+"long-running `-daemonize` VMs survive across calls" guidance, was gone entirely (`pgrep` found no
+`qemu-system-x86_64` process at all, and the QMP socket didn't exist) by the very next tool call, only
+seconds later — not a crash (a bare foreground re-run of the identical command line ran fine under a
+`timeout 5` probe with no error output), just absent.
+
+**Diagnosis:** Finding 16 explicitly flagged its own `-daemonize`-survives claim as "one data point,
+not a fully root-caused guarantee." This session is the counter-data-point: in this sandbox, on this
+occasion, `-daemonize`'s real double-fork detachment did not protect the process from being reaped at
+Bash-tool-call teardown, the same failure class Finding 16 originally diagnosed for `qemu-nbd -c`.
+Given two conflicting data points now, the safest working assumption going forward is **assume no
+backgrounded/daemonized process of any kind reliably survives past its originating Bash tool call in
+this environment**, rather than carving out `-daemonize` as a trusted exception.
+
+**Fix:** use the Bash tool's own `run_in_background: true` parameter (harness-level backgrounding,
+distinct from shell/process-level daemonizing) to launch the VM instead of `-daemonize` — this is the
+same mechanism already relied on for the long-running `wimapply` step earlier in this session, and it
+worked identically well here: the VM (without `-daemonize`, plain foreground `qemu-system-x86_64`)
+stayed up and QMP-reachable across many subsequent, separate tool calls (screenshot polling every
+~15-25 seconds, over several minutes) until explicitly stopped via a QMP `quit` command at the end.
+**Revised standing rule**: prefer `run_in_background` over any process's own self-daemonizing flag
+(`-daemonize`, `qemu-nbd -c`'s fork-and-detach, etc.) for anything in this project that needs to
+outlive a single Bash tool call — the harness's own backgrounding is the one mechanism confirmed
+reliable across two full sessions now, where every native alternative tried has failed at least once.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 8)
+
+**Where things stand:** Phase 2's core blocker (offline driver injection clearing
+`INACCESSIBLE_BOOT_DEVICE` without any interactive Setup.exe involvement) is now confirmed **twice**,
+independently — Session 7's original find and this session's from-scratch repeat on a disk with none
+of that run's history. The fix (`tools/gen-viostor-ddb-reg.py`, applied per Finding 29's corrected
+`DriverDatabase`-at-hive-root recipe) is no longer a single-disk result; it's a repeatable procedure,
+and this session also turned the previously-manual bootability step into a real unattended
+`startnet.cmd` (Finding 31) worth keeping as the template for future runs.
+
+**`win2025-target.qcow2` now holds this session's fully-built, OOBE-reaching disk** — same status
+`win2025-test.qcow2` was left in after Session 7, but built entirely fresh this session rather than
+reused. Both disks are now valid known-good references.
+
+**Recommended next steps, in order (unchanged in substance from Session 7's list, #1 now done):**
+1. ~~Re-verify end-to-end on a completely fresh disk~~ — **done this session (Finding 30).**
+2. **Build the offline specialize/unattend pass** (`CLAUDE.md`'s Build step 6): drop a
+   `\Windows\Panther\unattend.xml` onto the offline-mounted image before first boot (computer name,
+   WinRM enablement — the sibling project's own `autounattend.xml` `specialize`/`oobeSystem` content
+   is a proven starting point for the actual settings, even though its *delivery mechanism* here is
+   offline file placement rather than Setup.exe consuming it during install). This is the one
+   remaining piece between "boots to OOBE" and Phase 2's actual success criterion (a real unattended
+   WinRM connection). This is now the clear next priority — the bootability mechanism itself has
+   twice-over confirmation and doesn't need a third repeat before moving on.
+3. **Consider formalizing the now-twice-proven ad hoc sequence into real `image-apply/` scripts**
+   (`partition-disk.sh`, `apply-image.sh`, `make-bootable.sh`) — still not done; `image-apply/` is
+   still empty of actual implementation. With the recipe proven stable across two independent runs
+   now, the risk of "scripting something that turns out to be wrong" is lower than it was after
+   Session 7 alone.
+4. **Once WinRM-reachable for Server 2025**, repeat for Server 2022 and Windows 11 per the explicit
+   phase-gating requirement — Phase 3 does not start until all three OSes are proven.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `win2025-target.qcow2` — this session's fresh build: real `bcdboot`-built BCD, `viostor.sys`
+  present, corrected `DriverDatabase` registration, confirmed booting cleanly to OOBE. No
+  `unattend.xml`/specialize pass applied yet (same caveat as `win2025-test.qcow2` after Session 7).
+- `win2025-test.qcow2` — unchanged from Session 7, still a valid known-good reference.
+- `winpe-boot-index1-work.qcow2` — `startnet.cmd` now holds this session's full unattended
+  drvload/diskpart/bcdboot/copy sequence (Finding 31), not bare `wpeinit`. Reusing this medium again
+  will re-run that same sequence against whatever target disk is attached as `disk 1` — convenient for
+  repeat runs, but be aware it's no longer a "just `wpeinit`" clean-slate medium if that's ever needed
+  again (revert to bare `wpeinit` first in that case, same offline-edit technique).
+- `OVMF_VARS_session8-boot.fd` / `OVMF_VARS_session8-solo.fd` — this session's fresh OVMF vars copies,
+  one per distinct boot target, per the established "always start fresh per target" rule.
+- Extracted `install.wim` (~7.25GB) and the `viostor/2k25/amd64/` driver files live under this
+  session's scratchpad directory (ephemeral, not under `image-apply/output/`) — not guaranteed to
+  survive to the next session; re-extract from `../iso_cache/` if needed again.
+- No VM left running, no `/dev/nbd0` left attached, no stale mounts under `/tmp/win-build-mnt/` at the
+  end of Session 8 (confirmed via `pgrep`, `qemu-nbd -d`, and `mount | grep win-build-mnt`).
+
+**New facts worth remembering, on top of Session 7's list:**
+- **`hivexregedit --export`'s `key` argument excludes the hive's own logical root name** (`SYSTEM\`
+  for a SYSTEM hive under `--prefix 'HKEY_LOCAL_MACHINE\SYSTEM'`) — including it produces a
+  `path not found` error that superficially resembles a real silent-merge-failure, per Finding 32.
+  Sanity-check against the hive's own root listing before concluding a merge actually failed.
+- **Don't trust `-daemonize` (or any process-native self-backgrounding) to survive across Bash tool
+  calls in this sandbox** — use `run_in_background: true` instead, per Finding 33. This supersedes
+  Finding 16's more optimistic characterization of `-daemonize` specifically.
+- **A `startnet.cmd` fully scripting `drvload`/`diskpart`/`bcdboot`/log-copy/`wpeutil shutdown` works
+  reliably unattended** once the working command sequence is known (Finding 31) — prefer this over
+  interactive `Shift+F10` driving for repeat runs; reserve interactive driving for cases where the
+  medium's actual on-disk state is genuinely in doubt.
+- **GPT partition layout is fully deterministic given identical sizing** — the Windows partition's
+  start sector (239616) was identical across Session 1's original run and this session's from-scratch
+  rebuild, confirming `mkntfs -p 239616` is safe to hardcode for this exact 100MiB-ESP/16MiB-MSR
+  layout rather than needing to be recomputed via `sfdisk` every time (recomputing is still cheap and
+  still the safer default for any future script, but a mismatch would itself be a signal something
+  else changed).

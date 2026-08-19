@@ -395,8 +395,8 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** in progress, **and the core blocker is now solved** — read
-`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 7)" section before
+**Status:** in progress, **and the core blocker is now solved and confirmed twice, independently** —
+read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 8)" section before
 doing anything else here. Sub-milestone 1 (make the disk bootable) remains **solved, twice over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD. The Setup.exe pivot (Finding 15, Sessions 3-5) was **abandoned in
@@ -420,12 +420,18 @@ cleanly past `INACCESSIBLE_BOOT_DEVICE (0x7B)` all the way to a real Windows Ser
 screen**, confirmed via `tools/qmp-screenshot.py` at each stage of the boot sequence. See Finding
 29 for the complete verification trail.
 
-**What's left for Phase 2**: this test used no `unattend.xml`/specialize pass, so it correctly
+Session 8 then repeated this entire sequence from scratch against a completely blank disk
+(`win2025-target.qcow2`, no shared history with the disk Session 7 used) — same recipe, same
+result, confirming the fix generalizes rather than depending on some quirk of one specific disk's
+history. See Findings 30-33 for the full record, including a reusable, fully unattended
+`startnet.cmd` for the WinPE bootability step (Finding 31) that replaces the manual/interactive
+approach Session 7 used.
+
+**What's left for Phase 2**: both runs used no `unattend.xml`/specialize pass, so they correctly
 stopped at interactive OOBE rather than an automated WinRM-reachable state — the offline
 specialize pass (Build step 6 below: `\Windows\Panther\unattend.xml`, computer name, WinRM
-enablement) is what turns this into the actual Phase 2 success criterion. Re-verifying the fix on a
-disk built fully fresh (rather than the Session-2-era disk reused for Session 7's test) is also
-still open. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but
+enablement) is what turns this into the actual Phase 2 success criterion, and is now the clear next
+priority. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but
 everything needed to resume without re-deriving it is there.
 
 ---
