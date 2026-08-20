@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  windows-auto-build-pipeline: offline-dropped unattend.xml for the specialize/oobeSystem
+  passes only. Adapted from ../windows-server-vm-automation/packer/answer_files/autounattend.xml.pkrtpl
+  (that file's windowsPE pass and Microsoft-Windows-Setup component are Setup.exe-driven disk
+  partitioning/image-selection and do not apply here - the disk is already partitioned, formatted,
+  and wimapply'd offline before this file is ever placed). Windows Setup's own configuration-pass
+  engine picks up %WINDIR%\Panther\unattend.xml automatically at first real boot for the specialize
+  and oobeSystem passes, per Microsoft's documented answer-file search order - no DISM
+  /Apply-Unattend and no Setup.exe involved at any point. See PHASE2_ENGINEERING_LOG.md Session 9.
+
+  Session 10/11 correction: an earlier version of this file used
+  Microsoft-Windows-PnpCustomizationsNonWinPE's DriverPaths to inject the NetKVM network driver
+  declaratively. Confirmed inert in this pipeline (Finding 36: the component is parsed into the
+  specialize pass's action queue but no PnP callback ever processes it - only
+  Microsoft-Windows-Shell-Setup's own handler runs). Replaced with a live FirstLogonCommands
+  pnputil /add-driver step instead (Order 1 below), matching the sibling project's own already-proven
+  fallback for this exact problem (its own autounattend.xml.pkrtpl comment: PnpCustomizationsNonWinPE
+  "does not carry non-boot-critical drivers into the final installed OS's driver store"). Offline
+  DriverDatabase hivex registration (tools/gen-viostor-ddb-reg.py) remains the correct mechanism for
+  the boot-critical viostor driver only - confirmed insufficient on its own for netkvm
+  (CM_PROB_NEED_CLASS_CONFIG, Finding 39): DriverDatabase registration gets the device PCI-matched,
+  but a network-class device needs the fuller NDIS class-installation pnputil performs live, which
+  only a running OS can do.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>WIN2025-S11</ComputerName>
+      <TimeZone>UTC</TimeZone>
+      <RegisteredOwner>Windows Lab</RegisteredOwner>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>5</LogonCount>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Install NetKVM network driver live (pnputil) - DriverDatabase alone only PCI-matches it, not full NDIS class install; see Finding 39/40</Description>
+          <CommandLine>cmd.exe /c pnputil /add-driver C:\Drivers\NetKVM\2k25\amd64\netkvm.inf /install &gt; C:\session11-pnputil-log.txt 2&gt;&amp;1</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Log progress marker</Description>
+          <CommandLine>cmd.exe /c echo firstlogon-reached &gt; C:\session11-firstlogon-marker.txt</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Set network category to Private</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$deadline = (Get-Date).AddSeconds(90); while (-not (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' })) { if ((Get-Date) -gt $deadline) { break }; Start-Sleep -Seconds 2 }; Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; C:\session11-netcat-log.txt"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Enable WinRM over HTTP</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck; Get-ChildItem WSMan:\localhost\Listener | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; New-Item -Path WSMan:\localhost\Listener -Transport HTTP -Address * -Force; winrm set winrm/config/service/auth '@{Basic=\"true\"}'; winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'; winrm set winrm/config/client '@{TrustedHosts=\"*\"}'; New-NetFirewallRule -DisplayName 'WinRM-HTTP' -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -ErrorAction SilentlyContinue; Restart-Service WinRM *&gt;&gt; C:\session11-winrm-log.txt"</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
+</unattend>

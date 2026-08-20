@@ -2385,3 +2385,147 @@ not speculative:
 - **`Win+R` (`meta_l-r`) is a more reliable way to get a live text-input prompt via QMP keyboard-only
   interaction than the Start menu search box**, which did not reliably receive typed focus this
   session despite several retry strategies.
+
+---
+
+## Session 11: implemented Finding 40's fix (a live `FirstLogonCommands` `pnputil /add-driver` step
+## for `netkvm`) on a fourth from-scratch disk - **real, authenticated WinRM connectivity confirmed.
+## Phase 2's success criterion is met for Windows Server 2025.**
+
+### Finding 41: `pnputil /add-driver` as `FirstLogonCommands` order 1 works exactly as the sibling
+project's own pattern predicted - `netkvm` installs live, gets a real IP, and WinRM answers real
+authenticated commands
+
+Built `win2025-session11.qcow2` completely from scratch: partition/format/`wimapply`, both `viostor`
+and `netkvm` `DriverDatabase`-registered before first boot (unchanged from Session 10 - still needed
+for `viostor`'s boot-critical path; kept for `netkvm` too since PCI-matching it doesn't hurt and
+`pnputil`'s job is easier when the device is already matched), and a revised `unattend.xml`
+(`image-apply/unattend-server2025.xml`, now committed to the repo instead of living only in `/tmp`)
+with `PnpCustomizationsNonWinPE` removed entirely (confirmed dead code per Finding 36) and a new
+`FirstLogonCommands` `Order 1`: `pnputil /add-driver C:\Drivers\NetKVM\2k25\amd64\netkvm.inf
+/install`, ahead of the existing network-category-wait and WinRM-enable steps.
+
+**One operational correction along the way**: the WinPE-bootability VM this session was launched with
+`-no-shutdown` (to guard against the premature-qemu-exit risk from earlier sessions), which turned out
+to change how WinPE's `wpeutil shutdown` behaves - instead of Finding 35's "OVMF retries boot
+enumeration within the same process" chaining, the VM instead froze in QEMU's own `shutdown` status
+(confirmed via `query-status`), and a `system_reset` from there just rebooted the *whole* VM including
+WinPE's still-attached disk, which won the boot race again rather than falling through to the target.
+**Finding 35 apparently doesn't reproduce reliably under `-no-shutdown`** - simplest fix, used this
+session: `quit` the WinPE+target VM once `bcdboot` has visibly succeeded (confirmed via the
+`startnet.cmd` trace on screen), then launch a genuinely separate solo-boot VM for the target, exactly
+like Sessions 7-9 did. Worth remembering as a caveat on Finding 35 rather than trusting it
+unconditionally in future sessions.
+
+Solo-booted the target with real QEMU usermode networking (`-netdev user,hostfwd=tcp::PORT-:5985
+-device virtio-net-pci`) and, per Finding 40's explicit lesson, **did not touch guest power state at
+all** until well after the desktop settled - watched the system tray's network icon transition from a
+crossed-out "no connectivity" globe to a proper Ethernet icon a few minutes after first reaching the
+desktop, confirming `pnputil` had done its job before ever attempting a WinRM connection. Then, from
+the host:
+
+```python
+import winrm
+s = winrm.Session('http://127.0.0.1:PORT/wsman', auth=('Administrator', 'TestP@ssw0rd123'), transport='basic')
+r = s.run_cmd('hostname')
+# STATUS: 0
+# STDOUT: WIN2025-S11
+```
+
+**A real, authenticated WinRM command, executed successfully against a target that was never booted
+until this test** - the exact `ComputerName` set in `unattend.xml`'s specialize pass came back over the
+wire. A follow-up `Get-NetAdapter` confirmed the adapter itself: `Red Hat VirtIO Ethernet Adapter`,
+`Status: Up`, `LinkSpeed: 10 Gbps` - a fully functional NDIS network adapter, not just a PCI-level
+match.
+
+After a graceful `system_powerdown` (confirmed via `query-status` before `quit`), offline inspection
+confirmed all four expected `FirstLogonCommands` marker/log files present this time (unlike Session
+10's interrupted run, which only got as far as one):
+- `session11-pnputil-log.txt`: `"Adding driver package: netkvm.inf ... Driver package installed on
+  device: PCI\VEN_1AF4&DEV_1000&SUBSYS_00011AF4&REV_00\3&11583659&0&18"` - `pnputil`'s own log,
+  published as `oem1.inf` in the driver store (Session 9's leftover `oem0.inf` was the inbox "Print To
+  PDF" driver; this is the first real 3rd-party driver `pnputil` has actually installed in this
+  project).
+- `session11-firstlogon-marker.txt`, `session11-netcat-log.txt`, `session11-winrm-log.txt`: all present
+  (the latter two empty, 0 bytes - consistent with silent cmdlet success, matching the pattern already
+  established in Session 9).
+
+**This is Phase 2's actual success criterion, met for Windows Server 2025**: offline image application
+→ bootable → specialized → real, unattended WinRM connectivity, with no manual interaction anywhere in
+the sequence and no Setup.exe involved at any point.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 11)
+
+**Where things stand: Phase 2's success criterion is met for Windows Server 2025.** The full sequence -
+partition, `wimapply`, offline `viostor` boot-driver injection, WinPE `bcdboot`, offline
+`unattend.xml` specialize/oobeSystem drop, and a live `pnputil`-installed `netkvm` network driver - now
+produces a disk that boots unattended all the way to a real, externally-reachable, authenticated WinRM
+session. This is not a partial or simulated result: `hostname` and `Get-NetAdapter` were both executed
+*over the wire* against a genuinely fresh, never-before-booted disk.
+
+**What's NOT yet done, per `CLAUDE.md`'s explicit phase-gating rule**: this success criterion has only
+been demonstrated for **Windows Server 2025**. Phase 3 (the service/provisioning layer) does not start
+until Windows Server 2022 and Windows 11 Enterprise Evaluation have *each independently* repeated this
+same full sequence successfully. Nothing about Server 2022/Windows 11 has been attempted yet - the
+recipe (partition layout, `wimapply` index selection, `viostor`/`netkvm` hardware IDs, `unattend.xml`
+structure) is expected to carry over with OS-specific adjustments (different `install.wim` index,
+possibly different virtio driver subfolder than `2k25`, need to re-verify `boot.wim` index numbering
+for WinPE bootability per OS), but "expected to carry over" is exactly the kind of assumption this
+project's own standards say to confirm, not assume.
+
+**Immediate next steps, in order:**
+1. **Repeat this entire sequence for Windows Server 2022.** Locate/verify its `install.wim` image index
+   and edition name (same `7z extract` + `strings -el | grep EDITIONID` technique as Finding 0), its
+   virtio-win driver subfolder (likely `2k22` or `w11`/`2k19`-shared, not assumed - check the ISO
+   directly), and confirm `boot.wim` index 1 is still the plain non-Setup WinPE medium for whichever
+   ISO's `boot.wim` gets used (the sibling project's own Server 2022 media, most likely, since that's
+   what Server 2022 support means practically - reuse an already-cached ISO if the sibling project has
+   one, per this project's own ISO-cache-sharing convention).
+2. **Then repeat for Windows 11 Enterprise Evaluation** - same caveats, plus Windows 11's Setup.exe
+   track was the one originally explored and abandoned in Sessions 3-6, so there is no historical
+   assumption to lean on here at all; treat it as a genuinely fresh instance of the whole Phase 2
+   sequence, image-index verification included.
+3. Only once both are confirmed does Phase 3 (role provisioning, reusing `services.yaml`/`scripts/`
+   unchanged) begin, per the standing phase-gating rule.
+4. Formalizing `image-apply/`'s real scripts (`partition-disk.sh`, `apply-image.sh`,
+   `make-bootable.sh`, `apply-unattend.sh`) is now a much better-timed decision than it was in Sessions
+   8-10: the full recipe is proven end-to-end for one OS, not just individual sub-steps. Worth doing
+   before starting Server 2022/Windows 11, so that repeating the sequence for those doesn't mean
+   re-typing the same ad hoc Bash a fourth and fifth time - a real decision point to raise with whoever
+   is directing this project next, not a default action per `CLAUDE.md`'s Claude Instructions.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `win2025-session11.qcow2` - **the reference "it works end-to-end" disk.** Bootable, specialized
+  (`ComputerName=WIN2025-S11`), `netkvm` live-installed via `pnputil`, real WinRM connectivity
+  confirmed. Treat as a valuable asset, not disposable scratch state.
+- `image-apply/unattend-server2025.xml` - the working `unattend.xml`, now a real repo file (not just
+  `/tmp`) - the reference to copy/adapt for Server 2022 and Windows 11 (`ComputerName` and possibly the
+  `pnputil` driver path will need adjusting per-OS; the `FirstLogonCommands` structure itself should
+  carry over unchanged).
+- `tools/gen-viostor-ddb-reg.py` - unchanged from Session 10, still generalized (`--driver
+  viostor|netkvm`).
+- `win2025-session9b.qcow2` / `win2025-session9.qcow2` / `win2025-target.qcow2` / `win2025-test.qcow2` -
+  all still present, all superseded by `win2025-session11.qcow2` as the reference disk; kept as
+  historical artifacts, not actively needed going forward.
+- No VM left running, no `/dev/nbd0` attached, no stale mounts at the end of this session (confirmed
+  via `pgrep`/`qemu-nbd`/`mount`).
+
+**New facts worth remembering, on top of prior sessions' lists:**
+- **The full Phase 2 sequence for Server 2025 is proven and reproducible**: partition → `wimapply` →
+  offline `viostor` `DriverDatabase` injection → WinPE `bcdboot` → offline `unattend.xml` drop
+  (`ComputerName`, OOBE-skip, `AutoLogon`) → live `pnputil /add-driver` for `netkvm` → real WinRM. Every
+  step has now been independently confirmed at least once; the whole chain has been confirmed together
+  at least once (this session).
+- **`FirstLogonCommands` needs 3-5+ minutes of fully undisturbed wall-clock time after first reaching
+  the desktop** before its network/WinRM steps can be expected to have completed - don't test WinRM
+  connectivity immediately on first reaching a settled desktop; watch the system tray's network icon
+  transition away from "no connectivity" as a cheap, non-destructive readiness signal instead of
+  guessing at a fixed delay.
+- **`-no-shutdown` changes Finding 35's chaining behavior** - a WinPE+target VM launched with
+  `-no-shutdown` freezes in QEMU's `shutdown` status after `wpeutil shutdown` rather than having OVMF
+  retry boot enumeration in-process; a `system_reset` from there reboots the whole VM (WinPE included)
+  rather than falling through to the target. Prefer a plain `quit` + separate solo-boot launch once
+  `bcdboot` has visibly succeeded, rather than relying on in-session chaining when `-no-shutdown` is in
+  play.

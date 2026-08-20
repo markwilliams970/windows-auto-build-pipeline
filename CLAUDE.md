@@ -32,7 +32,7 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phases 2-5** are not yet started. Phase 2 (the offline-apply installation mechanism itself) is where almost all of the real, unsolved work is — see its entry under Development Approach below for the specific sub-milestones and the one open technical question ("does WinPE's own boot avoid the sibling project's UEFI boot-key landmine") that the whole rest of this project depends on.
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) has now met its success criterion for **Windows Server 2025** — offline image application → bootable → specialized → real, unattended WinRM connectivity, confirmed end-to-end (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41 for the full trail). Server 2022 and Windows 11 Enterprise Evaluation still need the same result independently before Phase 2 counts as done, per the explicit phase-gating rule. **Phases 3-5** are not yet started.
 
 ---
 
@@ -395,10 +395,13 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** in progress, **and the core blocker is now solved and confirmed three times,
-independently** — read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session
-10)" section before doing anything else here. Sub-milestone 1 (make the disk bootable) remains
-**solved, three times over**:
+**Status:** **Phase 2's success criterion is met for Windows Server 2025** — offline image
+application → bootable → specialized → real, unattended, externally-reachable WinRM connectivity, no
+manual interaction, no Setup.exe involved anywhere. Read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND
+NEXT STEPS ON RESUMPTION (Session 11)" section before doing anything else here — **Server 2022 and
+Windows 11 Enterprise Evaluation have not been attempted at all yet**, and per the explicit
+phase-gating rule below, Phase 3 does not start until both independently repeat this same result.
+Sub-milestone 1 (make the disk bootable) remains **solved, three times over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD. The Setup.exe pivot (Finding 15, Sessions 3-5) was **abandoned in
 Session 6** after five independent attempts to get past `EarlyF6DriverInstall`'s "Install driver to
@@ -451,14 +454,25 @@ problem, for the identical reason, with a `FirstLogonCommands` step running `pnp
 already stages the driver files at `C:\Drivers\NetKVM\2k25\amd64` during the offline-apply stage, so no
 CD-ROM is even needed), not a new offline mechanism.
 
-**What's left for Phase 2**: add the `pnputil /add-driver C:\Drivers\NetKVM\2k25\amd64\netkvm.inf
-/install` `FirstLogonCommands` step (ordered first, before the network-wait/WinRM-enable steps) to
-`unattend.xml`, then re-run the pipeline letting `FirstLogonCommands` complete fully undisturbed (this
-session's own fresh-disk test got interrupted by an unprompted Windows-Update-driven shutdown before
-finishing — `FirstLogonCommands` does not resume after an interruption, so that test's negative result
-had to be diagnosed manually rather than trusted directly). See `PHASE2_ENGINEERING_LOG.md` for the
-complete, detailed record — it's long, but everything needed to resume without re-deriving it is
-there.
+Session 11 then implemented exactly that fix: a `FirstLogonCommands` `Order 1` step running `pnputil
+/add-driver C:\Drivers\NetKVM\2k25\amd64\netkvm.inf /install` while the OS is live and booted, ahead of
+the existing network-wait/WinRM-enable steps, in a revised `unattend.xml` now committed to the repo at
+`image-apply/unattend-server2025.xml` (no longer left only in `/tmp`). Built a fourth from-scratch
+disk, let `FirstLogonCommands` run fully undisturbed (watching the system tray's network icon as a
+non-destructive readiness signal rather than guessing at a delay), and confirmed **real, authenticated
+WinRM connectivity from the host**: `hostname` returned the exact `ComputerName` set in the answer
+file, and `Get-NetAdapter` showed a fully functional `Red Hat VirtIO Ethernet Adapter` (`Status: Up`,
+`10 Gbps`) — not just a PCI-level driver match. See Finding 41 for the complete verification trail,
+including the `pnputil` log's own confirmation (`"Driver package installed on device:
+PCI\VEN_1AF4&DEV_1000..."`).
+
+**What's left for Phase 2**: repeat this entire now-proven sequence for **Windows Server 2022** and
+then **Windows 11 Enterprise Evaluation** — nothing about either has been attempted yet. Expect
+OS-specific adjustments (different `install.wim` index/edition name, possibly a different virtio driver
+subfolder than `2k25`, re-verify `boot.wim` index numbering for WinPE bootability per ISO) but confirm
+each rather than assuming the recipe carries over unchanged, per this project's own standing research
+discipline. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but
+everything needed to resume without re-deriving it is there.
 
 ---
 
