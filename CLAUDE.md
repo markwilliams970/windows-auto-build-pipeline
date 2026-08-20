@@ -32,7 +32,7 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) has now met its success criterion for **Windows Server 2025 and Windows Server 2022** — offline image application → bootable → specialized → real, unattended WinRM connectivity, confirmed end-to-end for both, with the tooling itself requiring zero changes between them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41 and Session 12/Finding 42 for the full trail). Windows 11 Enterprise Evaluation still needs the same result independently before Phase 2 counts as done, per the explicit phase-gating rule. **Phases 3-5** are not yet started.
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** — its success criterion (offline image application → bootable → specialized → real, unattended WinRM connectivity) is now confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation), with the underlying tooling requiring zero changes across any of them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). Per the explicit phase-gating rule, **Phase 3 is now unblocked**. **Phases 3-5** are not yet started.
 
 ---
 
@@ -395,13 +395,14 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** **Phase 2's success criterion is met for Windows Server 2025 and Windows Server 2022 — 2
-of 3 target OSes.** Offline image application → bootable → specialized → real, unattended,
-externally-reachable WinRM connectivity, no manual interaction, no Setup.exe involved anywhere. Read
-`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 12)" section before doing
-anything else here — **Windows 11 Enterprise Evaluation has not been attempted at all yet**, and per
-the explicit phase-gating rule below, Phase 3 does not start until it independently repeats this same
-result too. Sub-milestone 1 (make the disk bootable) remains **solved, three times over**:
+**Status: Phase 2 is done.** Its success criterion is met for **all three target OSes** — Windows
+Server 2025, Windows Server 2022, and Windows 11 Enterprise Evaluation. Offline image application →
+bootable → specialized → real, unattended, externally-reachable WinRM connectivity, no manual
+interaction, no Setup.exe involved anywhere, confirmed independently for each OS with the underlying
+tooling requiring zero changes between them. Read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS
+ON RESUMPTION (Session 13)" section before doing anything else here — **per the explicit phase-gating
+rule below, Phase 3 can now begin.** Sub-milestone 1 (make the disk bootable) remains **solved, three
+times over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD. The Setup.exe pivot (Finding 15, Sessions 3-5) was **abandoned in
 Session 6** after five independent attempts to get past `EarlyF6DriverInstall`'s "Install driver to
@@ -477,28 +478,38 @@ side-confirmation (Finding 42): the **same WinPE bootability medium works unmodi
 versions** — `bcdboot` copies the target's own boot binaries, not WinPE's, so no per-OS WinPE medium is
 needed.
 
-**What's left for Phase 2**: repeat this same now-twice-proven sequence for **Windows 11 Enterprise
-Evaluation** — nothing about it has been attempted yet, and unlike Server 2022 (a close sibling of
-Server 2025), Windows 11 is where this project's Setup.exe pivot was originally attempted and abandoned
-(Sessions 3-6), so there's no prior "it just worked" data point to lean on. Confirm every input
-(`install.wim` index/edition name, virtio driver subfolder — likely `w11`, per the ISO's own directory
-listing, but verify before use) from scratch rather than assuming the Server 2022 result implies
-Windows 11 will just work too. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's
-long, but everything needed to resume without re-deriving it is there.
+Session 13 then repeated the sequence for **Windows 11 Enterprise Evaluation** — the one target OS with
+no prior "it just worked" data point (this project's own Setup.exe pivot was abandoned there in
+Sessions 3-6, and the sibling project's own separate Windows 11 build, with a real `swtpm` + Secure-Boot
+firmware, never got past a Setup.exe boot-timing issue either). Re-reading the sibling project's
+`WINDOWS11_UNATTENDED.md` first (Finding 43) confirmed *why* this project's approach sidesteps that
+problem entirely: TPM 2.0/Secure Boot are enforced by **Setup.exe's own hardware-compatibility check**,
+not by the boot process of an already-installed system — since this pipeline never runs Setup.exe, that
+gate is never evaluated. Confirmed empirically, not just inferred: the Windows 11 target booted cleanly
+to a real desktop (its own "Windows 11 Enterprise Evaluation" watermark visible) with no
+hardware-compatibility warning of any kind, and real WinRM connectivity followed the same way as both
+Server builds — `hostname` returned `WIN11-S13`, `Get-NetAdapter` showed a working `Red Hat VirtIO
+Ethernet Adapter`. Once again, **zero tooling changes** were needed, only OS-specific inputs (`w11`
+driver subfolder, a new `image-apply/unattend-windows11.xml`). One new operational note: Windows 11 has
+**Fast Startup enabled by default** (Server SKUs don't) — a normal shutdown hibernates rather than fully
+powers off, which `ntfs-3g` correctly detects and falls back to read-only for; harmless, but worth
+knowing before attempting a future offline read-write edit of a Windows 11 disk.
+
+**Phase 2 is done.** See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record across all
+thirteen sessions — it's long, but everything needed to resume Phase 3 without re-deriving any of this
+is there.
 
 ---
 
 # Phase 3: Windows Configuration
 
-**Explicit process gate — do not start any Phase 3 work until Phase 2 is proven for all three
-target OSes, not just Server 2025.** Server 2025 is Phase 2's first proving ground, but Phase 3
-(the service/provisioning layer) does not begin until Windows Server 2025, Windows Server 2022,
-*and* Windows 11 Enterprise Evaluation have each individually bootstrapped successfully (offline
-apply → bootable → specialized → real WinRM connection, no manual steps) under this project's
-mechanism. The risk being managed here: investing in the service layer on the assumption that
-Phase 2's mechanism generalizes across all three OSes before actually confirming it does, on the
-theory that it should per `PHASE2_BOOTSTRAP_ARCHITECTURE.md`'s cross-cutting analysis — confirm,
-don't assume, the same discipline as everything else in this project.
+**Process gate satisfied as of Session 13 — Phase 3 work may now begin.** The gate required Windows
+Server 2025, Windows Server 2022, *and* Windows 11 Enterprise Evaluation to each individually
+bootstrap successfully (offline apply → bootable → specialized → real WinRM connection, no manual
+steps) under this project's mechanism, precisely to avoid investing in the service layer on the
+assumption that Phase 2's mechanism generalizes across all three OSes before actually confirming it
+does. All three are now confirmed independently — see `PHASE2_ENGINEERING_LOG.md` Findings 41
+(Server 2025), 42 (Server 2022), and 43 (Windows 11) for the full verification trail on each.
 
 Implement:
 
@@ -508,8 +519,10 @@ Success criteria:
 
 The same three roles (IIS, AD DS, SQL Server) that work against the sibling project's Server 2022 baseline also work unmodified against this project's offline-applied disks, for Windows Server 2025 (and later Windows 11, once its track is reattempted here too).
 
-**Status:** not started — blocked on Phase 2, and specifically on Phase 2 succeeding for **all
-three** target OSes (Server 2025, Server 2022, Windows 11), not just the first one bootstrapped.
+**Status:** not started, but **unblocked as of Session 13** — Phase 2 has now succeeded for all three
+target OSes (Server 2025, Server 2022, Windows 11). Ready to begin whenever directed; nothing new to
+implement, only to confirm the reused scripts work unmodified against this project's offline-applied
+disks.
 
 ---
 

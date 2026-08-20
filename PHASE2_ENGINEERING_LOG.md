@@ -2673,3 +2673,154 @@ successes are not three.
   confirmed independently rather than assumed; driver subfolder name; `unattend.xml` content). Good
   evidence the recipe will generalize to Windows 11 too, but per this project's own standard, evidence
   is not the same as confirmation - still verify Windows 11's own inputs from scratch.
+
+---
+
+## Session 13: repeated the same proven recipe for **Windows 11 Enterprise Evaluation** - the one
+## target OS this project (and the sibling project) had no prior working data point for. **Real,
+## authenticated WinRM connectivity confirmed. Phase 2's success criterion is now met for all three
+## target OSes - Phase 2 is done.**
+
+### Finding 43: Windows 11 generalizes exactly like Server 2022 did - same tooling, only per-OS inputs
+differ, and the Setup.exe-specific boot-timing problem that blocked the sibling project's own Windows 11
+attempt (and this project's own abandoned Sessions 3-6 pivot) simply doesn't exist in this pipeline
+
+Before building anything, re-read the sibling project's `WINDOWS11_UNATTENDED.md` in full - its own
+Windows 11 build (Setup.exe-driven, real `swtpm` + Secure-Boot-enrolled OVMF) never got past a
+boot-timing issue (Finding W3 there) that matches this project's own abandoned Setup.exe pivot exactly
+in shape (Findings 19-28). Two things fell out of reading it rather than assuming: (1) TPM 2.0 +
+Secure Boot are enforced by **Setup.exe's own hardware-compatibility check**, not by the boot process of
+an already-installed Windows 11 system - since this project's pipeline never runs Setup.exe at all, that
+whole gate simply never gets evaluated, offline-apply sidesteps it the same way it already sidesteps
+`EarlyF6DriverInstall`; (2) the sibling project's own OOBE-skip settings were **never actually verified
+against a real Windows 11 guest**, since their build never got that far - flagged in
+`image-apply/unattend-windows11.xml`'s own header comment as a genuine unknown going in, not assumed
+safe.
+
+Verified rather than assumed every input, same discipline as Session 12:
+- `install.wim` has **exactly one image**, index 1, `"Windows 11 Enterprise Evaluation"` (`Edition ID:
+  EnterpriseEval`) - simpler than Server's multi-edition WIM, matching the sibling project's own finding.
+- `virtio-win-0.1.285.iso`'s `w11` subfolder exists for both `viostor` and `NetKVM`, with **identical**
+  PCI hardware IDs and `netkvm.inf` service properties (`SERVICE_DEMAND_START`, `NDIS`) to both Server
+  builds - `tools/gen-viostor-ddb-reg.py` needed zero changes again, only the `w11`-specific `.sys`
+  binaries.
+- `boot.wim`'s index numbering matches the established pattern (`1 = WinPE`, `2 = Setup`).
+
+Built `image-apply/unattend-windows11.xml` as a direct adaptation of `unattend-server2022.xml`
+(`ComputerName`, `pnputil` driver path updated to `C:\Drivers\NetKVM\w11\amd64\netkvm.inf`, disk sized
+64GB rather than 40GB per Windows 11's own minimum storage requirement - the actual applied footprint is
+nowhere near that, but matching the documented minimum avoids a spurious "this PC doesn't meet
+requirements" concern even though our offline-apply path doesn't run the check that would raise it).
+
+**Bootability generalized with zero adjustment**, confirming Finding 42 a second time: the same
+Server-2025-built WinPE medium's `bcdboot` succeeded against the Windows 11 target
+(`"Boot files successfully created."`, correct `disk 1` selection, real BCD on the ESP) with no
+Windows-11-specific handling needed.
+
+**First real boot watched closely, screenshot by screenshot, given the lack of any prior data point**:
+TianoCore → "Getting ready" → a genuine Windows 11 first-boot specialize/servicing screen ("This might
+take a few minutes. Don't turn off your PC" - a real, expected screen for a client SKU's more extensive
+first-boot component servicing, not a hang) → **a real Windows 11 desktop**, confirmed by its own
+watermark (`"Windows 11 Enterprise Evaluation / Windows License valid for 90 days / Build
+26100.ge_release.240331-1435"`). **No TPM/Secure-Boot-related error of any kind appeared** - confirms the
+theory above empirically, not just by inference. One harmless, unrelated error dialog appeared
+(`CrossDeviceResume.exe: "The parameter is incorrect"` - a background Cross Device Experience Host
+component failing in a VM with no relevant hardware features; cosmetic, no bearing on anything this
+project cares about) and was left alone rather than dismissed, since it doesn't block background
+services.
+
+WinRM connectivity confirmed the same way as both prior sessions:
+
+```
+STATUS: 0
+STDOUT: WIN11-S13
+```
+
+Followed by `Get-NetAdapter` confirming `Red Hat VirtIO Ethernet Adapter`, `Status: Up`, `10 Gbps`. After
+a graceful `system_powerdown` (confirmed via `query-status` before `quit`), offline inspection confirmed
+all four `FirstLogonCommands` marker/log files present, `session13-pnputil-log.txt` showing the same
+successful install pattern: `"Driver package installed on device:
+PCI\VEN_1AF4&DEV_1000&SUBSYS_00011AF4&REV_00\3&11583659&0&18"`.
+
+**One new, Windows-11-specific operational note**: the offline read-back this session hit `ntfs-3g`'s
+`"Windows is hibernated, refused to mount"` warning (distinct from the familiar "unclean file system"
+warning seen after a hard `quit` in earlier sessions) - Windows 11 has **Fast Startup** enabled by
+default (Server SKUs generally don't), which hibernates the kernel session on a normal shutdown rather
+than fully powering off, even after a genuine ACPI `system_powerdown` that QEMU's own `query-status`
+confirmed as `"shutdown"`. Harmless here - `ntfs-3g` correctly fell back to a read-only mount and every
+expected file read back correctly - but worth remembering: **a Windows 11 disk generally needs Fast
+Startup disabled (or a real full shutdown via `shutdown /s /f` rather than the Start-menu power button)
+before a subsequent offline read-write edit would be reliable**, unlike the Server SKUs' disks.
+
+**Phase 2's success criterion is now met for all three target OSes - Windows Server 2025, Windows Server
+2022, and Windows 11 Enterprise Evaluation. Phase 2 is done.**
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 13)
+
+**Where things stand: Phase 2 is complete.** All three target OSes (Server 2025, Server 2022, Windows
+11 Enterprise Evaluation) have independently, from scratch, been taken through the full sequence -
+partition → `wimapply` → offline `viostor` boot-driver injection → WinPE `bcdboot` → offline
+`unattend.xml` specialize/oobeSystem → live `pnputil`-installed `netkvm` → real, authenticated WinRM
+connectivity - with the underlying tooling (`tools/gen-viostor-ddb-reg.py`, the WinPE bootability
+medium, the `FirstLogonCommands` structure) requiring **zero changes** across any of the three; only
+per-OS input values (image index, driver subfolder, `unattend.xml` content) ever differed. Per
+`CLAUDE.md`'s explicit phase-gating rule, **Phase 3 (Windows Configuration / role provisioning) can now
+begin.**
+
+**Immediate next steps, in order:**
+1. **Read `CLAUDE.md`'s Phase 3 section in full before starting anything there** - it reuses
+   `services.yaml` and `scripts/run-services.ps1`/`install-iis.ps1`/`install-ad.ps1`/
+   `install-sql-server.ps1`/`verify-post-reboot.ps1` from the sibling project **unchanged**; nothing new
+   to implement, only to confirm those scripts work unmodified against this project's offline-applied
+   disks (which they should, per `CLAUDE.md`'s own framing - "none of it cares how Windows got onto the
+   disk, only that there's a booted VM with WinRM reachable" - now genuinely true for all three OSes).
+   Remember the sibling project's own `install-iis.ps1` OS-detection branch
+   (`(Get-ComputerInfo).OsProductType -eq "Server"`) has never been exercised against a real Windows 11
+   guest before (per the sibling project's own `WINDOWS11_UNATTENDED.md` Open Issue #2) - worth watching
+   on Windows 11's first real Phase 3 run, and don't list `ad-ds`/`sql-server` for a Windows 11 build
+   (Server-only roles, sibling project's Open Issue #4).
+2. **Formalizing `image-apply/`'s real scripts** (`partition-disk.sh`, `apply-image.sh`,
+   `make-bootable.sh`, `apply-unattend.sh`) is now a very strong candidate to do before or alongside
+   starting Phase 3 - the recipe has been hand-run identically four times across three OSes with only a
+   handful of parameterizable input values differing each time. This is a real decision point to raise,
+   not a default action, per `CLAUDE.md`'s Claude Instructions - but the case for it is now about as
+   strong as it will ever get.
+3. Consider disabling or deferring Windows Update's automatic install-on-shutdown behavior (Finding 40's
+   still-open note) and Windows 11's Fast Startup (this session's new note) as part of whatever the
+   `unattend.xml`/offline-apply recipe becomes for real builds going forward, since both have caused
+   confounds or friction in ad hoc testing sessions - worth doing once, not re-discovering per session.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `win11-session13.qcow2` - **the reference "it works end-to-end" disk for Windows 11.** Bootable,
+  specialized (`ComputerName=WIN11-S13`), `netkvm` live-installed via `pnputil`, real WinRM connectivity
+  confirmed. Currently in a hibernated state (Fast Startup) rather than a clean shutdown - see the note
+  above before attempting an offline read-write edit of it.
+- `image-apply/unattend-windows11.xml` - the working Windows 11 answer file, alongside
+  `unattend-server2025.xml` and `unattend-server2022.xml` - all three real repo files now.
+- `win2022-session12.qcow2` / `win2025-session11.qcow2` - unchanged, still the Server reference disks.
+- `winpe-boot-index1-work.qcow2` - unchanged, now confirmed reusable across **all three** target OS
+  versions (Findings 42 and 43).
+- `tools/gen-viostor-ddb-reg.py` - unchanged since Session 10, its existing presets confirmed sufficient
+  for all three OSes with no modification.
+- No VM left running, no `/dev/nbd0` attached, no stale mounts at the end of this session (confirmed via
+  `pgrep`/`qemu-nbd`/`mount`).
+
+**New facts worth remembering, on top of prior sessions' lists:**
+- **TPM 2.0 / Secure Boot are Setup.exe-enforced, not boot-time-enforced** - confirmed empirically, not
+  just inferred: a Windows 11 disk applied and booted entirely offline (no Setup.exe involved anywhere)
+  boots cleanly to a real desktop with no hardware-compatibility warning of any kind. This is *the*
+  reason this project's offline-apply approach succeeds where the sibling project's Setup.exe-driven
+  Windows 11 build remains blocked.
+- **Windows 11's first real boot includes a genuine, expected "This might take a few minutes" servicing
+  screen** distinct from the Server SKUs' faster first boot - don't mistake it for a hang; it resolved on
+  its own within this session's normal wait cadence.
+- **Windows 11 has Fast Startup enabled by default, unlike the Server SKUs** - a normal shutdown
+  hibernates rather than fully powers off, which `ntfs-3g` correctly detects and refuses a read-write
+  mount for (falls back to read-only, still fully readable). Plan for this before any future offline
+  read-write edit of a Windows 11 disk that's had a normal shutdown.
+- **The full Phase 2 recipe is now confirmed OS-agnostic in its tooling**, across a Server-vs-client SKU
+  boundary in addition to the two Server releases - strong validation that `image-apply/`'s eventual real
+  scripts can be written OS-parameterized from the start rather than needing per-OS branches beyond a
+  small config table (image index, driver subfolder, `ComputerName`/answer-file path).
