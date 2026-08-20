@@ -250,6 +250,18 @@ Server, and Datadog Agent requirements, all of which apply here identically sinc
 implemented by the reused role-provisioning scripts. `services.yaml`'s Service Selection design
 (roles are opt-in per build, not bundled by default) carries over unchanged.
 
+**AD DS, IIS, and SQL Server are Server-20XX-specific — not applicable to Windows 11, full stop.**
+Explicit direction: don't implement or attempt any of these three roles against a Windows 11 build,
+and don't build "light"/"express" stand-ins for them on Windows 11 either — there's no interest in
+that. Windows 11's role in this project is scoped separately from the Server SKUs' AD/IIS/SQL
+monitoring-integration goals; whatever Windows 11 actually needs for Phase 3 (if anything beyond the
+Datadog Agent itself, tracked as Phase 4) isn't decided yet — don't assume it mirrors the Server
+roles. `services.yaml`'s existing `ad-ds`/`sql-server` entries being Server-only, unenforced-at-runtime
+gap (`run-services.ps1` only skips a role when its script is missing, not when it's inapplicable to
+the current OS) is real and already flagged in `PHASE2_ENGINEERING_LOG.md`'s Session 13 next-steps —
+this is the same fact, now stated as project direction rather than just an implementation gotcha to
+watch for.
+
 ---
 
 # Datadog Validation Requirements
@@ -511,13 +523,18 @@ assumption that Phase 2's mechanism generalizes across all three OSes before act
 does. All three are now confirmed independently — see `PHASE2_ENGINEERING_LOG.md` Findings 41
 (Server 2025), 42 (Server 2022), and 43 (Windows 11) for the full verification trail on each.
 
+**Scope note: Phase 3 as specified below (AD DS, IIS, SQL Server) is Server-20XX-specific.** Windows
+11 does not get these roles — see "Windows Configuration Goals" above. Phase 3's own success
+criteria therefore only concern Windows Server 2025 and Windows Server 2022; Windows 11's Phase 2
+success already stands on its own and doesn't gate on anything below.
+
 Implement:
 
 - Nothing new — reuse `services.yaml` and `scripts/run-services.ps1`/`install-iis.ps1`/`install-ad.ps1`/`install-sql-server.ps1`/`verify-post-reboot.ps1` from the sibling project unchanged.
 
 Success criteria:
 
-The same three roles (IIS, AD DS, SQL Server) that work against the sibling project's Server 2022 baseline also work unmodified against this project's offline-applied disks, for Windows Server 2025 (and later Windows 11, once its track is reattempted here too).
+The same three roles (IIS, AD DS, SQL Server) that work against the sibling project's Server 2022 baseline also work unmodified against this project's offline-applied disks, for both Windows Server 2025 and Windows Server 2022.
 
 **Status:** not started, but **unblocked as of Session 13** — Phase 2 has now succeeded for all three
 target OSes (Server 2025, Server 2022, Windows 11). Ready to begin whenever directed; nothing new to
