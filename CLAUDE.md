@@ -395,9 +395,10 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** in progress, **and the core blocker is now solved and confirmed twice, independently** —
-read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 8)" section before
-doing anything else here. Sub-milestone 1 (make the disk bootable) remains **solved, twice over**:
+**Status:** in progress, **and the core blocker is now solved and confirmed three times,
+independently** — read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session
+9)" section before doing anything else here. Sub-milestone 1 (make the disk bootable) remains
+**solved, three times over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD. The Setup.exe pivot (Finding 15, Sessions 3-5) was **abandoned in
 Session 6** after five independent attempts to get past `EarlyF6DriverInstall`'s "Install driver to
@@ -427,12 +428,26 @@ history. See Findings 30-33 for the full record, including a reusable, fully una
 `startnet.cmd` for the WinPE bootability step (Finding 31) that replaces the manual/interactive
 approach Session 7 used.
 
-**What's left for Phase 2**: both runs used no `unattend.xml`/specialize pass, so they correctly
-stopped at interactive OOBE rather than an automated WinRM-reachable state — the offline
-specialize pass (Build step 6 below: `\Windows\Panther\unattend.xml`, computer name, WinRM
-enablement) is what turns this into the actual Phase 2 success criterion, and is now the clear next
-priority. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but
-everything needed to resume without re-deriving it is there.
+Session 9 then added the offline specialize/unattend pass itself (Build step 6:
+`\Windows\Panther\unattend.xml`, dropped directly onto the offline-mounted image with no
+DISM/Setup.exe involvement) on a third independent from-scratch disk, and **it works exactly as
+documented**: `ComputerName` took effect, OOBE was skipped, `AutoLogon` reached a real desktop, and
+`FirstLogonCommands` executed. A genuinely new and useful side-discovery (Finding 35): a single QEMU
+session can carry a disk from "just made bootable" straight through into the target's own first real
+boot, since WinPE's `wpeutil shutdown` causes OVMF to retry boot enumeration within the same process
+rather than needing a second VM launch.
+
+**What's left for Phase 2**: the one remaining gap is that `Microsoft-Windows-PnpCustomizationsNonWinPE`'s
+`DriverPaths` component — used to inject the NetKVM network driver via the unattend.xml itself — never
+actually fires in this pipeline (Finding 36, confirmed via `setupact.log`: the component is parsed but
+no PnP callback ever processes it, the same class of problem as Setup.exe's abandoned
+`EarlyF6DriverInstall` gate). Result: no NIC driver, no IP, no real WinRM connectivity yet, even though
+WinRM's own `FirstLogonCommands` setup shows no sign of having failed on its own terms. The fix is
+already identified and is now the clear next priority: generalize `tools/gen-viostor-ddb-reg.py`'s
+proven offline `hivex` `DriverDatabase` registration (Finding 29's mechanism) to NetKVM
+(`PCI\VEN_1AF4&DEV_1000`/`DEV_1041`, confirmed via its own `.inf`) instead of relying on any
+unattend.xml PnP component. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's
+long, but everything needed to resume without re-deriving it is there.
 
 ---
 

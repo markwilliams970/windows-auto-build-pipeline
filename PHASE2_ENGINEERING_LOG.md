@@ -1909,3 +1909,235 @@ reused. Both disks are now valid known-good references.
   layout rather than needing to be recomputed via `sfdisk` every time (recomputing is still cheap and
   still the safer default for any future script, but a mismatch would itself be a signal something
   else changed).
+
+---
+
+## Session 9: added the offline specialize/unattend pass (Build step 6) to a third from-scratch
+## disk. The `\Windows\Panther\unattend.xml` mechanism itself works exactly as documented — but a
+## real gap was found: `PnpCustomizationsNonWinPE`'s `DriverPaths` never actually fires in this
+## pipeline, leaving the target with no working NIC and therefore no real WinRM connectivity yet.
+
+### Finding 34: a third independent from-scratch disk (`win2025-session9.qcow2`) reproduces the
+Finding 29/30 bootability fix cleanly again, and the offline-dropped `unattend.xml` mechanism itself
+is confirmed working exactly as Microsoft's documented answer-file search order predicts
+
+Before touching anything new, this session repeated the full proven recipe once more end-to-end on a
+brand-new 40GB qcow2 (partition/format, `wimapply` `install.wim` index 2, offline `hivexregedit`
+merge of `tools/gen-viostor-ddb-reg.py`'s output, `viostor.sys` copy) — third independent confirmation
+of Finding 29, now across three genuinely separate disks with no shared history. Per the
+research-first discipline, primary-source-checked (not assumed from memory) that dropping a file at
+`%WINDIR%\Panther\unattend.xml` before first boot is picked up automatically for the `specialize` and
+`oobeSystem` passes, with no `DISM /Apply-Unattend` and no Setup.exe involved — [Microsoft's own
+"Windows Setup Automation Overview"](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-automation-overview)
+confirms Windows Setup's configuration-pass engine searches for and caches an answer file at the
+beginning of every pass, "including... after applying and booting an image," and that the
+`%WINDIR%\Panther` copy is exactly the one used for anything past first boot. This matches what
+Session 7/8 already demonstrated empirically (OOBE was reached using default specialize-pass
+behavior with zero `unattend.xml` present) — the passes run unconditionally on any first boot of a
+generalized image, Setup.exe or not; the only open question was whether *our own* dropped file would
+be found, and it was (see Finding 35 below for the proof).
+
+Content adapted from `../windows-server-vm-automation/packer/answer_files/autounattend.xml.pkrtpl`'s
+proven `specialize`/`oobeSystem` settings, with the `windowsPE` pass and `Microsoft-Windows-Setup`
+component dropped entirely (Setup.exe-driven disk partitioning/image-selection; not applicable — the
+disk is already partitioned, formatted, and `wimapply`'d before this file is ever placed). Kept:
+`Microsoft-Windows-Shell-Setup` (`ComputerName`, `TimeZone`) in `specialize`; OOBE-skip, `AutoLogon`,
+and `FirstLogonCommands` (network-category-to-Private, `Enable-PSRemoting`/WinRM-over-HTTP) in
+`oobeSystem` — same commands the sibling project already proved work, verbatim.
+
+New variant, untested by us before this session: `Microsoft-Windows-PnpCustomizationsNonWinPE`'s
+`DriverPaths` pointed at a **local disk folder** (`C:\Drivers\NetKVM\2k25\amd64`, copied onto the
+Windows partition during the same offline pass that dropped the unattend file) rather than a
+CD-ROM/floppy volume like the sibling project uses, since we already have full filesystem access
+during the offline-apply stage and don't need a virtual optical drive at all. **This part did not
+work — see Finding 36.**
+
+### Finding 35: an unplanned but valuable discovery — `wpeutil shutdown` at the end of WinPE's
+`startnet.cmd` causes OVMF to retry boot-device enumeration *within the same QEMU process*, chaining
+straight from "just made bootable" into the target's own real first boot with no second VM launch
+
+The WinPE-bootability VM (WinPE on `ide-hd`, target on `virtio-blk-pci`, same device-model rule as
+always) was launched once, expecting to need a second, separate solo-boot VM launch afterward to
+actually observe the target's own first boot (as every prior session did). Instead, screenshots taken
+against the *same still-running QEMU process* over the following ~2 minutes showed: TianoCore splash
+→ "Getting ready" (WinPE loading) → **a fully autologon'd Windows Server 2025 desktop with Server
+Manager auto-opened** — i.e., the target disk's own first boot, all within one continuous VM session.
+
+**Diagnosis:** WinPE's `startnet.cmd` (Finding 31's unattended script) ends with `wpeutil shutdown`,
+issuing a real ACPI shutdown request from the WinPE guest. OVMF's UEFI boot manager, on a fresh
+`OVMF_VARS` with no saved NVRAM boot entries, does its own boot-option discovery on every boot
+attempt; when the guest shuts down cleanly rather than the QEMU process exiting, OVMF's firmware
+re-enters its boot-device probing loop (this is standard UEFI Boot Manager behavior on an ACPI
+S5/reboot-adjacent event under OVMF's default NVRAM policy, not something specific to this project's
+setup) and — since `bcdboot` had, moments earlier in the very same session, just written a real BCD
+and `bootmgfw.efi` to the target's now-populated ESP — finds the target newly bootable and boots
+straight into it, continuing the same `qemu-system-x86_64` process without any external relaunch.
+
+**Confirmed, not just inferred from screenshots:** after gracefully quitting the VM and offline
+re-mounting the target disk, `EFI\Microsoft\Boot\BCD` (and `bootmgfw.efi`/`bootx64.efi`) were present
+and populated, `C:\session8-{bcdboot,diskpart,drvload}-log.txt` and `C:\session8-done-marker.txt`
+(WinPE's own log-copy step) were present confirming `startnet.cmd` ran to completion against this
+disk, and the registry's `ComputerName` was `WIN2025-S9` — the exact value from this session's
+`unattend.xml` — confirming the target's own specialize pass had genuinely executed, not just that
+some other cached/stale state was being displayed.
+
+**Practical implication:** a single VM launch (WinPE + target attached together) can now carry a
+freshly-`wimapply`'d disk all the way from "not yet bootable" through WinPE's `bcdboot` pass and into
+the target OS's own first real boot, with no separate "solo boot" VM launch required to observe
+first-boot behavior — worth keeping in mind when scripting this into `image-apply/`'s eventual
+`make-bootable.sh`: the same QEMU invocation used for bootability-making doubles as the first-boot
+observation opportunity, if the caller just keeps watching after WinPE's `wpeutil shutdown` instead of
+tearing the VM down. (A *separate* solo-boot VM launch — target disk only, no WinPE attached — is
+still what this session used for the actual WinRM connectivity test below, since that one specifically
+needed real usermode networking wired up, which the combined WinPE+target VM didn't have.)
+
+### Finding 36: `Microsoft-Windows-PnpCustomizationsNonWinPE`'s `DriverPaths` component is inert in
+this project's offline-apply pipeline — it's listed in the specialize pass's action queue but no PnP
+callback ever actually processes it, so NetKVM never got installed and the target has no working NIC
+
+**Symptom:** after the full pipeline (bootability, specialize, autologon, `FirstLogonCommands` all
+confirmed working per Finding 35), a solo-boot VM with real QEMU usermode networking
+(`-netdev user,hostfwd=tcp::15985-:5985 -device virtio-net-pci,netdev=net0`) showed the WinRM port as
+TCP-connectable (`PORT OPEN` via `/dev/tcp`, and `curl -v` logged `Connected to 127.0.0.1 port
+15985`) but **zero bytes were ever exchanged in either direction** — a plain `curl` `GET` timed out
+after 5s with no response, and an authenticated `pywinrm` command attempt timed out after 30s the same
+way. This pattern (TCP "connects," nothing ever actually flows) is consistent with QEMU SLIRP's
+usermode NAT layer optimistically completing the *host-side* half of a forwarded connection
+independently of whether the guest is actually reachable — i.e., a symptom of "the guest has no
+working IP on this NIC at all," not a WinRM configuration problem.
+
+**Diagnosis, confirmed via offline inspection, not guessed:** after a graceful ACPI
+`system_powerdown` (not `quit` — needed a clean NTFS shutdown state to trust the read) and re-mounting
+the target disk:
+- `Windows\INF\oem*.inf` contained exactly one entry (`oem0.inf`, Microsoft's own inbox "Print To
+  PDF" printer driver) — **no NetKVM driver package was ever imported into the driver store.**
+- `Windows\INF\setupapi.dev.log` had **zero matches** for `netkvm`, `1AF4` (virtio's PCI vendor ID),
+  or `virtio` anywhere in the file — the device was never even considered for driver matching.
+- `Windows\Panther\setupact.log` (Windows Setup's own first-boot trace) shows
+  `Microsoft-Windows-PnpCustomizationsNonWinPE` correctly recognized and listed as "Identity 0" in the
+  specialize pass's generated action queue — so the unattend.xml component *was* parsed correctly —
+  but the log's actual `[Action Queue] : Executing command "..."` entries show only **one** command
+  ever runs for the whole specialize pass: `RUNDLL32.EXE shsetup.dll,SHUnattendedSetup specialize`,
+  which is `Microsoft-Windows-Shell-Setup`'s own handler (this is what actually set `ComputerName`).
+  **No equivalent command or PnP callback ever fires for the `PnpCustomizationsNonWinPE` identity** —
+  contrast this with the `windowsPE`-pass PnP component earlier in the same log, which explicitly logs
+  `PnPIBS: Entering PnP callback to validate unattend.xml settings for component
+  Microsoft-Windows-PnPCustomizationsWinPE ... Unattend settings need not be processed.` — a real
+  callback firing and reporting a (harmless, in that case) no-op. `PnpCustomizationsNonWinPE` gets no
+  such callback at all in this pipeline; it is registered and then silently never invoked.
+- `C:\Drivers\NetKVM\2k25\amd64\` (the local path referenced by `DriverPaths`) was still present and
+  intact on the disk — ruling out "the files were missing" as the cause.
+
+**Working hypothesis (not yet independently verified against Microsoft source the way Finding 29's
+`DriverDatabase` fix was):** `PnpCustomizationsNonWinPE`'s actual driver-injection processing appears
+to be wired into Setup.exe's own PnP/driver-injection subsystem specifically, the same subsystem
+responsible for `EarlyF6DriverInstall` (Findings 19–28, the abandoned Setup.exe pivot) — and, like
+that gate, it simply does not run at all in a pipeline where Setup.exe itself is never in the loop,
+regardless of which unattend pass (`windowsPE` or `specialize`) the component is declared under. This
+is consistent with, not a contradiction of, this project's established pattern: unattend.xml PnP/driver
+components generally assume Setup.exe is driving the boot; this project's offline-apply approach
+deliberately has no Setup.exe anywhere, so **the only driver-injection mechanism confirmed to actually
+work here remains the offline `hivex` `DriverDatabase` registration used for `viostor`** (Finding 29).
+
+**Recommended fix, not yet implemented:** generalize `tools/gen-viostor-ddb-reg.py`'s proven recipe to
+NetKVM the same way it was written for `viostor` — offline `hivexregedit --merge` registration in
+`DriverDatabase` plus a copied `.sys` file, no unattend.xml PnP component involved at all. NetKVM's
+real PCI hardware IDs (confirmed via `grep` against its own `.inf`, the same "verify before trusting"
+discipline as everything else in this project — not assumed from the viostor pattern):
+`PCI\VEN_1AF4&DEV_1000` (legacy) and `PCI\VEN_1AF4&DEV_1041` (modern) — note these differ from
+viostor's `DEV_1001`/`DEV_1042`, confirming they must be looked up per-driver, not inferred. Since
+NetKVM is not boot-critical, `DriverDatabase` registration should be sufficient on its own (no
+`CriticalDeviceDatabase` entry needed — that distinction is what `virt-v2v`'s own source uses to
+decide between the two, per Finding 29's research) but this is a prediction to verify empirically, not
+an assumed fact, before treating it as done.
+
+**Minor process note:** early in this session, before realizing the WinPE+target VM had already
+chained into the target's own desktop (Finding 35), a few exploratory keystrokes (`hostname`, an
+`$env:COMPUTERNAME` query) were typed blind via `qmp-type.py` without first confirming which window
+had keyboard focus, landing unintentionally in a `desktop.ini` Notepad window rather than a shell
+prompt. No lasting effect (the file was never saved), but it's a reminder to screenshot-and-confirm
+focus before typing into an unfamiliar VM state, rather than assuming the visible foreground window is
+the one that has it.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 9)
+
+**Where things stand:** Phase 2's success criterion (a real, unattended WinRM connection, per
+`CLAUDE.md`'s Build step 7) is **not yet met**, but real, concrete progress was made toward it:
+
+1. **Bootability (Findings 29/30) — now confirmed a third independent time**, on yet another
+   from-scratch disk.
+2. **The offline specialize/unattend pass itself is fully proven working**: `\Windows\Panther\
+   unattend.xml`, dropped directly onto the offline-mounted image with no DISM/Setup.exe involvement,
+   is correctly picked up on first real boot — `ComputerName` was set exactly as specified, OOBE was
+   skipped, `AutoLogon` reached a real desktop, and `FirstLogonCommands` executed (confirmed via the
+   `session9-firstlogon-marker.txt` file it wrote). This is Build step 6, essentially done for the
+   settings that don't depend on driver injection.
+3. **New, unplanned discovery (Finding 35)**: a single VM launch can carry a disk from "just made
+   bootable" straight through into the target's own first real boot, since WinPE's `wpeutil shutdown`
+   causes OVMF to retry boot enumeration within the same QEMU process rather than requiring a second,
+   separate solo-boot launch.
+4. **The one real gap**: `PnpCustomizationsNonWinPE`'s `DriverPaths` (used for the NIC driver,
+   NetKVM) never actually fires in this pipeline (Finding 36) — confirmed via `setupact.log`, not
+   guessed. No NIC driver means no IP means no real WinRM connectivity, even though WinRM's own
+   `FirstLogonCommands` setup (`Enable-PSRemoting`, firewall rule, listener creation) has no evidence
+   of having failed on its own terms — it's a missing-network problem, not a missing-WinRM-config
+   problem.
+
+**Immediate next step, in order:**
+1. Generalize `tools/gen-viostor-ddb-reg.py` into a parameterized version (driver name, hardware IDs,
+   `.inf`/`.sys` filenames) so it can emit a `.reg` for NetKVM (`PCI\VEN_1AF4&DEV_1000` /
+   `PCI\VEN_1AF4&DEV_1041`, confirmed above) without duplicating the whole script. Apply it the same
+   way `viostor`'s was applied — offline `hivexregedit --merge` plus a copied `.sys` — no unattend.xml
+   PnP component involved.
+2. Re-run the pipeline on a fresh disk (or reuse `win2025-session9.qcow2`, which already has
+   everything else working) with **both** `viostor` and `netkvm` hivex-injected, then repeat the
+   solo-boot-with-usermode-networking WinRM test from this session. This is the concrete, specific
+   next action — not a vague "improve driver injection."
+3. Once real WinRM connectivity is confirmed for Server 2025, repeat the whole pipeline for Server
+   2022 and Windows 11 Enterprise Evaluation per the standing phase-gating rule — still not started.
+4. Formalizing `image-apply/`'s real scripts (`partition-disk.sh`, `apply-image.sh`,
+   `make-bootable.sh`, and now an `apply-unattend.sh` for the offline `unattend.xml` drop) remains a
+   real, not-yet-made decision, now with even more of the recipe proven stable (three independent
+   bootability confirmations, one full specialize/oobeSystem confirmation).
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `win2025-session9.qcow2` — this session's disk. Bootable, specialized (`ComputerName=WIN2025-S9`),
+  reaches a real autologon'd desktop, `FirstLogonCommands` executed — but **no working NIC**, so not
+  yet WinRM-reachable. A good disk to reuse for the NetKVM fix above rather than rebuilding from
+  scratch, since everything else on it is already known-good.
+- `win2025-target.qcow2` / `win2025-test.qcow2` — unchanged from Sessions 7/8, still valid references
+  (no unattend.xml applied to either).
+- `winpe-boot-index1-work.qcow2` — unchanged from Session 8, still holds the Finding 31
+  drvload/diskpart/bcdboot/copy `startnet.cmd`.
+- `OVMF_VARS_session9-boot.fd` / `OVMF_VARS_session9-solo.fd` — this session's fresh OVMF vars copies.
+- No VM left running at the end of this session (confirmed via `pgrep` after the final graceful
+  `system_powerdown`), no `/dev/nbd0` left attached, no stale mounts under `/tmp/win-build-mnt/`.
+- Extracted `install.wim`, extracted NetKVM/viostor driver files, and the generated `unattend.xml`
+  live under this session's scratchpad (`/tmp/win-session9/`) — ephemeral, not guaranteed to survive
+  to the next session; regenerate/re-extract if needed (the `unattend.xml` itself is small and worth
+  copying into the repo proper — e.g. `image-apply/unattend-server2025.xml` — the next time this is
+  touched, rather than leaving the only copy in `/tmp`).
+
+**New facts worth remembering, on top of prior sessions' lists:**
+- **`%WINDIR%\Panther\unattend.xml`, dropped directly by any offline means, is picked up automatically
+  on first real boot for the `specialize`/`oobeSystem` passes** — no DISM, no Setup.exe. Confirmed
+  both via Microsoft's own documented answer-file search order and empirically (`ComputerName` took
+  effect exactly as specified).
+- **A single QEMU session can carry a disk from bootability-making straight into its own first real
+  boot** — OVMF retries boot enumeration after WinPE's `wpeutil shutdown` rather than requiring a
+  fresh VM launch (Finding 35). Don't assume a second "solo boot" launch is always needed to observe
+  first-boot behavior; it's only needed when the observation requires different QEMU device config
+  (e.g. this session's usermode networking for the WinRM test) than the bootability-making launch had.
+- **`PnpCustomizationsNonWinPE`'s `DriverPaths` does not work in this pipeline** — use offline `hivex`
+  `DriverDatabase` registration (Finding 29's pattern) for every driver this project needs injected,
+  boot-critical or not, rather than relying on any unattend.xml PnP component. Don't spend more time
+  on unattend-based driver injection variants (CD-based paths, different pass placement, etc.) without
+  new evidence Setup.exe's absence isn't the actual blocker.
+- **A graceful QMP `system_powerdown` (ACPI shutdown, guest-initiated) — not `quit` (hard process
+  kill) — is needed before trusting an offline NTFS read of a disk that was just live-booted.** A
+  `quit`-terminated disk mounts read-only with an "unclean file system" warning from `ntfs-3g`; still
+  usable for a quick read in a pinch (this session did, successfully), but `system_powerdown` plus
+  polling `pgrep` until the process actually exits is the reliable way to get a fully trustworthy
+  read afterward.
