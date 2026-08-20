@@ -1,0 +1,2 @@
+services:
+  - ad-ds        # Active Directory Domain Services + DNS, new forest/domain

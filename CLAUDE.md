@@ -32,7 +32,9 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** — its success criterion (offline image application → bootable → specialized → real, unattended WinRM connectivity) is now confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation), with the underlying tooling requiring zero changes across any of them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). Per the explicit phase-gating rule, **Phase 3 is now unblocked**. **Phases 3-5** are not yet started.
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** — its success criterion (offline image application → bootable → specialized → real, unattended WinRM connectivity) is now confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation), with the underlying tooling requiring zero changes across any of them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail).
+
+**Phase 3** (role provisioning) is **done** — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are now confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server). See its entry under Development Approach below and `PHASE3_ENGINEERING_LOG.md` for the full trail, including a real `cpu_model`/Packer-qemu-builder defect found and fixed along the way. **Phases 4-5** are not yet started.
 
 ---
 
@@ -530,16 +532,33 @@ success already stands on its own and doesn't gate on anything below.
 
 Implement:
 
-- Nothing new — reuse `services.yaml` and `scripts/run-services.ps1`/`install-iis.ps1`/`install-ad.ps1`/`install-sql-server.ps1`/`verify-post-reboot.ps1` from the sibling project unchanged.
+- Reuse `services.yaml` and `scripts/run-services.ps1`/`install-iis.ps1`/`install-ad.ps1`/`install-sql-server.ps1`/`verify-post-reboot.ps1` from the sibling project unchanged, **plus one small addition not present in the sibling project**: two mutually-exclusive profiles (`ad-ds` alone vs. `iis`/`sql-server` together) enforced by a small guard added to `scripts/run-services.ps1` and a fast host-side pre-check in `dev/run-phase3-test.sh`. See `dev/services-domain-controller.yaml` / `dev/services-app-server.yaml` for the two ready-made profile files.
 
 Success criteria:
 
 The same three roles (IIS, AD DS, SQL Server) that work against the sibling project's Server 2022 baseline also work unmodified against this project's offline-applied disks, for both Windows Server 2025 and Windows Server 2022.
 
-**Status:** not started, but **unblocked as of Session 13** — Phase 2 has now succeeded for all three
-target OSes (Server 2025, Server 2022, Windows 11). Ready to begin whenever directed; nothing new to
-implement, only to confirm the reused scripts work unmodified against this project's offline-applied
-disks.
+**Phase 3 is done — its success criterion is met for both target OSes and both profiles.** A
+`dev/`-based fast-iteration test harness (`dev/role-test.pkr.hcl` + `dev/run-phase3-test.sh`,
+following the "reuse the pattern, not necessarily the exact files" note above) boots a disposable
+copy-on-write overlay on top of Phase 2's own confirmed-good reference disks
+(`image-apply/output/win2022-session12.qcow2` / `win2025-session11.qcow2`) and runs the reused
+`scripts/` against them over WinRM — this is the test harness, **not** the production
+`packer/boot-and-provision.pkr.hcl` (still not built — see below before building it). All four OS ×
+profile combinations confirmed live with real in-guest verification (AD DS/DNS up and domain live
+after reboot; IIS returning HTTP 200; SQL Server's SA login and a live `SELECT 1`). See
+`PHASE3_ENGINEERING_LOG.md` for the full session record, including a real, non-obvious defect found
+and fixed in the test harness itself: the Packer qemu builder's `cpu_model` field silently defaults
+to QEMU's generic `qemu64` CPU instead of the host's real CPU, which Server 2025 (unlike Server
+2022) couldn't tolerate — fixed via `cpu_model = "host"` in `dev/role-test.pkr.hcl`.
+
+**Immediate next steps, whenever directed (neither happened in this session, see
+`PHASE3_ENGINEERING_LOG.md`'s closing section):** (1) formalize `image-apply/`'s real scripts
+(`partition-disk.sh`/`apply-image.sh`/`make-bootable.sh`/`apply-unattend.sh`) — still hand-run steps
+recorded only in `PHASE2_ENGINEERING_LOG.md`, not yet real scripts; (2) build the production
+`packer/boot-and-provision.pkr.hcl` on top of those — **must carry forward the `cpu_model = "host"`
+fix from the start**, or Server 2025 will fail there the same way. Both are separate, not-yet-scoped
+pieces of work, not a continuation of Phase 3 itself.
 
 ---
 

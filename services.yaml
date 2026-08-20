@@ -1,0 +1,12 @@
+services:
+  - iis          # IIS Web Server role + default site
+  # - ad-ds      # Active Directory Domain Services + DNS, new forest/domain
+  # - sql-server # SQL Server 2022 Developer Edition, Mixed Mode auth
+
+# Server-only (Windows 11 gets none of these - see CLAUDE.md's "Windows
+# Configuration Goals"). Two profiles, mutually exclusive, enforced by
+# scripts/run-services.ps1 and dev/run-phase3-test.sh:
+#   domain-controller: ad-ds
+#   app-server:        iis, sql-server (either or both together)
+# See dev/services-domain-controller.yaml and dev/services-app-server.yaml
+# for ready-made examples of each profile.

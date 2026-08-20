@@ -3,6 +3,11 @@
 # Infrastructure, Still" principle - nothing here is meant to be long-lived.
 image-apply/output/
 
+# Phase 3 dev fast-iteration harness output (disposable COW overlays +
+# per-run efivars scratch copies) - the harness config itself (dev/*.pkr.hcl,
+# dev/*.sh, dev/services-*.yaml) is real source and stays tracked.
+dev/output/
+
 # ISO cache lives at ../iso_cache/ - one level above this repo, shared with
 # ../windows-server-vm-automation/, not inside this repo's tree at all. No
 # ignore rule needed here for it (nothing under this repo's iso_cache/ exists
