@@ -2130,14 +2130,258 @@ the one that has it.
   fresh VM launch (Finding 35). Don't assume a second "solo boot" launch is always needed to observe
   first-boot behavior; it's only needed when the observation requires different QEMU device config
   (e.g. this session's usermode networking for the WinRM test) than the bootability-making launch had.
-- **`PnpCustomizationsNonWinPE`'s `DriverPaths` does not work in this pipeline** — use offline `hivex`
-  `DriverDatabase` registration (Finding 29's pattern) for every driver this project needs injected,
-  boot-critical or not, rather than relying on any unattend.xml PnP component. Don't spend more time
-  on unattend-based driver injection variants (CD-based paths, different pass placement, etc.) without
-  new evidence Setup.exe's absence isn't the actual blocker.
+- **`PnpCustomizationsNonWinPE`'s `DriverPaths` does not work in this pipeline** — for the
+  *boot-critical* driver, use offline `hivex` `DriverDatabase` registration (Finding 29's pattern)
+  rather than any unattend.xml PnP component. **Correction, Session 10: this does NOT generalize to
+  every driver** — see Finding 39/40 below. `DriverDatabase`-only registration is confirmed
+  sufficient for `viostor` (boot-critical storage) but confirmed *insufficient* for `netkvm`
+  (non-boot-critical network) - use a live, in-OS `pnputil /add-driver` step for anything in the
+  latter category instead.
 - **A graceful QMP `system_powerdown` (ACPI shutdown, guest-initiated) — not `quit` (hard process
   kill) — is needed before trusting an offline NTFS read of a disk that was just live-booted.** A
   `quit`-terminated disk mounts read-only with an "unclean file system" warning from `ntfs-3g`; still
   usable for a quick read in a pinch (this session did, successfully), but `system_powerdown` plus
   polling `pgrep` until the process actually exits is the reliable way to get a fully trustworthy
   read afterward.
+
+---
+
+## Session 10: generalized the proven `viostor` `DriverDatabase` hivex-injection recipe to `netkvm`
+## (the user's explicit next-step ask) - confirmed it registers cleanly with no collision, confirmed
+## it is necessary but **not sufficient**, root-caused exactly why via a real Windows Config Manager
+## problem code, and identified the correct fix by re-reading the sibling project's own proven answer
+## file rather than inventing a new mechanism.
+
+### Finding 37: `tools/gen-viostor-ddb-reg.py` generalized to accept `--driver netkvm`, with real
+per-driver values confirmed from each driver's own `.inf` and from Microsoft's own device-class docs,
+not assumed to carry over from viostor
+
+Re-read `libguestfs-common/mlcustomize/inject_virtio_win.ml` fresh (cloned again this session, per the
+project's own "read the primary source, not a summary of it" standing rule) specifically to answer:
+does virt-v2v's `add_guestor_to_registry`/`ddb_regedits` generalize to the network driver at all? **No
+— confirmed by reading the actual call sites, not assumed:** `add_guestor_to_registry` is called
+exactly twice in the whole file (lines 231-232), both for the *block* driver only, inside the
+`viostor_driver`/`vioscsi` branch. The "Can we install the virtio-net driver?" branch a few lines below
+(lines 236-249) only checks whether `netkvm.inf`/`virtio_net.inf` exist on the source media and sets a
+`net_type` enum — it never calls `add_guestor_to_registry`, `cdb_regedits`, or `ddb_regedits` at all.
+virt-v2v copies every virtio driver's files into `%WINDIR%\Drivers\VirtIO` (`copy_drivers`, a flat
+directory, no subfolders) but only *registers* the block driver via the DriverDatabase/CDB mechanism -
+the network driver's actual installation happens some other way, outside this file entirely (see
+Finding 39 for what that other way almost certainly is, confirmed independently rather than assumed
+from this absence).
+
+Given `DriverDatabase` is still Windows' genuine general-purpose offline-driver-staging namespace (not
+a virt-v2v invention - confirmed via `libguestfs-common/mldrivers/windows_drivers.ml`'s own
+`detect_drivers`, which reads `DriverDatabase\DeviceIds` generically for driver enumeration/inspection,
+not as a boot-only structure), generalizing the injection mechanism to `netkvm` was still a reasonable,
+well-grounded next step to actually try - just not blindly copying viostor's hardcoded values. Real
+per-driver differences confirmed by reading `netkvm.inf` directly rather than assumed:
+- `StartType = 3` (`SERVICE_DEMAND_START`) vs. viostor's `Start = 0` (`SERVICE_BOOT_START`) - makes
+  sense, since only the boot disk's own driver needs to load before the OS can read its own boot
+  volume; a NIC has no such constraint.
+- `LoadOrderGroup = NDIS` vs. viostor's `"SCSI miniport"`.
+- The Version blob's embedded device-setup-class GUID needed to be the **Net** class
+  (`4d36e972-e325-11ce-bfc1-08002be10318`), not viostor's **SCSIAdapter** class
+  (`4d36e97b-...`) - confirmed against Microsoft's own
+  `system-defined-device-setup-classes-available-to-vendors.md` docs, not assumed from the one-digit
+  difference. `tools/gen-viostor-ddb-reg.py` now computes this blob's mixed-endian GUID encoding from
+  a plain GUID string at runtime (`version_blob()`) instead of hardcoding a second nearly-identical
+  48-byte array by hand, specifically to avoid a transcription error in exactly this kind of
+  easy-to-get-backwards byte-order detail.
+- The synthetic `DriverInfFiles`/`DriverPackages` label (`"guestor.inf"` in virt-v2v's own source) is a
+  **fixed literal**, never parameterized in virt-v2v's own code, because virt-v2v only ever calls this
+  path once per conversion (for the single block driver). Reusing it unchanged for a second driver
+  would silently collide with and corrupt viostor's already-registered `DriverDatabase` entries under
+  the identical key path. `netkvm` gets its own distinct label (`"netkvm.inf"`) for exactly this
+  reason.
+
+Verified: regenerating viostor's `.reg` output with zero args is byte-identical to the pre-change
+script (no regression), and applying both `.reg` files to the same hive leaves both drivers' entries
+intact with no cross-contamination (confirmed via `hivexregedit --export` on both `Services\viostor`
+and `Services\netkvm` after merging both).
+
+### Finding 38: the first attempt (retrofitting `netkvm`'s `DriverDatabase` entry onto
+`win2025-session9.qcow2`, a disk that had already booted once without it) failed - the device instance
+was already stuck as unmatched and never got retried
+
+Applied the new `netkvm-ddb.reg` plus `netkvm.sys` to the existing Session 9 disk (chosen because
+everything else on it - bootability, specialize/oobeSystem, `FirstLogonCommands` - was already
+confirmed working, to isolate exactly one variable). Solo-booted with real QEMU usermode networking
+(`-netdev user,hostfwd=tcp::PORT-:5985`); WinRM's port accepted a TCP connection but never answered
+any request (`curl`/`pywinrm` both hung to timeout with zero bytes transferred). Offline inspection
+after a graceful shutdown showed why: `ControlSet001\Enum\PCI\VEN_1AF4&DEV_1000&...`'s device instance
+had **no `Service` value at all** and still carried `pci.sys`'s generic fallback `DeviceDesc`
+("Ethernet Controller") rather than netkvm's real description - the device was enumerated (pci.sys
+always creates an instance for every PCI function present, driver or not) but never matched, because
+it was first discovered on an *earlier* boot when no `DriverDatabase` entry existed yet, and Windows'
+PnP manager does not appear to automatically retry driver-matching for an already-instantiated,
+already-"failed" device against entries added after the fact. **Lesson, consistent with viostor's own
+originally-successful pattern (which was always registered before any boot): a `DriverDatabase`
+injection for any device must be in place before that disk's very first boot, on a disk that has never
+booted before, to get a clean test** - retrofitting onto an already-booted disk is not equivalent and
+produced a false negative here, not evidence the registration itself was wrong.
+
+### Finding 39: root cause, on a genuinely fresh disk with both drivers registered before first boot -
+`DriverDatabase` registration alone gets `netkvm` *matched* but not *class-configured*; Windows' own
+Config Manager reports the exact reason: `CM_PROB_NEED_CLASS_CONFIG`
+
+Built a third disk (`win2025-session9b.qcow2`) completely from scratch, with **both** `viostor`'s and
+`netkvm`'s `DriverDatabase`/`Services` entries merged into the SYSTEM hive *before* the disk was ever
+booted - eliminating Finding 38's confound entirely. Result, confirmed via `hivexregedit` after the
+WinPE bootability pass: `Enum\PCI\VEN_1AF4&DEV_1000&...`'s device instance now correctly showed
+`"Service"=netkvm` - the match worked this time, exactly as viostor's does. **But WinRM still never
+became reachable** (same TCP-connects-but-never-responds symptom as Finding 38), and this time with a
+clean disk ruling out the stale-instance explanation.
+
+Logged in live via the console (QMP keyboard injection - see the process note below for the real
+friction this involved) and ran `Get-NetAdapter`: **zero adapters returned, not even in an error
+state** - the NDIS network stack has no adapter object at all for this device, despite the PCI-level
+driver match. `Get-PnpDevice -Class Net` showed it explicitly: `Status = Error`, `FriendlyName =
+Ethernet Controller` (still the generic pci.sys fallback name, even with `Service` populated - a
+detail worth remembering: a populated `Service` value does not by itself mean full class installation
+happened). The actual Config Manager problem code, retrieved via
+`(Get-CimInstance Win32_PnPEntity -Filter "Name='Ethernet Controller'").ConfigManagerErrorCode`:
+**`CM_PROB_NEED_CLASS_CONFIG`** - a real, documented Windows Config Manager status meaning the
+device's driver is associated, but its device-class-specific configuration (for a NIC: the NDIS
+binding, `NetCfgInstanceId`, and the class-specific registry container under
+`HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e972-...}\<NNNN>` that `netcfg.dll` normally builds
+during a live/online driver install) was never created. `pnputil /scan-devices` (a plain PnP re-scan)
+did not fix it, confirming this isn't a "PnP just hasn't gotten to it yet" timing issue either.
+
+**This decisively explains why virt-v2v's own source never calls `add_guestor_to_registry` for the
+network driver (Finding 37): `DriverDatabase` registration is genuinely sufficient for boot-critical
+storage drivers (the boot loader's early driver-load logic only needs a `Services` entry pointing at a
+`.sys` file) but is NOT sufficient for network-class drivers, which need the fuller NDIS
+class-installation Windows normally performs online, at the moment a device is discovered by a running
+OS - a real architectural distinction, not a viostor-vs-netkvm-specific quirk, and not something an
+offline registry hack alone can replicate for this device class.** This generalizes the "no Setup.exe
+in this pipeline means unattend.xml PnP components are inert" theme from Finding 36 in a slightly
+different direction: the mechanism that's missing here isn't Setup.exe specifically, it's *any* live
+PnP class-installation pass - which happens automatically the moment the device is discovered by a
+booted OS, provided a matching driver is discoverable and the process isn't interrupted (see Finding
+40).
+
+### Finding 40: the correct fix was already sitting in the sibling project's own proven answer file -
+a live, in-OS `pnputil /add-driver` step, not a new offline mechanism
+
+Re-reading `../windows-server-vm-automation/packer/answer_files/autounattend.xml.pkrtpl`'s own
+`FirstLogonCommands` (rather than inventing a new offline registry recipe for full NDIS class
+configuration) showed the sibling project already hit this *exact* problem and already solved it, with
+its own comment explaining why: `Microsoft-Windows-PnpCustomizationsNonWinPE` (windowsPE pass) "only
+stages drivers WinPE itself needs immediately... does not carry non-boot-critical drivers into the
+final installed OS's driver store" - confirmed live there too, by the NIC showing `Get-PnpDevice
+-Status Error` with no driver post-install. Their fix: a `FirstLogonCommands` step (order 1, running
+before anything network-dependent) that runs `pnputil /add-driver <path>\*.inf /subdirs /install`
+**while the OS is live and booted** - the same live PnP class-installation pass a device would get from
+interactively browsing to a driver in Device Manager, just scripted. This works precisely because it
+runs online, after the OS is fully up, which is exactly the piece our offline-only `DriverDatabase`
+approach cannot replicate for a network-class device (Finding 39).
+
+**Since this project already copies the NetKVM driver files onto `C:\Drivers\NetKVM\2k25\amd64` during
+the offline-apply stage** (done since the very first Session 9 attempt), no CD-ROM/floppy is even
+needed the way the sibling project requires (Setup.exe there has no offline-filesystem-access stage to
+piggyback the copy onto) - the fix here is simply: add a `pnputil /add-driver
+C:\Drivers\NetKVM\2k25\amd64\netkvm.inf /install` `FirstLogonCommands` step, ordered *first*, before
+the existing network-category-wait and WinRM-enable steps (both of which need a real NIC to do
+anything meaningful). **Not yet implemented or tested this session** - identified via primary-source
+re-reading, the same discipline as everything else in this project, but the actual `unattend.xml`
+change and a clean end-to-end re-test are next-session work.
+
+### Process note: interrupted `FirstLogonCommands` don't get a second attempt, and QMP keyboard-only
+interaction has real, worth-recording friction
+
+Two secondary findings fell out of this session's live-debugging detour, both worth remembering:
+
+- **`FirstLogonCommands`' `SynchronousCommand` sequence appears to run exactly once, ever, per
+  install** - if interrupted partway (this session's first fresh-disk boot got hit by an unprompted
+  "Updates are underway, please keep your computer on" shutdown-time update install, most likely
+  triggered by this being the first session to give a target real outbound internet access via QEMU
+  usermode networking), only the commands that had already completed leave evidence (one marker file
+  out of three), and **subsequent boots do not resume or retry the remaining commands** - confirmed by
+  rebooting the same disk twice more and seeing zero new log files appear either time, even after
+  waiting several minutes fully settled with no further interruption. Any future test that both (a)
+  gives the target real internet access and (b) depends on `FirstLogonCommands` completing should
+  expect this risk and avoid touching guest power state at all until all expected marker files are
+  confirmed present.
+- **QMP keyboard-only interaction (no `usb-tablet`/mouse this session) is real but fiddly**: the
+  Windows 11-style Start menu's search box did not reliably receive typed input after `meta_l` opened
+  it (repeated attempts, including longer delays, left the search box empty while a pinned-tile grid
+  silently ate the keystrokes instead) - `Win+R` (`meta_l-r`) was far more reliable, since the Run
+  dialog's single edit control reliably has real keyboard focus the instant it opens. Also confirmed
+  the `qmp-type.py` character-support gap is wider than previously documented: `[`, `]`, and `&` all
+  raise `ValueError: no mapping for character`, not just `%`/`|`/`&` as previously noted - avoid
+  PowerShell array indexing (`[0]`), and any literal string containing `&` (e.g. a raw PCI
+  `InstanceId`) when driving a guest this way; prefer direct property access on a filtered
+  single-object result instead, and reach for `Get-CimInstance ... -Filter "..."` (quotes and `=` are
+  both supported) over anything needing brackets.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 10)
+
+**Where things stand:** Phase 2's success criterion (real, unattended WinRM connectivity for Server
+2025) is **still not met**, but the remaining gap is now fully root-caused and the fix is identified,
+not speculative:
+
+1. Bootability, offline specialize/unattend (`ComputerName`, OOBE-skip, `AutoLogon`), and the
+   boot-critical `viostor` injection are all still solid - unaffected by anything this session found.
+2. **`netkvm`'s `DriverDatabase` registration works exactly as designed** (device now correctly shows
+   `Service=netkvm`, confirmed on a disk registered before first boot) - the generalization the user
+   asked for is real and correctly implemented in `tools/gen-viostor-ddb-reg.py --driver netkvm`.
+3. **But `DriverDatabase` registration alone is not suffient for a network-class device** -
+   `CM_PROB_NEED_CLASS_CONFIG` is the confirmed, specific reason (Finding 39). This is a genuine
+   architectural gap between boot-critical and non-boot-critical driver classes, not a bug in this
+   session's implementation.
+4. **The fix is identified and low-risk**: add a `pnputil /add-driver
+   C:\Drivers\NetKVM\2k25\amd64\netkvm.inf /install` `FirstLogonCommands` step (ordered first) to
+   `unattend.xml`, mirroring the sibling project's own already-proven fallback mechanism exactly
+   (Finding 40) - not a new invention.
+5. **Separately, `FirstLogonCommands` itself needs to be given an uninterrupted run** to actually
+   verify any of this end-to-end - this session's own fresh-disk test got its `FirstLogonCommands`
+   sequence cut short by an unprompted Windows-Update-driven shutdown (Finding 40's process note),
+   which is *why* Finding 39's diagnosis had to be done via live manual PowerShell rather than the
+   original planned automated test.
+
+**Immediate next steps, in order:**
+1. Add the `pnputil /add-driver` `FirstLogonCommands` step (ordered before the network-wait/WinRM
+   steps) to the `unattend.xml` template.
+2. Re-run the pipeline on a fresh disk (or reuse `win2025-session9b.qcow2`, which already has
+   `netkvm` correctly `DriverDatabase`-registered and matched) with the updated `unattend.xml`, and
+   this time let `FirstLogonCommands` run completely undisturbed - don't touch guest power state until
+   all three expected marker files are confirmed present via a clean offline read.
+3. Consider whether to suppress or delay Windows Update's automatic shutdown-time update install for
+   test builds specifically (this project's VMs are disposable and short-lived; mid-`FirstLogonCommands`
+   update installs are pure friction here) - not investigated yet, a real option worth a quick look
+   before the next test, since it caused this session's confound.
+4. Once real WinRM connectivity is confirmed for Server 2025, repeat for Server 2022 and Windows 11
+   per the standing phase-gating rule.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `win2025-session9b.qcow2` - fresh disk, both `viostor` and `netkvm` `DriverDatabase`-registered
+  before first boot, `netkvm` confirmed PCI-matched (`Service=netkvm`) but not yet class-configured
+  (`CM_PROB_NEED_CLASS_CONFIG`). Good disk to reuse for the `pnputil` fix above - avoids another
+  `wimapply` cycle.
+- `win2025-session9.qcow2` - Session 9's original disk, now also has `netkvm.sys`/`DriverDatabase`
+  applied per Finding 38's (failed, stale-instance) attempt - not useful as a reference for the
+  `netkvm` fix given that history; still valid for anything only needing `viostor`.
+- `tools/gen-viostor-ddb-reg.py` - now generalized (`--driver viostor|netkvm`), viostor's default
+  output confirmed byte-identical to before (no regression).
+- No VM left running, no `/dev/nbd0` attached, no stale mounts at the end of this session (confirmed
+  via `pgrep`/`qemu-nbd`).
+
+**New facts worth remembering, on top of prior sessions' lists:**
+- **`DriverDatabase`-only offline registration is confirmed sufficient for boot-critical storage
+  drivers and confirmed insufficient for network-class drivers** (`CM_PROB_NEED_CLASS_CONFIG`) - use
+  a live `pnputil /add-driver` `FirstLogonCommands` step for network (and presumably any other
+  non-boot-critical) drivers instead, per the sibling project's own already-proven pattern.
+- **`FirstLogonCommands` does not resume after an interruption** - treat any unplanned shutdown/reboot
+  during first boot as invalidating that boot's `FirstLogonCommands` results entirely, not just
+  delaying them.
+- **Real internet access on a target VM risks an unprompted Windows-Update-driven shutdown-time update
+  install** ("Updates are underway, please keep your computer on") that can interrupt
+  `FirstLogonCommands` - worth suppressing for test builds, not yet done.
+- **`qmp-type.py` cannot type `[`, `]`, or `&`** (in addition to the previously-documented `%`/`|`) -
+  avoid PowerShell array indexing and literal `&`-containing strings when driving a guest this way.
+- **`Win+R` (`meta_l-r`) is a more reliable way to get a live text-input prompt via QMP keyboard-only
+  interaction than the Start menu search box**, which did not reliably receive typed focus this
+  session despite several retry strategies.

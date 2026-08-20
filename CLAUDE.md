@@ -397,7 +397,7 @@ A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM
 
 **Status:** in progress, **and the core blocker is now solved and confirmed three times,
 independently** — read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session
-9)" section before doing anything else here. Sub-milestone 1 (make the disk bootable) remains
+10)" section before doing anything else here. Sub-milestone 1 (make the disk bootable) remains
 **solved, three times over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD. The Setup.exe pivot (Finding 15, Sessions 3-5) was **abandoned in
@@ -437,17 +437,28 @@ session can carry a disk from "just made bootable" straight through into the tar
 boot, since WinPE's `wpeutil shutdown` causes OVMF to retry boot enumeration within the same process
 rather than needing a second VM launch.
 
-**What's left for Phase 2**: the one remaining gap is that `Microsoft-Windows-PnpCustomizationsNonWinPE`'s
-`DriverPaths` component — used to inject the NetKVM network driver via the unattend.xml itself — never
-actually fires in this pipeline (Finding 36, confirmed via `setupact.log`: the component is parsed but
-no PnP callback ever processes it, the same class of problem as Setup.exe's abandoned
-`EarlyF6DriverInstall` gate). Result: no NIC driver, no IP, no real WinRM connectivity yet, even though
-WinRM's own `FirstLogonCommands` setup shows no sign of having failed on its own terms. The fix is
-already identified and is now the clear next priority: generalize `tools/gen-viostor-ddb-reg.py`'s
-proven offline `hivex` `DriverDatabase` registration (Finding 29's mechanism) to NetKVM
-(`PCI\VEN_1AF4&DEV_1000`/`DEV_1041`, confirmed via its own `.inf`) instead of relying on any
-unattend.xml PnP component. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's
-long, but everything needed to resume without re-deriving it is there.
+Session 10 then generalized `tools/gen-viostor-ddb-reg.py`'s offline `hivex` `DriverDatabase`
+registration to NetKVM (`--driver netkvm`, using `PCI\VEN_1AF4&DEV_1000`/`DEV_1041` and per-driver
+values confirmed from `netkvm.inf` itself, not assumed from viostor) — and this **did** get the device
+correctly PCI-matched (`Service=netkvm`), but that alone turned out **not to be sufficient**: Windows'
+own Config Manager reports `CM_PROB_NEED_CLASS_CONFIG` for it (Finding 39) — `DriverDatabase`
+registration only replicates what a boot-critical storage driver needs; a network-class device needs
+the fuller NDIS class-installation Windows normally performs live, at the moment a running OS
+discovers the device, which an offline registry hack alone can't replicate. Re-reading the sibling
+project's own proven `autounattend.xml.pkrtpl` (Finding 40) showed it already solved this identical
+problem, for the identical reason, with a `FirstLogonCommands` step running `pnputil /add-driver`
+**while the OS is live and booted** — the correct fix here is to adopt that same pattern (this project
+already stages the driver files at `C:\Drivers\NetKVM\2k25\amd64` during the offline-apply stage, so no
+CD-ROM is even needed), not a new offline mechanism.
+
+**What's left for Phase 2**: add the `pnputil /add-driver C:\Drivers\NetKVM\2k25\amd64\netkvm.inf
+/install` `FirstLogonCommands` step (ordered first, before the network-wait/WinRM-enable steps) to
+`unattend.xml`, then re-run the pipeline letting `FirstLogonCommands` complete fully undisturbed (this
+session's own fresh-disk test got interrupted by an unprompted Windows-Update-driven shutdown before
+finishing — `FirstLogonCommands` does not resume after an interruption, so that test's negative result
+had to be diagnosed manually rather than trusted directly). See `PHASE2_ENGINEERING_LOG.md` for the
+complete, detailed record — it's long, but everything needed to resume without re-deriving it is
+there.
 
 ---
 
