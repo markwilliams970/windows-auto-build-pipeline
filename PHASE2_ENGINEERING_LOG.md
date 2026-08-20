@@ -2529,3 +2529,147 @@ project's own standards say to confirm, not assume.
   rather than falling through to the target. Prefer a plain `quit` + separate solo-boot launch once
   `bcdboot` has visibly succeeded, rather than relying on in-session chaining when `-no-shutdown` is in
   play.
+
+---
+
+## Session 12: repeated the entire Session 11 recipe for **Windows Server 2022** - reused the same
+## WinPE bootability medium unchanged, same `viostor`/`netkvm` `DriverDatabase` presets unchanged, only
+## swapped the OS-specific inputs (image index, `2k22` driver folder, `unattend.xml`). **Real,
+## authenticated WinRM connectivity confirmed. 2 of 3 target OSes now proven for Phase 2.**
+
+### Finding 42: Session 11's recipe generalizes to Windows Server 2022 with zero changes to any of the
+reusable tooling - only per-OS inputs (image index, driver subfolder, `ComputerName`) needed swapping,
+confirmed rather than assumed at every step
+
+Per the research-first discipline (don't assume the recipe carries over unchanged, confirm each input),
+verified before building anything:
+- `install.wim` index 2 = `"Windows Server 2022 SERVERSTANDARD"` (`Edition ID: ServerStandardEval`) -
+  same index number as Server 2025's, but confirmed independently via direct `wimlib-imagex info`
+  extraction, not assumed from the pattern.
+- `virtio-win-0.1.285.iso` has a distinct `2k22` subfolder for both `viostor` and `NetKVM`, confirmed
+  via `7z l` before extracting anything.
+- Both drivers' PCI hardware IDs (`VEN_1AF4&DEV_1001`/`DEV_1042` for `viostor`,
+  `DEV_1000`/`DEV_1041` for `netkvm`) and `netkvm.inf`'s `Start`/`Group` values (`SERVICE_DEMAND_START`,
+  `NDIS`) are **byte-identical** to the 2025 build's - same QEMU virtio hardware and same driver-family
+  service properties regardless of guest OS - confirming `tools/gen-viostor-ddb-reg.py`'s existing
+  `viostor`/`netkvm` presets needed **zero code changes**, only different `.sys` binaries from the
+  `2k22` folder (kernel-mode drivers are not binary-compatible across major NT versions even when the
+  declared hardware IDs and service metadata match, so the actual `.sys`/`.inf` files still had to come
+  from Server 2022's own virtio-win folder, not reused from `2k25`).
+- `boot.wim`'s own index numbering (`1 = Microsoft Windows PE (amd64)`, `2 = Microsoft Windows Setup
+  (amd64)`) matches Server 2025's exactly - checked for documentation completeness, though moot in
+  practice since the existing WinPE medium was reused rather than rebuilt (see below).
+
+Built `image-apply/unattend-server2022.xml` as a straight adaptation of the proven
+`unattend-server2025.xml` (`ComputerName`, and the `pnputil` driver path updated to
+`C:\Drivers\NetKVM\2k22\amd64\netkvm.inf` - everything else, including the `FirstLogonCommands`
+structure and ordering, unchanged).
+
+**One real question this session actually tested rather than assumed**: does the *already-built* WinPE
+medium (`winpe-boot-index1-work.qcow2`, itself `wimapply`'d from **Server 2025's** `boot.wim`) work
+correctly for making a **Server 2022** target bootable, or does WinPE's own OS version need to match the
+target? Reused it unchanged rather than rebuilding a Server-2022-specific WinPE medium, on the theory
+that `bcdboot` copies the *target's own* boot binaries (`bootmgfw.efi`, etc.) rather than anything from
+WinPE itself, so WinPE's own OS version shouldn't matter. **Confirmed correct, empirically**: WinPE's
+`startnet.cmd` ran cleanly against the Server 2022 disk (`diskpart` correctly selected `disk 1`,
+assigned both letters; `bcdboot` reported `"Boot files successfully created."`), and the resulting BCD
+booted the Server 2022 target cleanly. **A single WinPE medium is reusable across target OS versions for
+this project's purposes** - worth remembering before ever considering building a per-OS WinPE medium for
+Windows 11 too.
+
+**A second, smaller correction**: launched the WinPE+target VM this session *without* `-no-shutdown`
+(the opposite of Session 11's WinPE-pass launch), specifically to see whether Finding 35's original
+"OVMF retries boot enumeration in-process" chaining reproduces under plain default behavior. It did
+not - the qemu process exited entirely on its own once WinPE's `wpeutil shutdown` completed (confirmed
+via `pgrep` immediately after, and via `query-status`/socket-connect failure), the same as what happened
+with `-no-shutdown` in Session 11, just via process exit instead of a frozen `shutdown` state. **Finding
+35's auto-chaining now looks like it was a one-off observation from Session 9, not a reproducible
+behavior under either `-no-shutdown` or default settings** - the reliable pattern going forward is:
+launch WinPE+target, confirm `bcdboot` succeeded via the visible `startnet.cmd` trace or (as this
+session did, after the process had already exited) via offline inspection of the ESP/`session*-bcdboot-log.txt`,
+then always do a fresh, separate solo-boot launch for the target - never assume in-session chaining will
+happen.
+
+Solo-booted the Server 2022 target with real usermode networking, waited for the desktop to settle,
+and - per Finding 40/41's lesson - did not touch guest power state until the tray's network icon
+had visibly changed (this session's own additional confirmation signal: Windows' "Do you want to allow
+your PC to be discoverable" network-flyout prompt appeared unprompted once the NIC actually got
+connectivity - a second, even more obvious readiness signal than the tray icon alone, worth watching for
+on Server 2022/Windows 11's Windows-10-era shell specifically). Then, from the host:
+
+```
+STATUS: 0
+STDOUT: WIN2022-S12
+```
+
+Followed by `Get-NetAdapter` confirming `Red Hat VirtIO Ethernet Adapter`, `Status: Up`, `10 Gbps` - the
+same complete confirmation as Session 11's Server 2025 result, not just a lucky TCP connect. After a
+graceful `system_powerdown` (confirmed via `query-status` before `quit`), offline inspection confirmed
+all four `FirstLogonCommands` marker/log files present, with `session12-pnputil-log.txt` showing the
+same successful install pattern as Session 11's: `"Driver package installed on device:
+PCI\VEN_1AF4&DEV_1000&SUBSYS_00011AF4&REV_00\3&11583659&0&18"`.
+
+**Phase 2's success criterion is now met for both Windows Server 2025 and Windows Server 2022.**
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 12)
+
+**Where things stand: 2 of 3 target OSes now independently confirmed for Phase 2.** The full sequence
+(partition → `wimapply` → offline `viostor` boot-driver injection → WinPE `bcdboot` → offline
+`unattend.xml` specialize/oobeSystem → live `pnputil`-installed `netkvm` → real WinRM) has now been
+proven twice, for two different Windows Server releases, with the *tooling itself* requiring zero code
+changes between them - only OS-specific inputs (image index, driver subfolder, `unattend.xml` content)
+differed. This is a strong signal the recipe is genuinely general, not accidentally Server-2025-specific,
+though **the phase-gating rule still requires Windows 11 independently before Phase 3 can start** - two
+successes are not three.
+
+**Immediate next steps, in order:**
+1. **Repeat this same sequence for Windows 11 Enterprise Evaluation.** Unlike Server 2022 (a close
+   sibling of Server 2025 in most respects), Windows 11 is where this project's Setup.exe pivot was
+   originally attempted and abandoned (Sessions 3-6) - there is no prior "it just worked" data point to
+   lean on here, so treat every input (image index/edition name, virtio driver subfolder - likely `w11`,
+   confirmed present in `virtio-win-0.1.285.iso`'s directory listing per Session 9's own notes, but
+   verify before use per this project's own standard - `boot.wim` index numbering, partition layout)
+   as needing the same from-scratch verification Session 12 gave Server 2022, not an assumption.
+2. Once Windows 11 is confirmed, Phase 2 is fully done and Phase 3 (role provisioning, reusing
+   `services.yaml`/`scripts/` unchanged) can begin.
+3. Formalizing `image-apply/`'s real scripts (`partition-disk.sh`, `apply-image.sh`,
+   `make-bootable.sh`, `apply-unattend.sh`) is an increasingly strong candidate to do *before* the
+   Windows 11 attempt rather than after - the recipe has now been hand-run identically three times
+   (Server 2025 twice effectively, Server 2022 once) with the only real per-OS variation being a handful
+   of input values, which is exactly the shape of thing worth parameterizing into a real script rather
+   than continuing to copy/paste session-specific Bash. A real decision point to raise, not a default
+   action, per `CLAUDE.md`'s Claude Instructions.
+
+**Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
+- `win2022-session12.qcow2` - **the reference "it works end-to-end" disk for Server 2022.** Bootable,
+  specialized (`ComputerName=WIN2022-S12`), `netkvm` live-installed via `pnputil`, real WinRM
+  connectivity confirmed.
+- `image-apply/unattend-server2022.xml` - the working Server 2022 answer file, alongside
+  `unattend-server2025.xml` - both real repo files now, establishing the per-OS-variant naming pattern
+  to follow for Windows 11 (`unattend-windows11.xml`).
+- `win2025-session11.qcow2` - unchanged, still the Server 2025 reference.
+- `winpe-boot-index1-work.qcow2` - unchanged, and now confirmed reusable across target OS versions
+  (Finding 42) - no per-OS WinPE medium needed.
+- `tools/gen-viostor-ddb-reg.py` - unchanged from Session 10, its existing presets confirmed to need no
+  modification for Server 2022.
+- No VM left running, no `/dev/nbd0` attached, no stale mounts at the end of this session (confirmed via
+  `pgrep`/`qemu-nbd`/`mount`).
+
+**New facts worth remembering, on top of prior sessions' lists:**
+- **A single WinPE bootability medium works across different target OS versions** - `bcdboot` copies the
+  *target's own* boot binaries, so WinPE's own build version doesn't need to match the target's. Don't
+  build a per-OS WinPE medium without first confirming the existing one actually fails for that OS.
+- **Finding 35's "OVMF retries boot enumeration in-process" chaining has not reproduced since Session
+  9** - under either `-no-shutdown` (Session 11: freezes) or default settings (Session 12: process
+  exits). Treat it as a one-off, not a reliable mechanism - always plan for a separate solo-boot launch.
+- **Windows' network-discovery flyout ("Do you want to allow your PC to be discoverable...") is a
+  second, even more obvious non-destructive readiness signal than the tray icon alone** for confirming a
+  NIC has actually come up, at least on the Windows-10-era shell (Server 2022; likely Windows 11 too,
+  worth checking).
+- **The core driver-injection/specialize/WinRM recipe requires zero tooling changes between Server 2025
+  and Server 2022** - only OS-specific input values differ (image index happened to match, but was
+  confirmed independently rather than assumed; driver subfolder name; `unattend.xml` content). Good
+  evidence the recipe will generalize to Windows 11 too, but per this project's own standard, evidence
+  is not the same as confirmation - still verify Windows 11's own inputs from scratch.

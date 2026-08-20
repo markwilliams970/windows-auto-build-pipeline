@@ -32,7 +32,7 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) has now met its success criterion for **Windows Server 2025** — offline image application → bootable → specialized → real, unattended WinRM connectivity, confirmed end-to-end (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41 for the full trail). Server 2022 and Windows 11 Enterprise Evaluation still need the same result independently before Phase 2 counts as done, per the explicit phase-gating rule. **Phases 3-5** are not yet started.
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) has now met its success criterion for **Windows Server 2025 and Windows Server 2022** — offline image application → bootable → specialized → real, unattended WinRM connectivity, confirmed end-to-end for both, with the tooling itself requiring zero changes between them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41 and Session 12/Finding 42 for the full trail). Windows 11 Enterprise Evaluation still needs the same result independently before Phase 2 counts as done, per the explicit phase-gating rule. **Phases 3-5** are not yet started.
 
 ---
 
@@ -395,13 +395,13 @@ Success criteria:
 
 A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM-image-index work already exists in the sibling project and can be reused directly) installs and becomes WinRM-reachable without manual interaction, via offline image application rather than a booted interactive installer. **Then repeat this same success criterion for Windows Server 2022 and Windows 11 Enterprise Evaluation before considering Phase 2 done.** Server 2025 is the first proving ground (per the existing "Starting point" direction below), not the only target that needs to actually work — see the explicit process note under Phase 3 below.
 
-**Status:** **Phase 2's success criterion is met for Windows Server 2025** — offline image
-application → bootable → specialized → real, unattended, externally-reachable WinRM connectivity, no
-manual interaction, no Setup.exe involved anywhere. Read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND
-NEXT STEPS ON RESUMPTION (Session 11)" section before doing anything else here — **Server 2022 and
-Windows 11 Enterprise Evaluation have not been attempted at all yet**, and per the explicit
-phase-gating rule below, Phase 3 does not start until both independently repeat this same result.
-Sub-milestone 1 (make the disk bootable) remains **solved, three times over**:
+**Status:** **Phase 2's success criterion is met for Windows Server 2025 and Windows Server 2022 — 2
+of 3 target OSes.** Offline image application → bootable → specialized → real, unattended,
+externally-reachable WinRM connectivity, no manual interaction, no Setup.exe involved anywhere. Read
+`PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS ON RESUMPTION (Session 12)" section before doing
+anything else here — **Windows 11 Enterprise Evaluation has not been attempted at all yet**, and per
+the explicit phase-gating rule below, Phase 3 does not start until it independently repeats this same
+result too. Sub-milestone 1 (make the disk bootable) remains **solved, three times over**:
 BCD-SYS (first approach) and real `bcdboot` run from a self-built WinPE session both independently
 produce a correctly-booting BCD. The Setup.exe pivot (Finding 15, Sessions 3-5) was **abandoned in
 Session 6** after five independent attempts to get past `EarlyF6DriverInstall`'s "Install driver to
@@ -466,13 +466,25 @@ file, and `Get-NetAdapter` showed a fully functional `Red Hat VirtIO Ethernet Ad
 including the `pnputil` log's own confirmation (`"Driver package installed on device:
 PCI\VEN_1AF4&DEV_1000..."`).
 
-**What's left for Phase 2**: repeat this entire now-proven sequence for **Windows Server 2022** and
-then **Windows 11 Enterprise Evaluation** — nothing about either has been attempted yet. Expect
-OS-specific adjustments (different `install.wim` index/edition name, possibly a different virtio driver
-subfolder than `2k25`, re-verify `boot.wim` index numbering for WinPE bootability per ISO) but confirm
-each rather than assuming the recipe carries over unchanged, per this project's own standing research
-discipline. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's long, but
-everything needed to resume without re-deriving it is there.
+Session 12 then repeated the entire sequence for **Windows Server 2022** — and it generalized with
+**zero changes to any of the reusable tooling** (`tools/gen-viostor-ddb-reg.py`'s existing presets,
+the WinPE bootability medium itself, the `FirstLogonCommands` structure), only OS-specific input values
+differed (`install.wim` index 2 again, confirmed independently rather than assumed; the virtio driver
+subfolder `2k22` instead of `2k25`; `ComputerName` and the `pnputil` driver path in a new
+`image-apply/unattend-server2022.xml`). Confirmed the same way: real WinRM `hostname` returned
+`WIN2022-S12`, and `Get-NetAdapter` showed a working `Red Hat VirtIO Ethernet Adapter`. One useful
+side-confirmation (Finding 42): the **same WinPE bootability medium works unmodified across target OS
+versions** — `bcdboot` copies the target's own boot binaries, not WinPE's, so no per-OS WinPE medium is
+needed.
+
+**What's left for Phase 2**: repeat this same now-twice-proven sequence for **Windows 11 Enterprise
+Evaluation** — nothing about it has been attempted yet, and unlike Server 2022 (a close sibling of
+Server 2025), Windows 11 is where this project's Setup.exe pivot was originally attempted and abandoned
+(Sessions 3-6), so there's no prior "it just worked" data point to lean on. Confirm every input
+(`install.wim` index/edition name, virtio driver subfolder — likely `w11`, per the ISO's own directory
+listing, but verify before use) from scratch rather than assuming the Server 2022 result implies
+Windows 11 will just work too. See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record — it's
+long, but everything needed to resume without re-deriving it is there.
 
 ---
 
