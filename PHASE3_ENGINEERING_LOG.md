@@ -314,3 +314,259 @@ from-scratch disks. `image-apply/output/virtio-drivers/` and `image-apply/output
 extracted driver files and `install.wim`s respectively, reused across runs to avoid re-extracting on
 every invocation. `packer/output/server2022/` and `packer/output/server2025/` hold the final
 provisioned VM artifacts from each confirmed run.
+
+---
+
+## Session 3: closing the Windows 11 gap flagged above (item 1) - found a real,
+## reproducible defect distinct from anything Server 2022/2025 hit, and a genuine
+## architectural fork in the road for fixing it properly
+
+**Where this picked up:** Session 2 closed with Windows 11 explicitly untested through the new
+`image-apply/*.sh` scripts (item 1 in its own next-steps list). This session ran it - and found
+real problems Server 2022/2025 never hit, deep enough that "run the same scripts, same as Server"
+turned out not to be the right frame at all.
+
+### Finding 7: Windows 11's OOBE shows an interactive "Choose your keyboard layout" screen despite
+`unattend-windows11.xml` already containing every setting Microsoft's own current documentation
+recommends for suppressing it
+
+**Symptom:** A completely fresh, hands-off first boot (zero keyboard/mouse interaction, watched only
+via `tools/qmp-screenshot.py`) reliably stops at a real, interactive "Choose your keyboard layout"
+OOBE screen with `US` pre-highlighted, requiring a keypress to advance. Reproduced independently on
+two separate from-scratch disks. Never observed on Server 2022 or Server 2025 with the structurally
+equivalent `unattend-server*.xml` files.
+
+**Diagnosis, primary-source-verified rather than assumed (per this project's own research-first
+discipline):**
+- Microsoft's current schema reference for the `OOBE` component
+  ([Microsoft Learn: OOBE](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-shell-setup-oobe))
+  **no longer lists `SkipMachineOOBE` or `SkipUserOOBE` at all** - the current child-element table is
+  `HideEULAPage`, `HideLocalAccountScreen` (Server-only), `HideOEMRegistrationScreen`,
+  `HideOnlineAccountScreens`, `HideWirelessSetupInOOBE`, `NetworkLocation`, `OEMAppID`,
+  `ProtectYourPC`, `UnattendEnableRetailDemo`, `VMModeOptimizations`. `unattend-windows11.xml` sets
+  `SkipUserOOBE`/`SkipMachineOOBE` anyway (inherited from the sibling project's original answer
+  file) - settings Microsoft's own reference has already dropped.
+- Microsoft's ["Automate OOBE"](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/automate-oobe)
+  page states outright, as a boxed warning: **"Don't use the `SkipMachineOOBE` setting to automate
+  OOBE. Instead, use the above unattend settings."** Its full recommended-settings table (all
+  `oobeSystem` pass): `Microsoft-Windows-International-Core`'s `InputLocale`/`SystemLocale`/
+  `UILanguage`/`UserLocale`; `Microsoft-Windows-Shell-Setup/UserAccounts`; `Microsoft-Windows-Shell-
+  Setup/OOBE`'s `HideEULAPage`/`HideOEMRegistrationScreen`/`HideOnlineAccountScreens`/
+  `HideWirelessSetupInOOBE`/`HideLocalAccountScreen`; and `ProtectYourPC`. **Checked
+  `unattend-windows11.xml` directly against this table: every applicable setting is already
+  present** (`HideLocalAccountScreen` is the one omission, but Microsoft's own OOBE-component page
+  says it's Server-only, so its absence is correct, not a gap). This rules out "missing setting" as
+  the explanation.
+- Microsoft's [`Oobe.xml` documentation](https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/oobexml-in-windows-11)
+  (a separate, OEM-manufacturing-oriented file from `unattend.xml`) states directly: *"The default
+  values you set in Oobe.xml will be the default values the user sees on the Language, Region, and
+  Keyboard layout selection screens during OOBE. **The user can select another value from the list
+  if desired, and their selection will override the Oobe.xml settings.**"* This is Microsoft
+  confirming, in its own words, that this specific screen category is designed to always show and
+  require confirmation - not something any config file skips outright. Caveat, stated plainly: this
+  doc describes `Oobe.xml` specifically (OEM-manufacturing-oriented, normally paired with a real
+  Setup.exe/Audit-Mode flow - see Finding 8 below), not a direct statement about this project's
+  offline-drop-without-Setup.exe delivery mechanism, so treat this as strong supporting evidence for
+  *why* the screen behaves this way, not iron-clad proof our specific pipeline is bound by the exact
+  same rule.
+- Community reports checked for a *non-determinism* angle specifically (same config, sometimes
+  works/sometimes doesn't) rather than just "these settings are unreliable" - found real, relevant,
+  but not a precise match: an [NTLite forum thread](https://ntlite.com/community/threads/windows-11-24h2-bypasses-the-unattend-settings-for-windows-pe.5166/)
+  documents a **hard, consistently-reproducing** Windows 11 24H2 regression where `windowsPE`-pass
+  unattend settings are ignored outright by WinPE Setup, fixed via a registry `CmdLine` tweak that
+  forces the legacy `setup.exe`. Real evidence Windows 11's unattend/OOBE behavior has genuinely
+  shifted across recent builds, but describes a Setup.exe/WinPE-driven mechanism this project's
+  pipeline never uses at all (no `windowsPE` pass, no Setup.exe anywhere, by design) - not a precise
+  match, just corroborating context that this general area is known to be in flux upstream.
+
+**Fix status:** confirmed workable (single scripted `send-key ret` via QMP once the screen is
+reached advances OOBE normally, verified live against a real stuck instance), but not yet formalized
+into `image-apply/make-bootable.sh` or a new script - superseded by Finding 8 below, which points at
+a more correct fix than papering over this one screen with a keypress.
+
+### Finding 8: a second, more serious, independently-confirmed defect - Windows 11 first boots can
+BSOD with a kernel-level NTFS fault, and bisection isolates the trigger to `apply-unattend.sh`
+specifically, not the pipeline's other three scripts
+
+**Symptom:** Two separate fresh Windows 11 disks, each booted fully hands-off (zero interaction,
+confirmed via screenshot-only monitoring) with **no interaction by the operator at any point before
+the crash**, blue-screened during the normal "This might take a few minutes" servicing screen -
+before ever reaching the keyboard-layout screen from Finding 7. Different stop codes each time
+(`KMODE_EXCEPTION_NOT_HANDLED (0x1E)` on one run; `PAGE_FAULT_IN_NONPAGED_AREA (0x50)`, explicitly
+naming `Ntfs.sys` as the failing module, on an independent from-scratch disk on a later run) -
+differing crash signatures on nominally identical builds is the standard fingerprint of genuine
+on-disk corruption being hit at different memory offsets, not a deterministic single bug repeating
+identically. Never observed on Server 2022 or Server 2025 despite both going through the identical
+`apply-image.sh`/`make-bootable.sh`/`apply-unattend.sh` `ntfs-3g` mount/write/unmount sequence and
+completing full multi-reboot role provisioning successfully, multiple times, this same session
+(Session 2's own confirmed results).
+
+**Bisection methodology and result** (each leg a genuinely fresh, from-scratch disk, watched
+hands-off via screenshot-only monitoring, no keyboard/mouse interaction before observing the
+outcome):
+1. `partition-disk.sh` + `apply-image.sh` + full `make-bootable.sh` (viostor **and** netkvm
+   `DriverDatabase` hivex injection + driver-file copies included) + `apply-unattend.sh` → **crashes
+   reliably** (both stop codes above, on two independent disks).
+2. Same as (1) but **skip `apply-unattend.sh` entirely** → **no crash**, reaches a real, further-along
+   OOBE screen ("Hi there / What's your home country") cleanly. Confirmed twice independently on two
+   separate from-scratch disks (`windows11-bisect2.qcow2`, `windows11-bisect3.qcow2`).
+2a. Control test confirming the bisection methodology itself: `partition-disk.sh` + `apply-image.sh`
+    only (skip make-bootable.sh's driver injection too) → **`INACCESSIBLE_BOOT_DEVICE (0x7B)`**, the
+    expected, well-understood failure from a missing boot-critical storage driver (`PHASE2_ENGINEERING_LOG.md`
+    Finding 29's own territory) - confirms the bisection setup correctly produces the *expected*
+    failure when a genuinely-required step is skipped, rather than silently masking problems.
+3. **Decisive.** Does the crash come from `apply-unattend.sh`'s own `ntfs-3g` write operation, or from
+   Windows' specialize pass doing real processing work for the first time (only possible once a
+   parseable `unattend.xml` exists) surfacing pre-existing latent corruption from an *earlier* step?
+   Test: wrote an intentionally-invalid, non-XML garbage string to `Windows\Panther\unattend.xml`
+   (exercises the identical `ntfs-3g` write path - same mount, same directory, same file - but Windows
+   cannot parse it as a real answer file) on a fresh disk (`windows11-bisect4.qcow2`, through
+   `partition-disk.sh`/`apply-image.sh`/`make-bootable.sh` first, exactly like every other leg), then
+   booted hands-off. **Result: no crash.** Windows shows a completely normal, graceful dialog -
+   `"Windows could not parse or process unattend answer file [C:\Windows\Panther\unattend.xml]. The
+   answer file is invalid."` - handled cleanly, no BSOD, no corruption symptom of any kind. This
+   conclusively rules out the `ntfs-3g` write mechanism itself as the cause (a garbage file exercising
+   the identical write path is harmless) and confirms the trigger is specifically **Windows actually
+   parsing and processing a valid, well-formed `unattend.xml`** - i.e., real specialize-pass work
+   surfacing something, not the offline file-drop operation that delivers it. This directly supports
+   Finding 9's Audit-Mode/Sysprep theory below: the specialize pass doing real work is exactly the
+   scenario Sysprep's live `/generalize` cycle is meant to have already validated before a real
+   customer-facing first boot ever attempts it, which this pipeline currently skips entirely.
+
+**Methodological correction made mid-session, worth its own record:** an early hard QMP `quit` (used
+to pause and offline-inspect a disk that had just reached a real desktop/OOBE screen with zero prior
+interaction) left that specific disk's NTFS volume in a genuinely unclean state - not a pipeline bug,
+just the normal consequence of killing a still-running guest OS mid-session. This produced two
+misleading symptoms initially treated as more evidence of the same corruption: a later `ntfs-3g`
+read-write mount refusing outright, and a spurious WinRE "Choose an option" recovery screen on a
+subsequent boot of that same disk. Both were self-inflicted artifacts of the hard `quit`, not
+independent findings - `windows11-test3.qcow2`'s crash (a disk never touched or quit even once
+before it crashed on its own) is the one piece of evidence in this section not subject to that
+caveat, and is why Finding 8 above is written the way it is (leaning on `test3` and the from-scratch
+bisection legs, not on anything observed after a hard quit). Standing rule going forward, saved to
+memory: end any QEMU session whose disk will be reused with a graceful QMP `system_powerdown` +
+poll-until-exit, never a hard `quit`, unless the disk's state genuinely no longer matters.
+**Practical complication discovered while trying to follow this rule**: Windows sitting at an
+interactive OOBE screen (Finding 7's keyboard-layout screen, or the "Hi there" screen) does **not**
+appear to honor a QMP `system_powerdown` ACPI signal at all (confirmed: no process exit after 90+
+seconds) - graceful shutdown only works once a real desktop/shell session is reached. Plan
+bisection legs so the disk being preserved for reuse is stopped at a point where a real shutdown is
+actually possible, or accept rebuilding fresh rather than reusing a disk stuck at OOBE.
+
+### Finding 9: Microsoft's own real OEM manufacturing pipeline never goes straight from "offline
+image apply" to "customer-facing first boot" the way this project's pipeline currently does - it
+always inserts an Audit Mode + Sysprep cycle in between, and this project has never done that
+
+Read directly from Microsoft's primary documentation
+([Deployment and imaging overview](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/deployment-and-imaging-primer?view=windows-11)),
+not summarized secondhand, prompted by trying to understand why Findings 7-8 might be
+Windows-11-specific. The real, documented OEM manufacturing flow:
+
+1. **Apply the image via WinPE + DISM**, "skipping the Windows Setup process" - confirmed, in
+   Microsoft's own words, as the same mechanism this project already uses (not a workaround; this
+   *is* the documented OEM technique).
+2. **Offline-customize while still in WinPE** - add drivers/packages to the applied-but-unbooted
+   image. Matches this project's `make-bootable.sh` driver injection.
+3. **Boot into Audit Mode** - a built-in Windows feature (triggered via `Ctrl+Shift+F3` during OOBE,
+   or the `Microsoft-Windows-Deployment` unattend component) that logs straight into an
+   Administrator desktop **without ever going through OOBE at all**. This project has never used
+   this - it's the step that's missing.
+4. **Make further live customizations** inside that real, running Windows session (install apps,
+   drivers requiring a live OS, etc.).
+5. **Run Sysprep** (`/generalize /oobe /shutdown`) - re-generalizes the installation (SIDs,
+   hardware-confirmation state, etc.) so the *next* boot is a genuinely clean, real first-boot OOBE
+   that fully honors the answer file. Per Microsoft's own text: *"Sysprep only runs online"* (must be
+   run from within a live, booted session, not offline) *"and is included in all Windows images."*
+6. **Ship it** - the customer's actual first power-on is that clean, Sysprep-prepared OOBE boot.
+
+**This project's pipeline currently goes straight from step 2 to step 6**, treating the
+offline-applied-plus-driver-injected disk's first boot as if it were already a Sysprep-prepared,
+customer-ready first boot. Findings 7 and 8 are both plausibly explained by this gap: Windows' own
+internal first-boot/generalize state tracking (registry flags, and possibly NTFS's own metadata
+consistency expectations) may simply not be in the shape Windows expects without ever having gone
+through a real, live Sysprep pass - `install.wim`'s own baseline generalized state is designed for
+*one* specific flow (apply → boot → real OOBE, exactly once), and this project's additional
+offline `hivex`/`ntfs-3g` edits after that captured state happen entirely outside anything Sysprep
+or a real booted Windows session ever validated.
+
+**Access note, since it matters for whether this is even a viable path**: despite the "OEM" framing,
+none of this tooling is gated behind an OEM license or program membership, per Microsoft's own docs -
+the ADK (bundling DISM, the WinPE add-on, and Windows SIM) is a free public download, Audit Mode is a
+built-in feature of every Windows image, and Sysprep is explicitly "included in all Windows images."
+The "OEM" label describes the *intended audience*, not an access restriction.
+
+**This is a genuine architectural fork in the road, not a small patch - flagged here explicitly for
+reconsideration, not decided:**
+- **Option A**: keep the current architecture (offline-only, no boot until the final customer-facing
+  boot) for all three OSes, and try to work around Findings 7/8 within that constraint (e.g., a
+  scripted keypress for Finding 7, and further root-causing exactly what in `apply-unattend.sh`'s
+  write triggers Finding 8, possibly avoidable without a live boot at all).
+- **Option B**: add a real Audit-Mode-boot + Sysprep + shutdown cycle into `image-apply/` **for
+  Windows 11 specifically**, between `make-bootable.sh` and `apply-unattend.sh` (or replacing
+  `apply-unattend.sh`'s offline file-drop with a live, Sysprep-driven unattend application instead) -
+  this would make Windows 11's build recipe a **distinct implementation branch** from Server
+  2022/2025's, which have shown no evidence of needing this (zero BSODs, zero unskippable OOBE
+  screens, across every attempt this session and Session 2's). Server 2022/2025 stay on the current
+  fully-offline architecture; only Windows 11 gains an extra live-boot phase.
+- **Revised on reflection, same session**: an earlier draft of this finding left open whether Server
+  2022/2025 simply hadn't been stress-tested enough to surface the same problem. Counting the actual
+  trial history corrects that: Server 2022 succeeded independently **three** separate times (dev-harness
+  `ad-ds`, dev-harness `iis`/`sql-server`, production-pipeline `ad-ds` from a from-scratch disk) and
+  Server 2025 succeeded independently **three** separate times too (same pattern) - six full
+  boot-plus-reboot cycles across two OS versions, all through the identical `apply-unattend.sh`
+  mechanism, each with real `FirstLogonCommands` work (`pnputil` driver install, a polling loop,
+  WinRM listener creation), zero crashes. Against that, Windows 11 crashed on both of its clean
+  attempts. That is a real, lopsided track record, not an absence of trials - and it lines up with a
+  concrete, specific mechanism rather than needing to be explained by luck: Windows 11 has Fast
+  Startup enabled by default (Server SKUs don't - `PHASE2_ENGINEERING_LOG.md` Session 13), and
+  client-SKU first-boot servicing visibly does more work than Server's simpler first-boot path (the
+  "This might take a few minutes" screen itself, which Server never shows an equivalent of). The
+  working assumption going forward is that this is genuinely Windows-11-specific, not a
+  latent risk in the Server 2022/2025 recipe - Option B's scope (Windows 11 only) reflects that.
+  Worth re-opening only if Server 2022/2025 ever shows a similar crash under real production use, not
+  something to keep re-litigating without new evidence.
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 3)
+
+**Where things stand:** Server 2022 and Server 2025's production pipeline (Session 2) is unaffected
+by anything found this session and needs no changes - six independent successful boot-plus-reboot
+cycles across both OSes stand as real, repeated evidence, not a fluke. Windows 11 has a real,
+reproducible, now root-caused-to-the-trigger-level defect that blocks a genuinely clean, fully
+hands-off build: `apply-unattend.sh` (specifically, Windows actually parsing and processing the valid
+`unattend.xml` it delivers) triggers first-boot instability ranging from an unskippable interactive
+OOBE screen (Finding 7) to an outright kernel-level BSOD with differing NTFS-referencing stop codes
+across runs (Finding 8) - genuine on-disk corruption, not a cosmetic glitch. Finding 9 identifies the
+likely structural cause (this pipeline has never used Microsoft's own real Audit-Mode + Sysprep
+cycle, which every real OEM manufacturing flow inserts between offline image prep and a customer-
+facing first boot) and lays out two real architectural options, explicitly not decided yet.
+
+**Immediate next steps, in order, whenever directed:**
+1. **Decide between Option A and Option B in Finding 9** - this is a real scope/architecture decision
+   for the user, not something to default into. Option B (Audit Mode + Sysprep, Windows-11-only) is
+   the better-supported fix given Finding 8's bisection result (a valid, Windows-processed
+   `unattend.xml` is the actual trigger - exactly the scenario Sysprep's live cycle exists to make
+   safe), but it's real new work (an additional live-boot phase, `image-apply/` script changes
+   specific to one OS), not a small patch.
+2. If Option A is chosen instead: the immediate, narrower fix is scripting Finding 7's confirmed
+   single-keypress workaround into the pipeline (QMP `send-key ret` once the keyboard-layout screen is
+   detected), but Finding 8's BSOD risk would remain **unresolved** under Option A - a scripted
+   keypress does nothing for on-disk NTFS corruption. Don't treat Option A as complete without also
+   separately addressing Finding 8.
+3. Either way, root-causing *why* real specialize-pass processing specifically corrupts NTFS metadata
+   (not just *that* it does) would strengthen whichever fix is chosen - not yet investigated at the
+   mechanism level (e.g., whether it's `$LogFile`/USN journal inconsistency from `ntfs-3g`'s writes
+   not being byte-compatible with what a real Windows NTFS session would have produced, per the
+   working hypothesis in this session's earlier discussion, still unconfirmed offline since `ntfsfix`
+   isn't in this host's sudoers allowlist - see `tools/sudoers-windows-auto-build-pipeline` if that
+   diagnostic access is ever wanted).
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored): `server2022-test3.qcow2`
+and `server2025-test1.qcow2` (Session 2's confirmed-good disks, unchanged, unaffected by this
+session). `windows11-bisect4.qcow2` (this session's last disk - reached the graceful "invalid answer
+file" dialog, not a real confirmed-good Windows 11 build; safe to delete, not a reference artifact
+worth keeping). No VM left running, no `qemu-nbd` attached, environment fully clean at session end
+(confirmed via `pgrep`).
+
+---
