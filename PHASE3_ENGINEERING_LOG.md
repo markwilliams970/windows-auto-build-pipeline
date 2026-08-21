@@ -128,24 +128,189 @@ at the end of this session (confirmed via `pgrep`).
 
 ---
 
-## STATUS AND NEXT STEPS ON RESUMPTION (Session 1)
+## Session 2: formalized `image-apply/`'s real scripts and the production
+`packer/boot-and-provision.pkr.hcl` - both target OSes confirmed end-to-end through a completely
+fresh disk built entirely by the new scripts, not a hand-run or dev-harness reference disk
 
-**Where things stand: Phase 3 is complete.** Both target OSes, both mutually-exclusive profiles,
-all confirmed live with real in-guest verification (not just "WinRM connected"). Nothing in the
-reused role scripts needed changing; the one real defect found and fixed lives entirely in the new
-test harness, not in Phase 2's mechanism or the sibling project's scripts.
+**Where this picked up:** Session 1 closed Phase 3 using the dev/ test harness against Phase 2's
+own hand-built reference disks. That left a real gap this project's own conventions treat as
+load-bearing, not cosmetic: `image-apply/`'s actual scripts didn't exist, and Phase 2's proven
+recipe lived only as narrative findings in `PHASE2_ENGINEERING_LOG.md`. This session formalized it:
+`image-apply/lib/common.sh` (OS config table), `partition-disk.sh`, `apply-image.sh`,
+`make-bootable.sh`, `apply-unattend.sh`, `packer/boot-and-provision.pkr.hcl`, and a `build.sh`
+orchestrator - transcribed directly from the exact commands in Sessions 8-13 of the Phase 2 log, not
+reconstructed from memory.
 
-**Immediate next steps, whenever directed (neither is a continuation of Phase 3 itself, both are
-separate, not-yet-scoped pieces of work):**
-1. Formalize `image-apply/`'s real scripts (`partition-disk.sh`/`apply-image.sh`/`make-bootable.sh`/
-   `apply-unattend.sh`) — Phase 2's recipe is still hand-run steps recorded only in
-   `PHASE2_ENGINEERING_LOG.md`, confirmed four times across three OSes but never turned into
-   idempotent, reusable scripts.
-2. Build the production `packer/boot-and-provision.pkr.hcl` on top of those scripts once they exist
-   — **must set `cpu_model = "host"` on its qemu source block from the start**, or Server 2025 will
-   fail there the exact same way documented in Finding 1 above.
+Every command in the recipe was already proven; translating hand-run, interactively-observed steps
+into unattended scripts still surfaced five real, non-obvious bugs, each caught by actually running
+the scripts rather than by inspection:
 
-**Persistent state that survives** (under `image-apply/output/`, gitignored, unchanged by this
-session): `win2022-session12.qcow2` and `win2025-session11.qcow2` remain exactly as Phase 2 left
-them — every Phase 3 test booted a copy-on-write overlay (`dev/output/vm-*`, itself gitignored) and
-never wrote to the reference disks directly.
+### Finding 2: `sudo mkdir` isn't in the sudoers allowlist (and doesn't need to be)
+
+**Symptom:** `apply-image.sh`/`make-bootable.sh`/`apply-unattend.sh` failed non-interactively with
+`sudo: a password is required` at their first `sudo mkdir -p "$WIN_MNT"` call.
+
+**Root cause:** `tools/sudoers-windows-auto-build-pipeline` scopes NOPASSWD rules to the exact
+disk-prep binaries this project needs (`qemu-nbd`, `sgdisk`, `mkfs.*`, `mount`/`umount`, `sfdisk`) -
+`mkdir` was never one of them, and doesn't need to be: the mount point just needs to exist as a
+directory, not be root-owned, since the subsequent `mount -o uid=...,gid=...` call makes it
+user-writable regardless of who created it.
+
+**Fix:** Plain `mkdir -p`, no `sudo`, in all three scripts.
+
+### Finding 3: partition sub-devices aren't always present immediately after a *fresh* `qemu-nbd` attach of an already-partitioned disk
+
+**Symptom:** `apply-image.sh` failed with `ntfs-3g: Failed to access volume '/dev/nbd0p3': No such
+file or directory` immediately after a successful `qemu-nbd -c` attach.
+
+**Diagnosis:** `partition-disk.sh` already ran `partprobe` right after `sgdisk` created the
+partition table - but a *separate*, later script re-attaching that same already-partitioned qcow2
+via a fresh `qemu-nbd -c` doesn't automatically get the kernel to notice the existing partitions
+right away.
+
+**Fix:** `sudo partprobe "$NBD_DEV"` + a 1s settle, added after every fresh attach in
+`apply-image.sh`, `make-bootable.sh`, and `apply-unattend.sh` - not just the one in
+`partition-disk.sh` that runs right after `sgdisk`.
+
+### Finding 4: `qemu-nbd -c` can return success before the kernel has actually negotiated the device's real size, and `sgdisk` will believe it
+
+**Symptom:** On one `partition-disk.sh` run, `sgdisk` failed with `Disk is too small to hold GPT
+data (0 sectors)! Aborting!` immediately after a successful attach; `lsblk /dev/nbd0` independently
+confirmed `0B` at that moment.
+
+**Diagnosis:** A genuine attach-timing race, not a one-off fluke of that run - `qemu-nbd -c`
+returning doesn't guarantee the kernel's nbd block layer has already learned the export's real size
+from the server side.
+
+**Fix:** Poll `lsblk -b -n -d -o SIZE "$NBD_DEV"` (no `sudo` needed - reads sysfs, not the device
+itself) until non-zero, up to 20 tries at 0.5s, before running `sgdisk` at all.
+
+### Finding 5: `make-bootable.sh` wasn't idempotent against a disk that already had a valid BCD - OVMF's own boot-option discovery would boot the target directly instead of WinPE, permanently "poisoning" that disk's one-shot specialize/`FirstLogonCommands` passes
+
+**Symptom:** A re-run of `make-bootable.sh` (after fixing Finding 2) hung until its own 300s
+timeout. A QMP screendump of a manual reproduction showed real Windows OOBE ("Hi there"), not
+WinPE.
+
+**Diagnosis:** The disk had already been made bootable once by an earlier (differently-failing)
+attempt. With no explicit boot order, OVMF's boot-option discovery preferred the target's own
+now-valid Windows Boot Manager over WinPE's `ide-hd` medium. Worse than just picking the wrong
+device for *this* run: Windows Setup's specialize/`oobeSystem` pass and `FirstLogonCommands` each
+run **once**, ever, regardless of whether an answer file was present at the time - so that
+accidental boot (with no `unattend.xml` applied yet) permanently consumed those passes on
+interactive defaults. A subsequently-correct `apply-unattend.sh` run could never retroactively fix
+that specific disk; the only real fix was starting over on a fresh one. This single bug is why three
+separate from-scratch Server 2022 disks were needed this session before a clean end-to-end test was
+possible - a real, expensive lesson about how unforgiving Windows Setup's one-shot pass tracking is
+in an unattended pipeline, not just a scripting nuisance.
+
+**Fix:** Explicit `bootindex=1` on the WinPE `ide-hd` device and `bootindex=2` on the target
+`virtio-blk-pci` device in `make-bootable.sh`'s qemu invocation - pins the boot order regardless of
+the target's own current boot state, making the step genuinely idempotent.
+
+### Finding 6: `netkvm.inf` requires `netkvmp.exe` (declared in its own `[SourceDisksFiles]` section) to be staged alongside it, or `pnputil /add-driver` fails outright - invisible in the proven recipe because `viostor`'s offline-only use path never needed it
+
+**Symptom:** A from-scratch disk booted correctly, reached a real desktop, `AutoLogon` and
+`FirstLogonCommands` all ran - but WinRM was never reachable. TCP connected to the forwarded port
+but no data ever flowed (the exact SLIRP-level signature Finding 36 in `PHASE2_ENGINEERING_LOG.md`
+already identified as "the guest has no working IP," not a WinRM config problem). Offline inspection
+of `C:\session12-pnputil-log.txt` showed the real cause directly: `"Failed to add driver package:
+The system cannot find the file specified."`
+
+**Diagnosis:** `make-bootable.sh` only extracted and staged `netkvm.inf`/`.sys`/`.cat` from the
+virtio-win ISO - reasonable, since that's exactly what `gen-viostor-ddb-reg.py`'s own docstring says
+is needed for its offline `DriverDatabase` registration mechanism. But `pnputil /add-driver` (the
+*live* mechanism `apply-unattend.sh`'s `FirstLogonCommands` actually uses for netkvm, per Finding
+39/40 in the Phase 2 log) validates the full driver package described by the `.inf` itself.
+Confirmed by reading `netkvm.inf` directly: its `[SourceDisksFiles]` section declares
+`netkvmp.exe` (an NDIS performance-filter helper) as required, which was never copied. This gap was
+invisible throughout Phase 2's own hand-run sessions because `viostor` (the only driver that ever
+went through code review this closely) is only ever offline-`DriverDatabase`-registered, never
+`pnputil`-installed live, so its own minimal `.inf`/`.sys`/`.cat` set was never actually tested
+against `pnputil`'s fuller validation.
+
+**Root cause:** An incorrect assumption (never independently verified against `netkvm.inf` itself
+until this failure forced it) that `.inf`/`.sys`/`.cat` was a complete enough package for both
+driver-installation mechanisms this project uses, when only one of the two actually requires that
+full a check.
+
+**Fix:** `make-bootable.sh` now also extracts `netkvmp.exe` (and `netkvmco.exe`, for completeness of
+the same package family) from the virtio-win ISO and stages them alongside the rest at
+`C:\Drivers\NetKVM\<subfolder>\amd64\`. The extraction cache's "already done" check was also
+tightened to look for `netkvmp.exe` specifically, not just the directory's existence, so a
+previously-incomplete cache from before this fix doesn't silently stay incomplete forever.
+
+**Same one-shot-pass consequence as Finding 5**: a disk that already ran `FirstLogonCommands` once
+(even if the `pnputil` step within it failed) can't be retroactively fixed by rebuilding just the
+driver files - `FirstLogonCommands` doesn't retry a failed command on a later boot. This is why a
+*third* from-scratch Server 2022 disk was needed this session, not just a second.
+
+### Operational note (not a script bug): Packer's qemu builder needs `efi_firmware_vars` to already exist
+
+`packer/boot-and-provision.pkr.hcl`'s `efi_firmware_vars` points at a path Packer expects to already
+contain a real OVMF vars file - it does not create one from scratch the way a person might assume.
+`build.sh` copies a fresh `OVMF_VARS_4M.fd` there before every `packer build`, matching
+`dev/run-phase3-test.sh`'s identical existing pattern; this was missed on the first manual
+`packer build` invocation of the new production config and produced `failed to read from efivars
+file ...: no such file or directory` within seconds.
+
+### Operational note (harness, not project code): long-running `packer build` invocations launched via this session's own tracked background-task mechanism were externally killed within 15-60 seconds, three times in a row, on the exact same command
+
+Not a bug in `boot-and-provision.pkr.hcl`, `build.sh`, or anything in this repository - confirmed by
+launching the *identical* command as a fully detached process (`nohup ... & disown`, outside the
+session's own background-task tracking), which ran cleanly to completion (50m57s, full IIS+SQL
+Server install included) on the very next attempt with no other change. Recorded here in case a
+future session hits the same pattern: if a long Packer/QEMU build launched via the harness's tracked
+background-task mechanism dies within the first minute with no error from Packer itself other than
+"Cancelling build after receiving terminated," try relaunching it fully detached before assuming the
+build itself is broken.
+
+---
+
+## Confirmed results (production pipeline, Session 2)
+
+| OS | Profile | Path | Result | Time |
+|---|---|---|---|---|
+| Server 2022 | `ad-ds` | `image-apply/*.sh` (fresh disk) → `packer/boot-and-provision.pkr.hcl` | NTDS/DNS up, domain live after reboot | 6m49s |
+| Server 2025 | `iis` + `sql-server` | `image-apply/*.sh` (fresh disk) → `packer/boot-and-provision.pkr.hcl` | HTTP 200; SA login + `SELECT 1` | 50m57s |
+
+Both built from completely blank qcow2 disks by the new scripts - no dev-harness reference disk, no
+hand-run steps anywhere in the chain. `image-apply/output/builds/server2022-test3.qcow2` and
+`server2025-test1.qcow2` are the two confirmed-good disks this session produced (both still present,
+gitignored, disposable per this project's ephemeral-infrastructure principle - not meant to be kept
+long-term).
+
+---
+
+## STATUS AND NEXT STEPS ON RESUMPTION (Session 2)
+
+**Where things stand: the production pipeline is real now, not just designed.** `image-apply/`'s
+four scripts plus `packer/boot-and-provision.pkr.hcl` and `build.sh` together take a completely
+blank disk all the way to a WinRM-reachable, role-provisioned VM, confirmed end-to-end for both
+target OSes with zero hand-run steps anywhere in the chain. Both the Server-2025 `cpu_model` gap
+(Session 1, Finding 1) and this session's five findings above are now fixed at the source, not
+worked around downstream.
+
+**What's still genuinely open:**
+1. Windows 11 was not run through `image-apply/`'s new scripts this session (Server 2022/2025 only,
+   matching this session's actual scope) - the OS config table already covers it
+   (`image-apply/lib/common.sh`), but it's untested through the new scripts specifically. Not
+   blocking anything (Windows 11 gets none of Phase 3's roles either way), but worth knowing before
+   assuming it "just works" the way Session 12/13 confirmed for the *hand-run* recipe.
+2. `image-apply/build-winpe-medium.sh` (documenting/automating how `winpe-boot-index1-work.qcow2`
+   itself was built, per `PHASE2_ENGINEERING_LOG.md` Findings 11-12) was not written this session -
+   the existing medium works and was reused as-is. A truly from-scratch environment with no prior
+   `image-apply/output/` state would currently have no way to produce this file; it's a real
+   reproducibility gap, just not one that blocked this session's work.
+3. `build.sh` itself (the top-level orchestrator wiring all four `image-apply/*.sh` scripts plus the
+   Packer handoff together) was written and code-reviewed but not run start-to-finish as a single
+   invocation this session - each stage was run individually while iterating on the bugs above, and
+   the final confirmed runs invoked Packer directly rather than through `build.sh`. Worth one clean
+   `build.sh` run end-to-end before treating it as proven, even though every stage it calls has now
+   been individually confirmed.
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored):
+`server2022-test3.qcow2` and `server2025-test1.qcow2` are this session's two confirmed-good
+from-scratch disks. `image-apply/output/virtio-drivers/` and `image-apply/output/wim-cache/` hold
+extracted driver files and `install.wim`s respectively, reused across runs to avoid re-extracting on
+every invocation. `packer/output/server2022/` and `packer/output/server2025/` hold the final
+provisioned VM artifacts from each confirmed run.

@@ -8,6 +8,12 @@ image-apply/output/
 # dev/*.sh, dev/services-*.yaml) is real source and stays tracked.
 dev/output/
 
+# Production build output (provisioned VM artifacts + per-run efivars scratch
+# copies from packer/boot-and-provision.pkr.hcl) - same ephemeral-infrastructure
+# principle as image-apply/output/ above; packer/boot-and-provision.pkr.hcl
+# itself is real source and stays tracked.
+packer/output/
+
 # ISO cache lives at ../iso_cache/ - one level above this repo, shared with
 # ../windows-server-vm-automation/, not inside this repo's tree at all. No
 # ignore rule needed here for it (nothing under this repo's iso_cache/ exists

@@ -32,9 +32,9 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** — its success criterion (offline image application → bootable → specialized → real, unattended WinRM connectivity) is now confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation), with the underlying tooling requiring zero changes across any of them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail).
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** — its success criterion (offline image application → bootable → specialized → real, unattended WinRM connectivity) is now confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation), with the underlying tooling requiring zero changes across any of them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). Its recipe was hand-run through Session 13; `image-apply/`'s real scripts formalizing it were written and confirmed during Phase 3's own Session 2 (see `PHASE3_ENGINEERING_LOG.md`) for Server 2022/2025 specifically — Windows 11 hasn't been run through the new scripts yet, though the tooling is written to cover it.
 
-**Phase 3** (role provisioning) is **done** — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are now confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server). See its entry under Development Approach below and `PHASE3_ENGINEERING_LOG.md` for the full trail, including a real `cpu_model`/Packer-qemu-builder defect found and fixed along the way. **Phases 4-5** are not yet started.
+**Phase 3** (role provisioning) is **done**, including the production pipeline — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server), through both a fast-iteration test harness (`dev/`) and the real production path (`image-apply/`'s scripts + `packer/boot-and-provision.pkr.hcl` + `build.sh`, taking a blank disk all the way to a provisioned VM with no hand-run steps). See its entry under Development Approach below and `PHASE3_ENGINEERING_LOG.md` for the full trail across both sessions. **Phases 4-5** are not yet started.
 
 ---
 
@@ -287,16 +287,19 @@ windows-auto-build-pipeline/
 ├── CLAUDE.md
 ├── HANDOFF_FROM_UNATTENDED_INSTALL.md   # read this first
 ├── services.yaml                         # copied/adapted from the sibling project
-├── build.sh                              # or per-OS build scripts, TBD once the pipeline exists
+├── build.sh                              # real: orchestrates image-apply/*.sh then Packer
 
-├── image-apply/                # the new, unsolved core: offline WIM application + bootability
-│   ├── partition-disk.sh       # qemu-nbd + sgdisk/parted + mkfs
+├── image-apply/                # real, confirmed for Server 2022/2025 (PHASE3_ENGINEERING_LOG.md
+│   │                             # Session 2) - Windows 11 covered by the OS config table but
+│   │                             # untested through these scripts specifically
+│   ├── lib/common.sh           # per-OS config table (WIM index, driver subfolder, disk size, name)
+│   ├── partition-disk.sh       # qemu-nbd + sgdisk + mkfs
 │   ├── apply-image.sh          # wimlib apply
-│   ├── make-bootable.sh        # the open problem - bcdboot equivalent
-│   └── apply-unattend.sh       # DISM /Apply-Unattend equivalent, or whatever this becomes
+│   ├── make-bootable.sh        # WinPE + bcdboot, then offline viostor/netkvm driver injection
+│   └── apply-unattend.sh       # drops %WINDIR%\Panther\unattend.xml
 
 ├── packer/
-│   └── boot-and-provision.pkr.hcl   # disk_image=true, no ISO/boot_command - boots the
+│   └── boot-and-provision.pkr.hcl   # real: disk_image=true, no ISO/boot_command - boots the
 │                                      # already-applied disk and hands off to scripts/
 
 ../iso_cache/                  # shared cache of binary install media (Windows ISOs, virtio-win
@@ -538,27 +541,34 @@ Success criteria:
 
 The same three roles (IIS, AD DS, SQL Server) that work against the sibling project's Server 2022 baseline also work unmodified against this project's offline-applied disks, for both Windows Server 2025 and Windows Server 2022.
 
-**Phase 3 is done — its success criterion is met for both target OSes and both profiles.** A
-`dev/`-based fast-iteration test harness (`dev/role-test.pkr.hcl` + `dev/run-phase3-test.sh`,
-following the "reuse the pattern, not necessarily the exact files" note above) boots a disposable
-copy-on-write overlay on top of Phase 2's own confirmed-good reference disks
-(`image-apply/output/win2022-session12.qcow2` / `win2025-session11.qcow2`) and runs the reused
-`scripts/` against them over WinRM — this is the test harness, **not** the production
-`packer/boot-and-provision.pkr.hcl` (still not built — see below before building it). All four OS ×
-profile combinations confirmed live with real in-guest verification (AD DS/DNS up and domain live
-after reboot; IIS returning HTTP 200; SQL Server's SA login and a live `SELECT 1`). See
-`PHASE3_ENGINEERING_LOG.md` for the full session record, including a real, non-obvious defect found
-and fixed in the test harness itself: the Packer qemu builder's `cpu_model` field silently defaults
-to QEMU's generic `qemu64` CPU instead of the host's real CPU, which Server 2025 (unlike Server
-2022) couldn't tolerate — fixed via `cpu_model = "host"` in `dev/role-test.pkr.hcl`.
+**Phase 3 is done, including the production pipeline, not just a test harness proving the
+reused scripts work.** `image-apply/`'s real scripts (`lib/common.sh`, `partition-disk.sh`,
+`apply-image.sh`, `make-bootable.sh`, `apply-unattend.sh`) and the production
+`packer/boot-and-provision.pkr.hcl` + `build.sh` orchestrator now exist, transcribed directly from
+`PHASE2_ENGINEERING_LOG.md`'s proven recipe rather than reconstructed from memory. Confirmed
+end-to-end from a completely blank disk through to a WinRM-reachable, role-provisioned VM for both
+target OSes:
 
-**Immediate next steps, whenever directed (neither happened in this session, see
-`PHASE3_ENGINEERING_LOG.md`'s closing section):** (1) formalize `image-apply/`'s real scripts
-(`partition-disk.sh`/`apply-image.sh`/`make-bootable.sh`/`apply-unattend.sh`) — still hand-run steps
-recorded only in `PHASE2_ENGINEERING_LOG.md`, not yet real scripts; (2) build the production
-`packer/boot-and-provision.pkr.hcl` on top of those — **must carry forward the `cpu_model = "host"`
-fix from the start**, or Server 2025 will fail there the same way. Both are separate, not-yet-scoped
-pieces of work, not a continuation of Phase 3 itself.
+- Server 2022 + `ad-ds`: 6m49s, NTDS/DNS up, domain live after reboot
+- Server 2025 + `iis`/`sql-server`: 50m57s, HTTP 200, SA login + live `SELECT 1`
+
+A separate `dev/`-based fast-iteration test harness (`dev/role-test.pkr.hcl` +
+`dev/run-phase3-test.sh`) also exists for quick role-script iteration against Phase 2's own
+reference disks without repeating a full fresh build each time — this is the harness, not the
+production path, and it's what the first Phase 3 session (below) originally validated all four OS ×
+profile combinations against.
+
+Getting from "the recipe is proven" to "the recipe is a real script" surfaced five more real,
+non-obvious bugs (sudoers scoping, nbd attach-timing races, a boot-order idempotency gap that
+permanently poisons a disk's one-shot Windows Setup passes if hit, and a missing driver-package file
+`pnputil` needs but offline `DriverDatabase` registration doesn't) — see `PHASE3_ENGINEERING_LOG.md`
+Session 2 for the full record of each, plus Session 1's original `cpu_model` finding. **Still open,
+not blocking:** Windows 11 hasn't been run through the new scripts specifically (untested, though
+the OS config table already covers it); `image-apply/build-winpe-medium.sh` (documenting how to
+rebuild the WinPE bootability medium from scratch) wasn't written, so a genuinely fresh environment
+with no prior `image-apply/output/` state currently has no way to produce one; `build.sh` itself
+wasn't run start-to-finish as a single invocation (each stage was confirmed individually while
+iterating on the bugs above).
 
 ---
 
