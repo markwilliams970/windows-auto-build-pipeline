@@ -32,7 +32,7 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** — its success criterion (offline image application → bootable → specialized → real, unattended WinRM connectivity) is now confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation), with the underlying tooling requiring zero changes across any of them (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). Its recipe was hand-run through Session 13; `image-apply/`'s real scripts formalizing it were written and confirmed during Phase 3's own Session 2 (see `PHASE3_ENGINEERING_LOG.md`) for Server 2022/2025 specifically — Windows 11 hasn't been run through the new scripts yet, though the tooling is written to cover it.
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** for its own success criterion — offline image application → bootable → specialized → real, unattended WinRM connectivity — confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation) when hand-run (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). `image-apply/`'s real scripts formalizing that recipe were written and confirmed during Phase 3's own Session 2 for Server 2022/2025 specifically; Session 3 then ran the same scripts against Windows 11 and found real, blocking problems the hand-run recipe never hit — see `PHASE3_ENGINEERING_LOG.md` Session 3 and `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`.
 
 **Phase 3** (role provisioning) is **done**, including the production pipeline — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server), through both a fast-iteration test harness (`dev/`) and the real production path (`image-apply/`'s scripts + `packer/boot-and-provision.pkr.hcl` + `build.sh`, taking a blank disk all the way to a provisioned VM with no hand-run steps). See its entry under Development Approach below and `PHASE3_ENGINEERING_LOG.md` for the full trail across both sessions. **Phases 4-5** are not yet started.
 
@@ -563,12 +563,22 @@ non-obvious bugs (sudoers scoping, nbd attach-timing races, a boot-order idempot
 permanently poisons a disk's one-shot Windows Setup passes if hit, and a missing driver-package file
 `pnputil` needs but offline `DriverDatabase` registration doesn't) — see `PHASE3_ENGINEERING_LOG.md`
 Session 2 for the full record of each, plus Session 1's original `cpu_model` finding. **Still open,
-not blocking:** Windows 11 hasn't been run through the new scripts specifically (untested, though
-the OS config table already covers it); `image-apply/build-winpe-medium.sh` (documenting how to
-rebuild the WinPE bootability medium from scratch) wasn't written, so a genuinely fresh environment
-with no prior `image-apply/output/` state currently has no way to produce one; `build.sh` itself
-wasn't run start-to-finish as a single invocation (each stage was confirmed individually while
-iterating on the bugs above).
+not blocking Server 2022/2025 (confirmed production-ready, six independent successful builds across
+both OSes):** `image-apply/build-winpe-medium.sh` (documenting how to rebuild the WinPE bootability
+medium from scratch) wasn't written, so a genuinely fresh environment with no prior
+`image-apply/output/` state currently has no way to produce one; `build.sh` itself wasn't run
+start-to-finish as a single invocation (each stage was confirmed individually while iterating on the
+bugs above).
+
+**Windows 11 was run through the new scripts in Session 3 and found genuinely blocking problems —
+not just "untested but presumably fine"**: an interactive OOBE screen unattend settings alone can't
+suppress, and a real kernel-level NTFS BSOD, both root-caused to Windows actually processing a valid
+`unattend.xml` (not the offline write that delivers it). Server 2022/2025 show none of this. See
+`PHASE3_ENGINEERING_LOG.md` Session 3 (Findings 7-9) for the full trail, and
+`WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md` for a not-yet-started research/execution plan for the
+better-supported fix (a Windows-11-only Audit Mode + Sysprep cycle, matching Microsoft's own real
+OEM manufacturing flow) — a real architecture decision, explicitly left open rather than picked
+unilaterally.
 
 ---
 

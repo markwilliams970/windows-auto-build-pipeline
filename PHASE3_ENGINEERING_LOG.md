@@ -548,7 +548,9 @@ facing first boot) and lays out two real architectural options, explicitly not d
    the better-supported fix given Finding 8's bisection result (a valid, Windows-processed
    `unattend.xml` is the actual trigger - exactly the scenario Sysprep's live cycle exists to make
    safe), but it's real new work (an additional live-boot phase, `image-apply/` script changes
-   specific to one OS), not a small patch.
+   specific to one OS), not a small patch. **A full research and phased execution plan for Option B
+   is written up in `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`** - not started, nothing in it tested
+   empirically, but ready to pick up directly whenever this gets prioritized.
 2. If Option A is chosen instead: the immediate, narrower fix is scripting Finding 7's confirmed
    single-keypress workaround into the pipeline (QMP `send-key ret` once the keyboard-layout screen is
    detected), but Finding 8's BSOD risk would remain **unresolved** under Option A - a scripted
