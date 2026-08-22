@@ -2,8 +2,15 @@
 
 ## Status
 
-**Phase 0 complete: the original blocker is confirmed still unresolved, as of today.** The scope
-this sets for Phase 1 is below. Phase 1 itself has not started.
+**Phase 0 and a targeted Phase 1 pass are both complete.** Phase 0 confirms the original blocker is
+still unresolved, as of today. Phase 1 surveyed the strongest candidate categories and found a real,
+community-confirmed, primary-source technique (ISO-level `_noprompt` boot files, already present on
+stock Windows 11 media) that plausibly — not yet proven for this project specifically — solves the
+underlying problem when combined with this project's own existing direct boot-order control.
+Categories 4-6 of the original survey (MDT/SCCM/Autopilot mechanism, TPM bypass currency,
+cloud-vendor pipelines) were deliberately deferred rather than pursued exhaustively, since the
+strongest lead is specific and cheap enough to prototype directly. See Phase 0/1 findings below for
+the full detail. **Nothing has been built or tested yet — this is still a research document.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -144,6 +151,81 @@ categories, each a genuinely different angle (not redundant searches of the same
    tooling) — lower priority, likely less directly applicable to a local KVM/QEMU host, but a
    cheap check for any genuinely public technique worth knowing about.
 
+#### Phase 1 findings
+
+**Category 1 — community Packer Windows templates.** Checked three, each directly (not just from
+search snippets):
+- **`rgl/windows-vagrant`** — the strongest-looking candidate at first glance: actively maintained
+  (536 commits), explicit Windows 11/2022/2025 templates (the exact OS set both projects target),
+  Packer's QEMU/libvirt builder. Fetched its actual `windows-11-24h2-uefi.pkr.hcl` boot
+  configuration directly: `boot_wait = "1s"`, `boot_command` is ten repetitions of `<up><wait>` —
+  **the same fundamental timed-keystroke race both projects already know is unreliable for this
+  media**, not a different or fixed mechanism. No custom `-boot`/`bootindex` handling, no ISO
+  modification. Its own maintainer may or may not have this specific combination working reliably;
+  nothing in the template itself demonstrates a fix, so treat this as "another instance of the
+  known-fragile approach," not a solved reference.
+- **`proactivelabs/packer-windows`** — low signal: only 5 commits, no visible maintenance
+  cadence, no documentation of the boot-order/prompt issue at all. Not a credible reference either
+  way.
+- **`eb4x/packer-qemu-win11`** — the repo the sibling project's own log already checked and found
+  to be a TPM/secure-boot config example, not a boot-order fix. Re-confirmed directly: still true,
+  and its README doesn't document its actual boot-prompt-handling mechanism at all (6 commits,
+  low activity). Not a resolved lead.
+
+**Category 2 — `actions/runner-images`.** Confirmed directly: builds Windows Server 2022/2025 (and
+Ubuntu) via Packer on Azure — **does not build Windows 11 client SKU at all.** Not directly
+applicable, though it does further corroborate that Packer-based Server 20XX builds are a mature,
+well-trodden path (consistent with this project's own Server 2022/2025 experience) — the gap really
+does look concentrated on Windows 11 client specifically.
+
+**Category 3 — `virt-install`/libvirt-native approaches.** Checked `adityasugandhi/winvm-lab`
+(virt-install-based Windows 11 install, not Packer). Genuinely useful: its documentation explicitly
+names the same class of problem — "the default `<boot dev='hd'/>` ordering ignores attached CD-ROM
+and UEFI can't find bootable media" — with a real fix: `<boot dev='cdrom'/>` listed **before** the
+hard disk entry in the libvirt domain XML. This is a legitimate, well-established libvirt mechanism,
+distinct from Packer's own more limited config surface — but the specific repo demonstrating it has
+only 3 commits, no releases, reads as a personal lab project rather than a battle-tested reference.
+The *technique* (direct domain-XML boot-device ordering) is credible on its own merits as a known
+libvirt feature; this specific implementation isn't strong enough to lean on as proof by itself.
+
+**The strongest finding of Phase 1 — a real, community-confirmed, primary-source success, found via
+a targeted follow-up rather than the general survey**: a Proxmox forum thread, ["\[SOLVED\] Fully
+Unattended Windows 11 Installation - Avoid Press any key to boot from CD or
+DVD"](https://forum.proxmox.com/threads/fully-unattended-windows-11-installation-avoid-press-any-key-to-boot-from-cd-or-dvd.162252/),
+gives the exact, complete procedure and includes an explicit, unambiguous confirmation from the
+original poster after applying it: *"That's it! Works perfectly. Thank you very much!"* Proxmox
+runs QEMU/KVM/OVMF under the hood — the same virtualization stack this project already uses, not a
+different hypervisor's mechanism that might not transfer.
+
+**Correction to the sibling project's own note, worth carrying forward precisely**: the sibling
+log described this as needing ADK-provided `_noprompt` files. Per this thread, that's not quite
+right and the real mechanism is simpler than that implies — **`efisys_noprompt.bin` and
+`cdboot_noprompt.efi` already ship on the stock Microsoft Windows 11 ISO itself**, at
+`efi/microsoft/boot/`, sitting right alongside the normal `efisys.bin`/`cdboot.efi`. No separate
+ADK download or `MakeWinPEMedia.cmd` run is required just for this — the fix is: delete the normal
+files, rename the `_noprompt` files to take their place, and rebuild the ISO (the thread includes a
+worked example using `xorriso` to remount/repack it with correct El Torito boot-sector handling).
+
+**Necessary caveat, stated as honestly as the source allows**: the fetch of this thread found no
+discussion of UEFI boot-device *ordering* separately from the keystroke prompt itself — it isn't
+established from this source alone whether the deeper OVMF EFI-shell-first-boot-device bug (Finding
+15 in the sibling log, the one attributed specifically to a Packer limitation) would still bite even
+with the prompt removed. Two things support optimism here without fully closing the gap: (1) this
+poster was using Proxmox directly, which — like this project's own hand-built `qemu-system-x86_64`
+invocations — has direct, first-class boot-device-order control unavailable to Packer's own QEMU
+builder abstraction, so their success is at least consistent with "prompt removal + direct boot-order
+control together are sufficient," matching this plan's own leading hypothesis from Phase 0; and (2)
+no comment in the thread reports the deeper bug recurring after the fix, which would be a natural
+thing to mention if it had. This is real, credible, primary-source evidence *for* the leading
+hypothesis, not yet a full, independent proof of it — the actual test is still to build and boot it
+here.
+
+**Categories 4-6 (MDT/SCCM/Autopilot mechanism, TPM/Secure-Boot bypass currency, cloud-vendor
+pipelines) were not yet surveyed** — the noprompt-ISO finding is strong enough, and specific enough
+to this project's own tooling, that it's worth prototyping directly before spending more research
+time on lower-priority categories that were always going to matter less than a confirmed working
+technique. Worth returning to only if the noprompt-ISO prototype doesn't pan out.
+
 ### Phase 2 — primary-source verification of whatever Phase 1 finds
 
 For any actively-maintained, credible candidate, read the actual source/config directly — not a
@@ -187,10 +269,14 @@ own "Claude Instructions." Not attempted until the research above is actually do
 
 ## Next step
 
-**Phase 0 done.** Recommended next step: before the wider Phase 1 tooling survey, cheaply prototype
-the specific lead Phase 0 surfaced — a Setup.exe-based Windows 11 install driven by a hand-built
-`qemu-system-x86_64` invocation (this project's own established pattern), using `_noprompt`
-boot files to eliminate the "press any key" keystroke race and explicit `bootindex=`/`-boot order=`
-flags for direct UEFI boot-device control, sidestepping the Packer-specific limitation both
-projects' prior investigations were actually blocked on. This is a real experiment, not a doc
-search — flagged here as the recommended next action, not started yet, pending direction.
+**Phase 0 and a targeted Phase 1 pass are both done.** Both independently point at the same
+concrete experiment, now with real community confirmation behind it, not just reasoning from first
+principles: build a `_noprompt`-modified Windows 11 ISO (rename the ISO's own already-present
+`efisys_noprompt.bin`/`cdboot_noprompt.efi` over the normal boot files, rebuild via `xorriso`) and
+drive Setup.exe from a hand-built `qemu-system-x86_64` invocation with explicit `bootindex=`/
+`-boot order=` flags for direct UEFI boot-device control — this project's own established pattern,
+not Packer's QEMU builder. This sidesteps both known failure modes at once: the keystroke race
+(prompt removed entirely) and the Packer-specific boot-order limitation (never in the loop). A real
+build-and-boot experiment, not further research — flagged as the recommended next action, not
+started yet, pending direction. If it doesn't pan out, Categories 4-6 above remain as the fallback
+survey.
