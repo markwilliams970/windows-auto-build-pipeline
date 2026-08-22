@@ -572,3 +572,92 @@ worth keeping). No VM left running, no `qemu-nbd` attached, environment fully cl
 (confirmed via `pgrep`).
 
 ---
+
+## Session 4: Option B chosen - `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md` Phase 1 executed and
+## confirmed, the plan's single biggest open question, resolved
+
+**Where this picked up:** Session 3 closed with Option A vs. Option B explicitly undecided. This
+session's direction was to proceed with Option B; `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s Phase 1
+("verify the core mechanism, cheaply, before writing any real script") was executed exactly as
+written there.
+
+### Finding 10: the offline-drop delivery mechanism (`%WINDIR%\Panther\unattend.xml`) does trigger
+### Audit Mode entry - the plan's single biggest unverified assumption is now confirmed true
+
+Built a completely fresh Windows 11 disk (`image-apply/output/builds/windows11-auditphase1.qcow2`)
+through the unmodified `partition-disk.sh`/`apply-image.sh`/`make-bootable.sh` sequence (so this disk
+also carries the normal viostor/netkvm `DriverDatabase` offline injection - the same driver-injected
+state a real build produces, not a stripped-down minimal disk). Wrote a new, deliberately minimal
+answer file, `image-apply/unattend-windows11-audit-trigger.xml` - containing *only* the
+`Microsoft-Windows-Deployment`/`Reseal`/`Mode=Audit` setting under the `oobeSystem` pass (confirmed
+from Microsoft's own primary-source doc that `Reseal` is valid only under `auditSystem`/
+`auditUser`/`oobeSystem`, never `specialize` -
+https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-reseal).
+Offline-dropped it to the same `Windows\Panther\unattend.xml` path this project already proved for
+specialize/oobeSystem processing (Session 9/Finding 34) - not the DISM-mount-specific
+`Panther\Unattend\Unattend.xml` subfolder path a different section of Microsoft's own doc describes,
+which applies to modifying an already-OOBE-configured image via `Dism /Mount-Image`, not a fresh,
+never-booted WIM apply like this project's.
+
+Booted the disk solo (`virtio-blk-pci`, `q35`/`accel=kvm`/`cpu host` - matching
+`packer/boot-and-provision.pkr.hcl`'s production device model exactly, per `make-bootable.sh`'s own
+established pattern) with a QMP socket, watched via `tools/qmp-watch.sh` (15s interval, 30 shots).
+**Result: unambiguous success, matching Microsoft's documented behavior exactly, not just a plausible
+partial match:**
+
+- No OOBE screen of any kind appeared - the boot went straight from firmware to the built-in
+  **Administrator** account auto-logging in ("Preparing Windows"), exactly matching the docs' own
+  description ("Booting to audit mode starts the computer in the built-in administrator account").
+- The **System Preparation Tool (Sysprep) 3.14 GUI launched automatically** on reaching the desktop -
+  again an exact match to Microsoft's documented behavior ("the computer boots into audit mode
+  automatically, and the System Preparation (Sysprep) Tool appears"), not something this project
+  triggered itself.
+- The desktop watermark read "Windows 11 Enterprise Evaluation" with a real, live Explorer shell
+  (Recycle Bin, desktop icon, taskbar, Start button) - a genuine interactive desktop session, not a
+  crash or a black screen.
+
+One cosmetic, unrelated artifact observed and worth recording so it isn't mistaken for a pipeline
+defect in a future session: a `CrossDeviceResume.exe` (Phone Link's cross-device-resume component,
+under `C:\Windows\SystemApps\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\`) error dialog reading "The
+parameter is incorrect" appeared once on top of the Sysprep dialog (read directly via `Alt+Tab`
+window-cycling through `tools/qmp-sendkey.py`, since no `usb-tablet` device was attached to this ad
+hoc boot for `qmp-click.py` to use - only one distinct error window existed, not two, despite
+appearing at two different taskbar positions across screenshots). This is a well-known, benign
+first-logon quirk of this specific built-in Windows 11 app failing to find expected state in a fresh/
+audit-mode account context - unrelated to this project's own driver injection or unattend mechanism,
+and does not block or interfere with anything (Sysprep's own dialog was unaffected, still fully
+interactive underneath it).
+
+**Session stopped deliberately at this point, without running Sysprep** - Phase 1's own success
+criterion (reach a real Administrator desktop with no OOBE) was already unambiguously met, and
+running Sysprep now would have meant driving the GUI manually (Phase 2's *fallback* mechanism, not
+its first choice - the plan's own Phase 2 wants `RunSynchronous`-automated `sysprep /generalize /oobe
+/shutdown` tried first). Dismissed the `CrossDeviceResume.exe` dialog and the Sysprep dialog itself
+both via `Escape` (never their `OK` buttons - `Escape` closed each cleanly without invoking any
+action, confirmed via screenshot: `Cancel`-equivalent, landing back on a clean, dialog-free Audit
+Mode desktop), then sent a graceful QMP `system_powerdown` - **which the VM honored and exited on its
+own**, unlike Session 3's finding that an interactive OOBE screen doesn't honor ACPI shutdown; a real,
+logged-in desktop session (even mid-dialog) does. Confirmed clean afterward: no `qemu` process, no
+`qemu-nbd` attachment, no stale mount (`pgrep`/`mount` both checked).
+
+This directly resolves Open Question 1 in `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md` ("Does the
+offline-drop delivery mechanism trigger Audit Mode at all, in a Setup.exe-free pipeline?") - yes,
+confirmed empirically, not just reasoned about. Per the plan's own framing, this was the hard stop
+that would have blocked Option B entirely and forced a return to Option A; it didn't fail, so Option B
+remains viable and Phase 2 is next.
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored):
+`windows11-auditphase1.qcow2` - a real, confirmed-good disk sitting at a clean Audit Mode desktop
+(Sysprep not yet run), worth keeping as a Phase 2 starting point rather than rebuilding from scratch,
+though Phase 2 will likely need its own fresh disk anyway since `RunSynchronous` commands are
+processed only during a pass's actual first execution, not replayable against an already-audit-mode
+disk via a simple file drop. Screenshots from this session are under `/tmp/w11audit-shots/` (host
+scratch, not committed - this log is the durable record). No VM left running, no `qemu-nbd` attached,
+environment fully clean at session end (confirmed via `pgrep`/`mount`).
+
+**Next steps:** `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md` Phase 2 - extend the trigger unattend.xml with
+a `RunSynchronous` command (or researched equivalent) that runs `sysprep /generalize /oobe /shutdown`
+automatically once Audit Mode is reached, on a fresh disk, confirming the VM powers itself off on its
+own afterward with no live keystroke driving required.
+
+---

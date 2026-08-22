@@ -2,12 +2,16 @@
 
 ## Status
 
-**Not started. Nothing below has been tested empirically.** This is a research and execution plan
-for Option B, one of two explicitly undecided architectural options recorded in
-`PHASE3_ENGINEERING_LOG.md` Session 3, Finding 9. It exists so this work can be picked up cleanly
-in a future session without re-deriving the reasoning. Treat every claim below as "verify before
-trusting," per this project's own engineering standards — this document proposes an approach and
-a phased way to test it, it does not confirm one works.
+**Option B chosen. Phase 1 complete and confirmed — see `PHASE3_ENGINEERING_LOG.md` Session 4,
+Finding 10.** The plan's single biggest unverified assumption (does the offline-drop delivery
+mechanism trigger Audit Mode at all, in a Setup.exe-free pipeline) is now empirically confirmed
+true: a fresh Windows 11 disk, offline-dropped with a minimal `Reseal`/`Mode=Audit` answer file at
+the same `%WINDIR%\Panther\unattend.xml` path already proven for specialize/oobeSystem, booted
+straight to the built-in Administrator account with no OOBE screen and auto-launched the real
+Sysprep GUI — an exact match to Microsoft's documented behavior. Phase 2 (automating Sysprep's
+invocation via `RunSynchronous`, without live keystroke driving) is next. Treat every claim in
+Phases 2-5 below as still "verify before trusting" — only Phase 1 has been tested empirically so
+far.
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s Session 3 (Findings 7-9) before touching anything below** —
 this document only makes sense in that context. Short recap: a completely fresh, hands-off Windows
@@ -161,7 +165,8 @@ default). Two candidates, needing their own verification:
 
 ## Phased execution plan
 
-**Phase 1 — verify the core mechanism, cheaply, before writing any real script.**
+**Phase 1 — DONE, confirmed (`PHASE3_ENGINEERING_LOG.md` Session 4/Finding 10). Verify the core
+mechanism, cheaply, before writing any real script.**
 Build one fresh Windows 11 disk through the existing `partition-disk.sh`/`apply-image.sh`/
 `make-bootable.sh` (unchanged). By hand, offline-drop a minimal unattend.xml containing *only* the
 `Microsoft-Windows-Deployment`/`Reseal`/`Audit` setting — nothing else, no `RunSynchronous`, no

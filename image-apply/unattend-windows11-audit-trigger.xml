@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Phase 1 test artifact for WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md - NOT the real Windows 11
+  unattend.xml (that's unattend-windows11.xml, unchanged). This file exists only to answer
+  the plan's single biggest open question: does this project's already-proven offline-drop
+  delivery mechanism (%WINDIR%\Panther\unattend.xml) also trigger Audit Mode, the same way it
+  already triggers the specialize/oobeSystem passes (Session 9/Finding 34)?
+
+  Deliberately minimal per the plan's Phase 1 spec: only the Microsoft-Windows-Deployment
+  Reseal/Mode=Audit setting, nothing else (no RunSynchronous, no driver commands, no
+  ComputerName/OOBE-skip/AutoLogon settings from the real template). A clean pass/fail signal,
+  not a working build artifact.
+
+  Reseal is documented as valid ONLY under auditSystem/auditUser/oobeSystem passes - NOT
+  specialize (confirmed directly from https://learn.microsoft.com/en-us/windows-hardware/
+  customize/desktop/unattend/microsoft-windows-deployment-reseal, "Valid Configuration Passes").
+  Placed under oobeSystem here since that's this project's own proven pass for other
+  oobeSystem-scoped settings.
+
+  ForceShutdownNow deliberately omitted (defaults false) so this matches the plan's own Phase 1
+  methodology exactly: per the Reseal doc's results table, oobeSystem+Audit+ForceShutdownNow=false
+  processes the (empty) oobeSystem pass and starts the auditSystem pass in the same boot session,
+  landing on a real Administrator desktop with no shutdown in between - watched live via QMP
+  screendump (tools/qmp-watch.sh), the same technique proven throughout this project, rather than
+  inferring success indirectly from a self-shutdown.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <Reseal>
+        <Mode>Audit</Mode>
+      </Reseal>
+    </component>
+  </settings>
+</unattend>
