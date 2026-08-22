@@ -2,17 +2,18 @@
 
 ## Status
 
-**Phases 0-2 are complete.** Phase 0 confirms the original blocker is still unresolved, as of
-today. Phase 1 surveyed the strongest candidate categories and found a real, community-confirmed
-technique (ISO-level `_noprompt` boot files). Phase 2 verified that finding against primary
-sources rather than trusting the forum thread's own retelling — confirmed directly on this
-project's own actual install media (all three target OSes), traced to genuine, 15-year-old
-Microsoft documentation, and the literal rebuild procedure captured verbatim. Categories 4-6 of the
-original Phase 1 survey (MDT/SCCM/Autopilot mechanism, TPM bypass currency, cloud-vendor pipelines)
-remain deliberately deferred as a fallback, not pursued, since the verified lead is specific and
-cheap enough to prototype directly. See the Phase 0-2 findings below for the full detail. **Nothing
-has been built or tested yet — this is still a research document; Phase 3 (design proposal) has not
-started.**
+**Phases 0-3 are complete on paper — nothing has been built or tested yet.** Phase 0 confirms the
+original blocker is still unresolved, as of today. Phase 1 surveyed the strongest candidate
+categories and found a real, community-confirmed technique (ISO-level `_noprompt` boot files).
+Phase 2 verified that finding against primary sources — confirmed directly on this project's own
+actual install media (all three target OSes), traced to genuine, 15-year-old Microsoft
+documentation, literal rebuild procedure captured verbatim. Phase 3 turns that verified finding
+into a concrete, phased design proposal (`_noprompt` ISO + hand-built `qemu-system-x86_64` with
+direct `bootindex=` control, Windows 11 only) with an explicit pass/fail gate at each step — see
+Phase 3 below for the full plan, including the standing-rule conflict this necessarily raises
+(`CLAUDE.md`'s "never run Setup.exe" rule) flagged explicitly for a real decision, not silently
+reversed. Categories 4-6 of the original Phase 1 survey remain deliberately deferred as a fallback.
+**Execution (Phase 3.1 onward) has not started — this document is design and research only.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -312,11 +313,164 @@ combining it with this project's own direct `bootindex=` control genuinely avoid
 OVMF boot-device-ordering bug the way the Phase 0/1 hypothesis proposes — the Proxmox thread is
 consistent with that being true but doesn't isolate it as its own confirmed variable.
 
-### Phase 3 — design proposal (not started, deferred until Phase 0-2 complete)
+### Phase 3 — design proposal
 
-Once real, verified working approaches are identified, come back with a concrete design proposal —
-explaining the approach, assumptions, and risks before writing any implementation, per `CLAUDE.md`'s
-own "Claude Instructions." Not attempted until the research above is actually done.
+**Status: written, not yet executed.** Nothing below has been built or tested — this is the design
+proposal itself, per `CLAUDE.md`'s own "Claude Instructions" (explain the approach, assumptions,
+and risks before writing implementation). Structured as a phased execution plan with an explicit
+pass/fail gate at each step, mirroring `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s own proven format —
+each phase is cheap, isolates one specific question, and a failure at any gate is a real, named
+stopping point, not something to push through.
+
+#### Approach summary
+
+Bring Setup.exe back into play, **for Windows 11 only** — Server 2022/2025 stay exactly as they
+are, fully offline, unchanged. Combine the two verified findings from Phases 0-2:
+
+1. A `_noprompt`-patched Windows 11 ISO (swap `efisys.bin`→`efisys_noprompt.bin`,
+   `cdboot.efi`→`cdboot_noprompt.efi`, rebuild via the verified `xorriso` recipe) — eliminates the
+   "press any key" keystroke race entirely, provably (there's no prompt left to race against), not
+   statistically (better timing).
+2. A hand-built `qemu-system-x86_64` invocation with explicit `bootindex=` device ordering — this
+   project's own already-proven pattern (`make-bootable.sh`'s WinPE-vs-target ordering, Finding 5)
+   — instead of Packer's QEMU builder, whose own documented limitation ("Packer currently lacks the
+   capability to alter [UEFI boot order]") is the specific thing both this project's and the
+   sibling project's prior investigations were actually blocked on.
+
+This does **not** mean adopting Packer's QEMU builder for the install phase, or reusing the sibling
+project's own `autounattend.xml`/`boot_command` machinery — it means driving Setup.exe the same way
+this project already drives WinPE and Audit Mode: a real answer file, a real `qemu-system-x86_64`
+invocation this project controls directly, and QMP for observation, none of it routed through
+Packer until (if at all) a later, post-install stage.
+
+#### Standing-rule conflict — flagged explicitly, not silently reversed
+
+`CLAUDE.md`'s own "Relationship to `../windows-server-vm-automation/`" section has a standing rule:
+*"Do not reuse `Microsoft-Windows-Setup`... `boot_command`/VNC keystroke injection remain correctly
+banned regardless."* This proposal necessarily revisits that rule for Windows 11 specifically. Two
+things distinguish this from what the rule was actually written to prevent, worth stating plainly
+rather than asserting the rule doesn't apply:
+
+- The rule's own reasoning was about *keystroke-timing-dependent* driving of an interactive
+  prompt — exactly what this proposal's `_noprompt` ISO eliminates by construction, not works
+  around by better timing. No `boot_command`, no VNC keystrokes, no race to lose.
+- `EarlyF6DriverInstall`'s own gate (this project's original, unrelated reason for abandoning
+  Setup.exe entirely in Sessions 3-6, per `CLAUDE.md`'s "RECONSIDERATION CLOSED" note) was hit
+  under a *different* boot medium (a self-built `boot.wim` index 2 attached as a plain disk, not
+  the real installation ISO) and a different failure mode entirely (a driver-installation gate
+  firing unconditionally partway through Setup, not a boot-time prompt). Whether that specific gate
+  still applies when driving the real, unmodified (except for the boot-file swap) installation ISO
+  through its normal `windowsPE` pass is **not yet known** and is exactly what Phase 3 below tests
+  before anything else.
+
+**This is a real decision for the user, not something to default into.** The plan below is written
+so each phase can be individually approved, and the whole thing can stop at any failed gate without
+having reversed the standing rule for nothing.
+
+#### Phased execution plan
+
+**Phase 3.1 — prove the `_noprompt` ISO alone eliminates the keystroke race, hands-off, in
+isolation.**
+Build the patched ISO via the verified `xorriso` recipe. Boot it **hands-off, zero keystrokes sent,
+not even a fallback keypress script** — CD-ROM only, no target disk needed yet, keep this phase
+minimal. Hand-built `qemu-system-x86_64`, OVMF, watched via `tools/qmp-screenshot.py`/
+`qmp-watch.sh`, matching this project's own established observation convention throughout.
+- **Gate to pass**: reaches a real, interactive Windows Setup UI screen (language/region selection
+  or later) with zero keystrokes sent and no "press any key"/EFI-shell/PXE fallback ever appearing.
+- **Gate fails if**: it still drops to EFI shell/PXE/timeout even with no prompt to race against.
+  This would mean the deeper OVMF issue is independent of the keystroke race entirely — a **hard
+  stop** on this whole approach; return to the research phase (Categories 4-6, deferred above) or
+  reconsider Setup.exe-free options again.
+
+**Phase 3.2 — prove explicit `bootindex=` control correctly re-selects the target hard disk across
+Setup's own mid-install reboot(s), not just the initial CD-ROM boot.**
+Add a real target disk alongside the patched ISO (a blank `partition-disk.sh`-created disk, or even
+fully blank — Setup.exe partitions it itself). Same hands-off approach, but now let Setup's own
+`windowsPE` pass actually run an install (a real answer file needed here — see 3.3 for its full
+content, but a minimal one is enough for this phase's own question). Watch across every reboot
+boundary via QMP screenshots.
+- **Gate to pass**: every reboot correctly resumes into the installed system on the hard disk (or
+  continues Setup's own next phase), never falling back into the ISO/EFI shell/PXE.
+- **Gate fails if**: the CD-ROM's continued presence causes Setup to re-enter from the ISO after a
+  reboot, or boot device selection is otherwise ambiguous. **Not necessarily a hard stop** — Phase
+  2's own research already flagged this as a real, solvable engineering problem (this project's
+  existing QMP device-control conventions, or a scripted `bootindex=` flip between phases, are real
+  candidate fixes) — but it's real work to close, not assumed away, and worth confirming a fix
+  actually works before Phase 3.3 builds on top of it.
+
+**Phase 3.3 — deliver a real, complete answer file through Setup.exe and confirm a genuinely
+working, WinRM-reachable result — the project's own established success bar, not a new one.**
+Build a real answer file covering the passes Setup.exe actually processes (`windowsPE` for
+disk/image selection — new territory, not needed by this project's offline-apply path — plus
+`specialize`/`oobeSystem`, adapting this project's existing `unattend-windows11.xml` content where
+it already applies). Run a genuinely fresh, hands-off, end-to-end build: ISO patch → hand-built
+`qemu-system-x86_64` boot → unattended Setup.exe install → real first boot → WinRM check.
+- **Gate to pass**: real, authenticated WinRM connectivity (`hostname` returns the expected
+  `ComputerName`, `Get-NetAdapter` shows a working adapter) — the exact bar every other successful
+  build in this project has met — **and, critically, no BSOD, no unskippable OOBE hang** — the
+  actual problem this entire effort exists to solve, not a secondary concern.
+- **Given this project's own hard-earned lesson from the Option A/B saga (a single success is not
+  sufficient evidence)**: this gate requires **at least 2-3 independent successful runs**, matching
+  the same evidentiary bar Server 2022/2025 and Option B's own mechanical pieces were held to, not
+  a lighter bar just because this is a new approach.
+- **Gate fails if**: the same BSOD/OOBE-hang signature recurs even once across these attempts, or a
+  new failure mode appears. Either way, this is the point to stop and reassess rather than
+  patching around a recurrence — this project has already spent significant effort learning not to
+  do that.
+
+**Phase 3.4 — formalize into real scripts, only after Phase 3.3's repeated success.**
+Write the actual production tooling — a new, `windows11`-only install path (something like
+`image-apply/build-iso-noprompt.sh` + a Setup.exe-driven equivalent of `make-bootable.sh`), mirroring
+`image-apply/*.sh`'s existing conventions (`lib/common.sh` sourcing, `set -euo pipefail`, QMP
+observation). Decide deliberately, not by default, whether this fully replaces Windows 11's existing
+offline-apply scripts or becomes a parallel path — and whether Packer re-enters the pipeline at all
+for Windows 11 afterward, given it may no longer be needed once Setup.exe itself handles install
+through first-boot in one unattended run (Windows 11 has no Phase 3 roles to provision either way,
+per this project's own standing scope note). Gated on Phase 3.3, not attempted before.
+
+**Phase 3.5 — full validation, matching this project's own evidentiary bar.**
+Multiple independent, fully fresh, hands-off builds through the finished production scripts — the
+same bar already applied to Server 2022/2025's own six-plus-build track record. Only once this
+passes does Windows 11 get to claim the same "production-ready" status Server 2022/2025 already
+have.
+
+#### Key assumptions (stated so they can be checked, not just held)
+
+- The `_noprompt` mechanism behaves identically for Windows 11 client media as the Proxmox thread
+  observed for whatever media that poster used (not independently confirmed — Phase 3.1 is exactly
+  this check, against *our own* cached Windows 11 ISO specifically).
+- `EarlyF6DriverInstall`'s gate (Sessions 3-6's original blocker) doesn't refire under this
+  different boot-medium/delivery shape. Untested; Phase 3.1-3.2 will surface this quickly if wrong.
+- Windows 11's TPM 2.0/Secure Boot hardware-compatibility check (enforced by Setup.exe itself, per
+  `PHASE2_ENGINEERING_LOG.md` Finding 43) will need to be satisfied or bypassed once Setup.exe is
+  back in the loop — this project's offline-apply path never had to deal with it at all. A
+  well-precedented, lab-appropriate bypass exists (`LabConfig`/`BypassTPMCheck` registry keys,
+  Phase 1's Category 5) but hasn't been verified current for this project's own OVMF/QEMU
+  configuration. Needs a real check, not an assumption, likely surfacing naturally in Phase 3.2-3.3.
+
+#### Key risks
+
+- **Reintroducing Setup.exe reintroduces its own historically-fragile territory** — this is
+  precisely the mechanism this project was built to avoid, for real, documented reasons (Sessions
+  3-6's `EarlyF6DriverInstall` dead end). The phased gates above exist specifically to catch this
+  early and cheaply (Phase 3.1-3.2) before investing in the fuller Phase 3.3 build.
+- **The deeper OVMF boot-order bug may not be purely a Packer limitation** — Phase 0/1's own
+  research found this stated as the sibling project's diagnosis, not independently proven. Phase
+  3.2 is the actual test of this, not an assumption carried in from research.
+- **Wall-clock cost**: each phase is a real disk build, similar cost to the Sysprep-cycle testing
+  this project already did extensively this session (tens of minutes per attempt). Time-box
+  investigation per this project's own standing principle — a hard stop and return to Categories
+  4-6 (or further reconsideration) is a legitimate outcome, not a failure of the plan.
+
+#### Open questions carried forward from Phases 0-2
+
+- Does Setup.exe coming back for Windows 11 make it a genuinely separate implementation track
+  within this project, or should it converge toward looking more like the sibling project's own
+  approach instead? Real architecture-boundary question — worth revisiting once Phase 3.3 actually
+  succeeds (or doesn't), not decided in the abstract now.
+- Does Packer re-enter the pipeline at all for Windows 11 post-install, or does the hand-built
+  `qemu-system-x86_64` approach cover the whole lifecycle the way `image-apply/*.sh` already does
+  for the offline path? Deferred to Phase 3.4.
 
 ---
 
@@ -346,14 +500,10 @@ own "Claude Instructions." Not attempted until the research above is actually do
 
 ## Next step
 
-**Phase 0 and a targeted Phase 1 pass are both done.** Both independently point at the same
-concrete experiment, now with real community confirmation behind it, not just reasoning from first
-principles: build a `_noprompt`-modified Windows 11 ISO (rename the ISO's own already-present
-`efisys_noprompt.bin`/`cdboot_noprompt.efi` over the normal boot files, rebuild via `xorriso`) and
-drive Setup.exe from a hand-built `qemu-system-x86_64` invocation with explicit `bootindex=`/
-`-boot order=` flags for direct UEFI boot-device control — this project's own established pattern,
-not Packer's QEMU builder. This sidesteps both known failure modes at once: the keystroke race
-(prompt removed entirely) and the Packer-specific boot-order limitation (never in the loop). A real
-build-and-boot experiment, not further research — flagged as the recommended next action, not
-started yet, pending direction. If it doesn't pan out, Categories 4-6 above remain as the fallback
+**Research (Phases 0-2) and design (Phase 3) are both done.** The next step is real, not more
+documentation: execute **Phase 3.1** — build the `_noprompt`-patched Windows 11 ISO and confirm,
+hands-off, that it eliminates the keystroke race in isolation. This is the first gate in Phase 3's
+own phased plan above; each subsequent phase is gated on the one before it passing, with named
+stopping points on failure rather than an assumption that the whole approach will work end to end.
+Not started yet, pending direction. If Phase 3.1 fails, Categories 4-6 above remain as the fallback
 survey.
