@@ -1542,4 +1542,59 @@ confirmed, Phase 3.4 (formalize into real, production `image-apply/*.sh`-style s
 solving the eject-trigger automation question and deciding the virtio-driver question left open by
 this phase's own `e1000` scope decision) becomes the natural next step.
 
+## Phase 3.3, attempt 2: PASSED, second consecutive clean run - identical recipe, fresh disk,
+## no BSOD, real authenticated WinRM again.
+
+Fresh target disk (`win11-phase33-target.qcow2`; attempt 1's disk preserved as
+`win11-phase33-target-attempt1.qcow2` before starting). Same `win11-noprompt.iso`, same
+`autounattend-windows11-phase33.xml` content, same recipe: bypass -> disk config -> image install ->
+QMP eject of both `installcd` and `answercd` at 77% complete (consistent with both prior attempts'
+timing). Watched via `tools/qmp-watch.sh` plus periodic real HTTP checks against the forwarded WinRM
+port (hostfwd 15989), with a `Monitor` checkpoint loop tracking the QEMU process itself.
+
+**Every stage passed again, in the same order, no intervention beyond the one scripted QMP eject:**
+- First reboot landed cleanly on the hard disk - no CD-ROM fallback.
+- Steady, uninterrupted progress through `specialize` (screenshot file sizes ~6.8-7.1KB, matching
+  the known-benign small "Installing X%" servicing screen) through several checkpoints with WinRM
+  correctly returning "no response" (expected - not up yet).
+- WinRM began responding (`HTTP 405` on GET, as expected for the `/wsman` endpoint) at almost exactly
+  the same elapsed-time mark as attempt 1, and screenshot file sizes jumped from ~7KB to 195-250KB in
+  the same interval - the same real-desktop-rendering signature attempt 1 showed. **No crash occurred
+  in or around this window** - the same window where every fully-offline attempt (Findings 8, 12, 13,
+  14) previously BSOD'd without exception.
+- Real, authenticated WinRM confirmed against the finished desktop, same evidentiary bar as attempt
+  1: `hostname` returned `WIN11-P33` (the `specialize` pass's `ComputerName`, unchanged from attempt
+  1's answer file - expected, not a new value, since both attempts used the identical template).
+  `Get-NetAdapter` showed `Intel(R) PRO/1000 MT Network Connection`, `Status: Up`, `LinkSpeed: 1
+  Gbps` - again a fully functional NDIS adapter, not just a PCI-level match. The `FirstLogonCommands`
+  Order-1 marker file (`C:\phase33-firstlogon-marker.txt`) was confirmed present via a direct `type`
+  read over WinRM, containing `firstlogon-reached` - direct proof the full `FirstLogonCommands`
+  sequence executed, not just that WinRM happened to come up.
+- One transient hiccup, noted for completeness rather than treated as a finding: the very first
+  `Get-NetAdapter` call (issued immediately after the first successful `hostname` call) hit a
+  `RemoteDisconnected`/connection-reset error. A retry ~15 seconds later succeeded cleanly. Most
+  likely explanation: `FirstLogonCommands` Order 3's own `Restart-Service WinRM` step landing at
+  almost exactly the same moment as the probe - self-inflicted by the answer file's own WinRM
+  restart, not a sign of instability in the underlying build. Doesn't change the result: a moment
+  later, everything worked normally.
+
+Shut down via QMP `system_powerdown` - honored gracefully again, consistent with attempt 1 and this
+project's established pattern.
+
+**This is the second consecutive clean pass of Phase 3.3's full recipe**, on a completely independent
+fresh disk, with the same result in every particular that matters: no BSOD, real WinRM, real desktop,
+`FirstLogonCommands` fully executed. Combined with attempt 1, this is real evidence the result is not
+a one-off - but per this project's own stated bar (2-3 independent successes, not one), attempt 3 is
+still warranted before calling this reliable, especially given this project's own recent first-hand
+experience of a single clean run not generalizing (Session 13 vs. this session's own four earlier
+scripted failures on the fully-offline pipeline).
+
+**Persistent state that survives** (under `image-apply/output/iso-noprompt/`, gitignored):
+`win11-phase33-target.qcow2` (attempt 2's disk, shut down gracefully) alongside
+`win11-phase33-target-attempt1.qcow2` (attempt 1's disk, preserved). No VM left running, no
+`qemu-nbd` attached.
+
+**Next step**: Phase 3.3, attempt 3 - same recipe, third fresh target disk. If this also passes
+cleanly, treat the Setup.exe-driven approach as confirmed reliable and proceed to Phase 3.4.
+
 ---
