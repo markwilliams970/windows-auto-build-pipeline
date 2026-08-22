@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Phase 2 test artifact for WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md - NOT the real Windows 11
+  unattend.xml (that's unattend-windows11.xml, unchanged). Builds on Phase 1's confirmed-working
+  unattend-windows11-audit-trigger.xml (PHASE3_ENGINEERING_LOG.md Session 4/Finding 10) by adding
+  the one new thing Phase 2 needs to answer: can Sysprep's invocation itself be automated via
+  Microsoft-Windows-Deployment/RunSynchronous, with zero live keystroke driving?
+
+  Two settings passes, both confirmed valid for their respective elements directly from Microsoft's
+  own primary-source schema docs (not assumed):
+    - oobeSystem: Reseal/Mode=Audit (unchanged from Phase 1) - valid only under
+      auditSystem/auditUser/oobeSystem per
+      https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-reseal
+    - auditUser: RunSynchronous/RunSynchronousCommand - valid only under auditUser/specialize per
+      https://learn.microsoft.com/en-us/windows-hardware/customize/desktop/unattend/microsoft-windows-deployment-runsynchronous
+      auditUser was chosen over specialize since specialize already ran during this same disk's
+      one and only real Setup-style pass sequence before Audit Mode was reached, and auditUser is
+      the pass Microsoft's own docs describe as "typically used to execute RunSynchronous...
+      commands... during audit mode" (https://learn.microsoft.com/en-us/windows-hardware/
+      manufacture/desktop/audituser) - explicitly confirmed there that this requires NO explicit
+      Administrator-account/autologon setup on our part (the built-in Administrator account is
+      auto-enabled and auto-signed-in specifically to run these commands, exactly what Phase 1
+      already observed happening on its own).
+
+  Per Microsoft's own "Use Answer Files with Sysprep" doc: "Sysprep processes all RunSynchronous
+  commands in order" automatically - the AuditUI window Phase 1 saw (the System Preparation Tool
+  dialog) is a STATUS display for these commands, not something requiring a click to advance. This
+  is the primary-source basis for expecting this command to run with no interaction, matching the
+  plan's own Phase 2 goal of avoiding live keystroke automation.
+
+  WillReboot=Never: sysprep's own /shutdown flag terminates the machine directly as a side effect
+  of the command itself, not by returning a code for Windows Setup to act on - Setup's WillReboot
+  handling wouldn't get a chance to run either way, but Never is the semantically honest choice
+  (this command's own action already handles shutdown; Setup shouldn't also try to reboot).
+
+  cmd.exe wrapper + log redirection matches this project's own established FirstLogonCommands
+  convention (unattend-windows11.xml's pnputil/WinRM steps) rather than inventing a new pattern.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <Reseal>
+        <Mode>Audit</Mode>
+      </Reseal>
+    </component>
+  </settings>
+
+  <settings pass="auditUser">
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Description>Run Sysprep generalize/oobe/shutdown automatically - Phase 2 of WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md</Description>
+          <Path>cmd.exe /c C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown &gt; C:\audit-sysprep-log.txt 2&gt;&amp;1</Path>
+          <WillReboot>Never</WillReboot>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+</unattend>

@@ -660,4 +660,84 @@ a `RunSynchronous` command (or researched equivalent) that runs `sysprep /genera
 automatically once Audit Mode is reached, on a fresh disk, confirming the VM powers itself off on its
 own afterward with no live keystroke driving required.
 
+### Finding 11: `RunSynchronous` under the `auditUser` pass does automate Sysprep's invocation with
+### zero live keystroke driving - Phase 2 confirmed, and the same run also answers Phase 3's driver-
+### tolerance question since this disk already carries the normal viostor/netkvm injection
+
+Built a second completely fresh Windows 11 disk (`windows11-auditphase2.qcow2`) through the same
+unmodified `partition-disk.sh`/`apply-image.sh`/`make-bootable.sh` sequence (so, like every real
+build, it carries the normal offline viostor/netkvm `DriverDatabase` injection - not a stripped-down
+disk). Extended Phase 1's confirmed-working trigger XML with a second settings pass, written up as
+`image-apply/unattend-windows11-audit-sysprep.xml`:
+
+- `oobeSystem`: `Reseal`/`Mode=Audit` (unchanged from Phase 1)
+- `auditUser`: `Microsoft-Windows-Deployment`/`RunSynchronous`/`RunSynchronousCommand` running
+  `cmd.exe /c C:\Windows\System32\Sysprep\sysprep.exe /generalize /oobe /shutdown > C:\audit-sysprep-log.txt 2>&1`,
+  `WillReboot=Never` - confirmed from Microsoft's own primary-source docs before writing this that
+  `RunSynchronous` is valid only under `auditUser`/`specialize` (not `auditSystem`), and that
+  `auditUser`'s own doc explicitly states no explicit Administrator-account/autologon setup is
+  needed - the built-in Administrator account is auto-enabled and auto-signed-in specifically to run
+  these commands, matching what Phase 1 already observed happening on its own.
+
+Offline-dropped this to the same `%WINDIR%\Panther\unattend.xml` path, booted solo (identical device
+model to Phase 1 - `virtio-blk-pci`/`q35`/`accel=kvm`/`cpu host`), watched via `tools/qmp-watch.sh`
+(20s interval) while a separate `Monitor` watch polled for the QEMU process to exit on its own.
+**Result: unambiguous, hands-off success:**
+
+- The boot reached the same built-in-Administrator "Preparing Windows" screen Phase 1 showed - but
+  this time it **never proceeded to a visible interactive desktop at all**. It stayed on "Preparing
+  Windows" for roughly 80 seconds (consistent with `RunSynchronous` processing happening during
+  `auditUser`'s own logon-context pass, before `explorer.exe`/the shell ever gets control - not
+  something this project had reason to expect going in, but consistent with `auditUser` running
+  "in user context," per its own doc), then **the QEMU process exited entirely on its own** with no
+  further screenshots possible (`qmp-screenshot.py`'s next attempt failed with a plain
+  `FileNotFoundError` on the socket path - the whole process, not just the guest, was gone).
+- Confirmed via offline remount afterward (`ntfs-3g` mounted **read-write successfully**, itself a
+  signal of a clean prior shutdown, not the read-only fallback Session 3 saw after an unclean one):
+  Sysprep's own `setupact.log` shows a completely normal `/generalize /oobe /shutdown` run ending in
+  `SYSPRP FCreateTagFile:Successfully created tag file
+  C:\Windows\System32\Sysprep\Sysprep_succeeded.tag` - Windows' own definitive internal
+  success marker, not this project's inference - followed immediately by
+  `SYSPRP ProcessShutdown:Successfully called InitiateSystemShutdownEx to shutdown the computer`.
+- Two non-fatal errors appear in the same log and are worth recording so a future session doesn't
+  mistake them for something this project's own driver injection caused: `SPPNP: Failed to queue
+  enumerated driver packages. Err = 0x57` during the generic "Sysprep Generalize Drivers" task
+  (immediately preceded by a string of `Unable to uninstall device ROOT\<X>\0000. Err = 0xE0000231`
+  lines for **platform root-enumerated devices** - `VOLMGR`, `BASICDISPLAY`, `SPACEPORT`,
+  `ACPI_HAL`, `BASICRENDER` - not `viostor`/`netkvm` by name at all, a well-documented,
+  widely-reported generic Sysprep quirk seen on plenty of stock Windows installs with zero custom
+  driver injection); and `BCD: BiUpdateEfiEntry failed c000000d` / `BiExportBcdObjects failed` /
+  `BiExportStoreAlterationsToEfi failed` (about exporting the generalized BCD store to UEFI NVRAM
+  firmware variables specifically - a known common OVMF/QEMU-environment quirk, distinct from the
+  primary on-disk BCD store update, which the very next log line confirms succeeded separately:
+  `Sysprep_Generalize_Bcd: Successfully generalized the bcd store. Status=[0x0]`). Neither error
+  blocked the success tag from being written.
+
+This resolves `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s Phase 2 outright (RunSynchronous works, no
+live keystroke driving needed, matching the plan's stated preference over its own QMP-keystroke
+fallback) and **also substantively answers Open Question 3 / the plan's own Phase 3** ("Does
+Sysprep's `/generalize` pass tolerate this project's offline `hivex`-injected virtio drivers
+cleanly?") - because this test disk was never a stripped-down minimal one; it carries the exact same
+driver injection every real build produces, and Sysprep completed successfully against it. This
+doesn't yet confirm the drivers still function correctly on the *next* real boot after generalize
+(that needs an actual Phase 4/5 end-to-end run, since PnP re-detects and reconfigures devices during
+the following `specialize` pass) - but there's no evidence here of a Sysprep-level validation
+rejection of this project's injection approach, which was the specific risk Finding 9 flagged.
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored):
+`windows11-auditphase2.qcow2` - a real, confirmed-good disk that completed a live `/generalize /oobe
+/shutdown` cycle and is now genuinely Sysprep-prepared, sitting powered off, ready for the real
+final `apply-unattend.sh` drop and a real customer-facing first boot (the next real thing to test,
+whether by hand or once Phase 4 formalizes this into a script). `windows11-auditphase1.qcow2` (Phase
+1's disk, Sysprep never run) also still survives. No VM left running, no `qemu-nbd` attached,
+environment fully clean at session end (confirmed via `pgrep`/`mount`).
+
+**Next steps:** `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md` Phase 4 - write the real
+`image-apply/audit-mode-sysprep.sh` script (mirroring `image-apply/*.sh`'s existing conventions) and
+wire it into the pipeline between `make-bootable.sh` and `apply-unattend.sh`, for `windows11` only.
+Phase 5 (full end-to-end validation, 2-3 independent successful builds) follows once Phase 4 exists
+- and should include actually booting past Sysprep's post-generalize `specialize` pass to confirm
+the virtio drivers genuinely still work post-Sysprep, not just that Sysprep itself didn't reject
+them.
+
 ---

@@ -184,7 +184,7 @@ framebuffer straight to a PNG on disk. No VNC client, no window, no window manag
 session required at all — this works identically whether the host has a desktop session open or
 not.
 
-Two small tools implement this, in `tools/`:
+Several small tools implement this, in `tools/`:
 
 - **`tools/qmp-screenshot.py`** — one-shot capture: `--socket <qmp.sock> --out <shot.png>`. Stdlib
   only (`socket` + `json`), no dependencies. Confirmed working end-to-end against a real QEMU
@@ -192,6 +192,31 @@ Two small tools implement this, in `tools/`:
 - **`tools/qmp-watch.sh`** — loops the above at a configurable interval/count with timestamped
   filenames, for watching a boot sequence unfold frame-by-frame (e.g. diagnosing UEFI boot-prompt
   timing) instead of guessing at keystroke/timing parameters blindly.
+- **`tools/qmp-sendkey.py`** — sends one or more key combos (QEMU monitor `sendkey` syntax, e.g.
+  `alt-tab`, `ret`, `shift-f10`) — works against a plain PS/2 keyboard, no extra device needed.
+- **`tools/qmp-click.py`** / **`tools/qmp-type.py`** — absolute-position mouse clicks and literal
+  text typing. **Require a USB tablet device on the target VM** — see the gotcha immediately below;
+  without it these two tools cannot work at all, not just work inaccurately.
+
+**Known gotcha — mouse clicks need a USB tablet device, or they silently can't work.** A qemu guest's
+default pointer is a relative PS/2 mouse, which `qmp-click.py`'s absolute-position clicks cannot
+drive at all in this project's WinPE/Setup/Audit-Mode environments (confirmed directly: relative
+`"rel"` QMP input-send-event calls succeed with no error, but the guest's on-screen cursor never
+moves — `windows-auto-build-pipeline` `PHASE3_ENGINEERING_LOG.md` Session 4/Finding 10). The sibling
+project (`../windows-server-vm-automation/register-vm.sh`) hit and fixed the identical problem for
+its own VNC/SPICE console access via libvirt domain XML: `<input type='tablet' bus='usb'/>`, with
+its own comment explaining why — *"Without this, libvirt defaults to a relative PS/2 mouse, which
+desyncs from the VNC/SPICE client's absolute cursor position and makes the console unusable (clicks
+land somewhere other than the visible cursor). A USB tablet reports absolute coordinates, so guest
+and client cursors always agree."* This project's own ad hoc `qemu-system-x86_64` invocations don't
+use libvirt domain XML, so the equivalent fix is two raw device flags, needed on **any** invocation
+this project builds that might ever need `qmp-click.py` (not specific to Windows 11, or to any one
+phase — general-purpose, add it up front rather than rediscovering the gap each time):
+`-device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0`. `make-bootable.sh`'s own
+`qemu-system-x86_64` invocation does not currently include this (it has never needed mouse clicks),
+and neither did Session 4's ad hoc solo-boot command — that session had to fall back to
+keyboard-only `Alt+Tab`/`Escape` navigation via `qmp-sendkey.py` instead, which happened to be
+sufficient there but won't always be.
 
 **Convention going forward**: whenever a `qemu-system-x86_64` invocation is constructed for testing
 or experimentation in this project (not necessarily Packer-managed builds — see caveat below), add

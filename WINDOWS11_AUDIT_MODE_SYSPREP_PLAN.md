@@ -2,16 +2,20 @@
 
 ## Status
 
-**Option B chosen. Phase 1 complete and confirmed — see `PHASE3_ENGINEERING_LOG.md` Session 4,
-Finding 10.** The plan's single biggest unverified assumption (does the offline-drop delivery
-mechanism trigger Audit Mode at all, in a Setup.exe-free pipeline) is now empirically confirmed
-true: a fresh Windows 11 disk, offline-dropped with a minimal `Reseal`/`Mode=Audit` answer file at
-the same `%WINDIR%\Panther\unattend.xml` path already proven for specialize/oobeSystem, booted
-straight to the built-in Administrator account with no OOBE screen and auto-launched the real
-Sysprep GUI — an exact match to Microsoft's documented behavior. Phase 2 (automating Sysprep's
-invocation via `RunSynchronous`, without live keystroke driving) is next. Treat every claim in
-Phases 2-5 below as still "verify before trusting" — only Phase 1 has been tested empirically so
-far.
+**Option B chosen. Phases 1 and 2 complete and confirmed — see `PHASE3_ENGINEERING_LOG.md` Session
+4, Findings 10-11.** The plan's two biggest unverified assumptions are now both empirically
+confirmed true: (1) the offline-drop delivery mechanism triggers real Audit Mode entry (fresh
+Windows 11 disk → built-in Administrator account, no OOBE, real Sysprep GUI auto-launched — exact
+match to Microsoft's documented behavior), and (2) `Microsoft-Windows-Deployment`/`RunSynchronous`
+under the `auditUser` pass automates Sysprep's own invocation with **zero live keystroke driving** -
+the VM ran `sysprep /generalize /oobe /shutdown` on its own and powered itself off, with Windows'
+own `Sysprep_succeeded.tag` confirming a clean completion. That same test disk carried this
+project's normal offline viostor/netkvm driver injection (not a stripped-down disk), so it also
+substantively answers Open Question 3 / Phase 3 below - Sysprep did not reject the disk over the
+non-standard injection. Phase 4 (write the real `image-apply/audit-mode-sysprep.sh` script) is next.
+Treat every claim in Phases 3-5 below as still "verify before trusting" in its fullest sense - Phase
+3's remaining open piece is confirming the injected drivers still *function* after the post-Sysprep
+`specialize` pass reprocesses them, not just that Sysprep didn't reject them outright.
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s Session 3 (Findings 7-9) before touching anything below** —
 this document only makes sense in that context. Short recap: a completely fresh, hands-off Windows
@@ -129,6 +133,11 @@ default). Two candidates, needing their own verification:
    already proven working live this session (Finding 7's keyboard-layout-screen workaround), so it's
    a known-viable fallback, not a hypothetical, but should be the second choice, not the first.
 
+**If (2) is ever used, or any future phase needs `tools/qmp-click.py` (mouse clicks, not just
+keystrokes)**: see CLAUDE.md's "VM screen inspection" section for the required USB tablet device
+flags — this is a project-wide gotcha, not specific to Windows 11 or to this plan, so it's
+documented there rather than duplicated here.
+
 ---
 
 ## Open questions to resolve, in the order they'd actually block progress
@@ -175,18 +184,22 @@ Administrator desktop with no OOBE screen of any kind (matches Audit Mode's own 
 behavior). Failure here is a hard stop on Option B entirely — reconsider Option A if this doesn't
 work.
 
-**Phase 2 — automate Sysprep's invocation without live keystroke driving.**
-Extend the same minimal unattend.xml with a `RunSynchronous` command (or researched equivalent)
-that runs `sysprep /generalize /oobe /shutdown` automatically once Audit Mode is reached. Confirm
-the VM powers itself off on its own afterward (poll via `pgrep`, matching this project's existing
-graceful-shutdown pattern). If `RunSynchronous` doesn't work as expected, fall back to the
-QMP-keystroke method proven in Finding 7 as a documented, known-viable alternative — not silently,
-note it explicitly if used.
+**Phase 2 — DONE, confirmed (`PHASE3_ENGINEERING_LOG.md` Session 4/Finding 11). Automate Sysprep's
+invocation without live keystroke driving.**
+`RunSynchronous` under the `auditUser` pass worked on the first attempt - no QMP-keystroke fallback
+needed. The VM ran `sysprep /generalize /oobe /shutdown` fully unattended and powered itself off on
+its own, confirmed via Windows' own `Sysprep_succeeded.tag` marker in `setupact.log`.
 
-**Phase 3 — confirm Sysprep tolerates the offline-injected drivers.**
-Repeat Phase 2 against a disk that's gone through the *full* `make-bootable.sh` (both viostor and
-netkvm `DriverDatabase` injection, not a minimal disk) — confirm Sysprep completes without a
-validation error. This is where question 3 above gets a real answer.
+**Phase 3 — substantively answered by the same Session 4/Finding 11 run, one piece still open.
+Confirm Sysprep tolerates the offline-injected drivers.**
+The Phase 2 test disk was never a stripped-down minimal one - it went through the *full*
+`make-bootable.sh` (both viostor and netkvm `DriverDatabase` injection), and Sysprep completed
+successfully against it (two non-fatal, generic log errors observed, neither naming `viostor`/
+`netkvm` - see Finding 11 for the full detail on why both are almost certainly unrelated to this
+project's own injection approach). **Still open**: whether the drivers *function* after the
+post-Sysprep `specialize` pass re-processes the disk on its next real boot - Sysprep not rejecting
+the disk is necessary but not sufficient evidence of that. Phase 5's end-to-end validation should
+confirm this explicitly (real WinRM connectivity depends on the virtio-net driver surviving intact).
 
 **Phase 4 — write the real `image-apply/audit-mode-sysprep.sh` and wire it into the pipeline.**
 Once Phases 1-3 confirm the mechanism works, formalize it as a real script (mirroring the existing
