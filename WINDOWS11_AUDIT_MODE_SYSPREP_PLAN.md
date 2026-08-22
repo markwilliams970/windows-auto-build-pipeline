@@ -2,6 +2,21 @@
 
 ## Status
 
+**CLOSED - HARD STOP, by explicit direction. Option B does not solve Finding 8's BSOD; neither did
+Option A. See `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) for the complete,
+consolidated record of both options and why this pathway is closed rather than being iterated on
+further. Short version: the fault is a timing-/scheduling-sensitive kernel-level NTFS crash during
+Windows 11's real first boot, present under both the fully-offline architecture (Option A) and this
+plan's Audit-Mode-+-Sysprep architecture (Option B) alike; a full audit ruled out this project's own
+code, environment, and input media as the cause; and multi-angle research found no community
+precedent for the exact combination. Next step is a new research question - how Windows 11
+unattended builds are actually done successfully elsewhere - not a third variant of this plan.**
+
+Preserved below as the historical record of what Option B actually was and what it found - not
+maintained as a live plan going forward.
+
+---
+
 **Phases 1, 2, and the mechanical half of Phase 4 succeeded on their own terms — but Phase 5's real
 end-to-end validation then failed outright, contradicting this plan's own central hypothesis. See
 `PHASE3_ENGINEERING_LOG.md` Session 4, Finding 12 for the full record; summary below.**

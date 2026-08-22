@@ -599,11 +599,20 @@ bugs above).
 not just "untested but presumably fine"**: an interactive OOBE screen unattend settings alone can't
 suppress, and a real kernel-level NTFS BSOD, both root-caused to Windows actually processing a valid
 `unattend.xml` (not the offline write that delivers it). Server 2022/2025 show none of this. See
-`PHASE3_ENGINEERING_LOG.md` Session 3 (Findings 7-9) for the full trail, and
-`WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md` for a not-yet-started research/execution plan for the
-better-supported fix (a Windows-11-only Audit Mode + Sysprep cycle, matching Microsoft's own real
-OEM manufacturing flow) — a real architecture decision, explicitly left open rather than picked
-unilaterally.
+`PHASE3_ENGINEERING_LOG.md` Session 3 (Findings 7-9) for the full trail.
+
+**HARD STOP on the fully-offline (Setup.exe-free) Windows 11 pathway, by explicit direction, as of
+Session 4.** Both architectural options this project considered — staying fully offline (Option A)
+and inserting a live Audit Mode + Sysprep cycle matching Microsoft's own OEM manufacturing flow
+(Option B, `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`) — were pursued to a real, evidence-backed
+conclusion and both terminate at the identical BSOD. A full audit ruled out this project's own code,
+host environment, and input media as the cause (byte-identical to the one hand-run build that did
+succeed); multi-angle research found no community precedent for the exact combination. See
+`PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) for the complete record.
+**Server 2022/2025's production pipeline is unaffected and remains confirmed production-ready** —
+none of the Windows-11-specific work is in its code path. Next step for Windows 11 is a new research
+question (how unattended Windows 11 builds are actually done successfully elsewhere), not a further
+variant of Option A/B — not yet started as of this entry.
 
 ---
 

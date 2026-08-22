@@ -1093,4 +1093,126 @@ worth considering whether anything about this host specifically (CPU generation,
 virtio-win driver version `0.1.285` itself) is implicated, versus something that would reproduce on
 any KVM host. Flagged for the user, not decided unilaterally.
 
+## HARD STOP: the fully-offline (Setup.exe-free) Windows 11 build pathway is closed, per explicit
+## direction. Both architectural options this project explored end at the same unresolved fault.
+## Documented here in full so the next phase of work (researching how Windows 11 is actually built
+## unattended elsewhere) starts from a complete record, not a partial one.
+
+### Summary of the full trail, both options, in one place
+
+This project's Windows 11 work branched into two architectural options at Session 3's Finding 9, and
+this session (Session 4) pursued Option B to a real, evidence-backed conclusion. Combined with
+Session 3's own earlier work on Option A, both options terminate at the identical underlying fault.
+Restating the whole arc here, not just cross-referencing it, so a future session (or a person) can
+understand the full shape of what was tried without reconstructing it from eleven separate findings:
+
+**The fault itself.** A fresh Windows 11 disk, built via this project's offline `wimlib`-apply +
+WinPE-`bcdboot` + offline-`unattend.xml`-drop pipeline (the same pipeline that works cleanly and
+repeatedly for Windows Server 2022/2025), blue-screens during its real, customer-facing first boot -
+specifically during or immediately after the `specialize`/`oobeSystem` configuration passes process a
+valid answer file containing `AutoLogon`. Two specific stop codes recur, in the same order, whenever
+this fault has been triggered: `PAGE_FAULT_IN_NONPAGED_AREA (0x50)` (explicitly naming `Ntfs.sys` as
+the failing module) first, then an automatic reboot into `KMODE_EXCEPTION_NOT_HANDLED (0x1E)`, landing
+on an unattended WinRE "Choose your keyboard layout" recovery screen that hangs indefinitely without
+manual input - a dead end this pipeline cannot recover from unattended.
+
+**Option A (fully offline, no live boot before the customer-facing one - Session 3, Findings 7-8).**
+The original architecture. Bisection conclusively isolated the trigger to Windows *processing* a
+valid `unattend.xml` during a real boot (not the offline file-write that delivers it - a
+deliberately-invalid file exercising the identical write path was harmless). Both stop codes above
+were observed here first, each on an independent from-scratch disk. Never observed on Server
+2022/2025 despite six-plus independent successful builds through the identical shared pipeline code,
+including real, disk-intensive role provisioning (AD DS, IIS, SQL Server) - this is Windows-11
+specific, not a latent defect in the shared machinery.
+
+**Option B (insert a live Audit Mode + Sysprep cycle before the customer-facing boot, matching
+Microsoft's own real OEM manufacturing flow - Session 4, this session, Findings 9-15).** Hypothesis:
+a live Sysprep `/generalize` pass would re-validate the disk enough to prevent the fault, since that
+is exactly the scenario Sysprep's own validation exists to make safe. Built and confirmed real,
+working automation for the *mechanism* itself - Findings 10-11 confirmed the offline-drop trigger
+reaches real Audit Mode with no OOBE screen (exact match to Microsoft's documented behavior), and that
+`RunSynchronous`/`auditUser` automates Sysprep's own invocation with zero live keystroke driving. The
+real, production `image-apply/audit-mode-sysprep.sh` script (Finding 12) works exactly as designed,
+confirmed via Windows' own `Sysprep_succeeded.tag` marker, not inferred. **But the hypothesis itself
+was falsified**: a disk that had just completed a fully successful, verified Sysprep cycle still hit
+the identical fault on its very next real boot (Finding 12), reproduced with `ntfsfix`'s `$LogFile`
+reset applied beforehand (Finding 13, ruling out journal staleness as the mechanism), and reproduced
+again on two further bisected variants that removed `FirstLogonCommands` content entirely, down to
+just `specialize` + `AutoLogon` with zero first-logon scripting (Finding 14) - narrowing the trigger
+to the `specialize`/`AutoLogon` skeleton itself, independent of anything this project's own tooling
+adds.
+
+**The "is it even our code" check (Finding 15).** The one genuinely successful Windows 11 build this
+project ever produced (`PHASE2_ENGINEERING_LOG.md` Session 13, hand-run, predating both Sysprep and
+the formalized `image-apply/*.sh` scripts) still survives on disk and still resumes cleanly today.
+Every static input the current pipeline depends on was directly verified - not assumed - against what
+produced that success: every git-tracked script (byte-identical since the commit that confirmed
+Server 2022/2025 success through the same code), the WinPE medium's own baked-in boot logic
+(byte-identical), host packages and kernel (zero changes, literally the same running kernel instance
+since before that success), firmware and source media (unchanged, predate it by weeks to months), and
+cached WIM/driver extractions (byte-identical to fresh re-extraction, confirmed via checksum). **Zero
+difference found anywhere.** Combined with four independent, fully deterministic reproductions of the
+identical two-stop-code fault this session alone, the most defensible explanation is a timing- or
+scheduling-sensitive fault in Windows 11's own first-boot processing under this host's KVM/virtio
+emulation - real, reproducible *within a given session's execution conditions*, but not tied to any
+fixed input this project's own tooling controls.
+
+**Research pass (this session, prompted by "we can't be the first to encounter this").** Nine
+distinct web-search angles (literal stop codes, DISM/offline-apply framing, KVM/QEMU/virtio framing,
+GitHub-native search of the `virtio-win` project itself) plus direct fetches of the two closest-hit
+GitHub issues found real, credible, but non-matching context: Windows 11 + virtio storage devices are
+a documented general category of BSOD risk (`virtio-win-pkg-scripts` #105: `0x18B
+SECURE_KERNEL_ERROR`, a specific April 2025 Windows Update KB interacting with a driver version,
+already fixed via Microsoft's Known Issue Rollback; `kvm-guest-drivers-windows` #730: `netkvm.sys`
+`IRQL_NOT_LESS_OR_EQUAL` under sustained network load on Server 2016) - but nothing combining our
+exact stop codes with `unattend.xml`/OOBE/offline-deployment keywords, anywhere. Working assessment:
+this project's build mechanism (genuinely Setup.exe-free from partition to first boot) is itself
+unusual - most real-world unattended Windows 11 deployment tooling (MDT, SCCM, Autopilot, Packer's own
+Windows plugins) still routes through Setup.exe or a live-booted WinPE-driven image-capture/apply
+cycle at some point. This project's approach exists specifically because the sibling project's
+Setup.exe-driven path hit its own unrelated boot-timing bug
+(`HANDOFF_FROM_UNATTENDED_INSTALL.md`/`PHASE2_ENGINEERING_LOG.md` Findings 15-28) - not because
+Setup.exe itself is known-broken for Windows 11 in general. The community-precedent gap is plausibly
+explained by how few deployments are built exactly this way, not by this being an impossible or
+already-solved problem going unfound.
+
+### Decision: HARD STOP on this pathway, by explicit direction
+
+Both architectural options available within "apply the Windows image and make it bootable entirely
+offline, no Setup.exe, no live boot before the customer-facing one" terminate at the same fault, with
+strong, multi-angle evidence (not a hunch) that further iteration *within this pathway* is unlikely to
+converge:
+- The fault is not caused by anything in this project's own control (Finding 15 rules out code,
+  environment, host state, and input media exhaustively).
+- The fault is not caused by `FirstLogonCommands` content, driver injection specifically, or `$LogFile`
+  staleness (Findings 13-14 each directly tested and ruled out a specific, plausible mechanism).
+- No community precedent exists for the exact combination, despite genuine multi-angle research
+  effort - this is very likely an edge case of a genuinely uncommon deployment mechanism, not a
+  known-and-solved problem this project simply hasn't found yet.
+- Repeating either option again would be attempting the identical thing and expecting a different
+  result, per explicit user direction - not a productive next step.
+
+**This does not retroactively invalidate anything already proven and shipped.** Server 2022/2025's
+production pipeline (`image-apply/*.sh`, `packer/boot-and-provision.pkr.hcl`, `build.sh`) is
+unaffected, uses none of the Windows-11-specific code added this session, and remains confirmed
+production-ready on its own six-plus-build evidentiary bar. The underlying *tools* this project
+proved out along the way - offline `wimlib` image application, BCD-SYS/WinPE-`bcdboot` bootability,
+offline `hivex` driver injection, QMP-based hands-off VM observation - are not implicated by this
+fault and remain valid, reusable techniques; what's specifically closed is the *combination* of
+"entirely Setup.exe-free" with "Windows 11 client SKU."
+
+### Next phase of work (not started - a new research question, not a continuation of Option A/B)
+
+Per explicit direction: research how Windows 11 unattended builds are actually, successfully
+accomplished elsewhere, as a precondition for designing whatever this project's Windows 11 pathway
+becomes next - rather than deriving a third option from first principles the way Options A and B
+were. This is a genuinely different question than anything investigated so far (which only ever
+asked "why does our specific mechanism fail," not "what do working mechanisms actually do"), and per
+this project's own "research-first discipline" standard, deserves the same multi-angle,
+primary-source-verified treatment - including specifically checking whether any credible, working
+approach still avoids Setup.exe (matching this project's own standing rule and its origin reason) or
+whether that constraint itself needs to be revisited for Windows 11 specifically, now that the
+Setup.exe-free path has been shown to have its own real, currently-unsolved failure mode. Not yet
+begun as of this entry.
+
 ---
