@@ -63,7 +63,8 @@ reinvent wherever the two overlap:
   overlay, for testing changes in minutes instead of a full rebuild).
 - **Do not reuse**: anything related to `boot_command`, VNC keystroke injection, or
   `autounattend.xml`'s `Microsoft-Windows-Setup` disk-partitioning/image-selection component. That
-  entire mechanism is what this project exists to replace.
+  entire mechanism is what this project exists to replace. **Server 2022/2025: this ban is absolute,
+  no exception. Windows 11: partially relaxed — see the second "RECONSIDERED" note below.**
 
   **RECONSIDERATION CLOSED as of `PHASE2_ENGINEERING_LOG.md`'s Findings 15-28: rule is back in
   force, do not reuse `Microsoft-Windows-Setup`.** This rule was temporarily relaxed when Setup.exe
@@ -78,6 +79,34 @@ reinvent wherever the two overlap:
   or plain (non-Setup) WinPE `bcdboot`, with driver injection solved offline via `hivex`, exactly as
   this rule originally specified. `boot_command`/VNC keystroke injection remain correctly banned
   regardless, for the original reason (they solve a boot-prompt problem that doesn't exist here).
+
+  **RECONSIDERED AGAIN, Windows 11 only, as of `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section
+  (end of Session 4): the ban on `Microsoft-Windows-Setup` is relaxed for Windows 11 specifically —
+  Server 2022/2025 stay fully banned from it, unchanged, no exception.** This is not a reversal on a
+  whim: the fully-offline approach this rule protects (apply → bootable → specialize → real first
+  boot, no Setup.exe anywhere) was pursued for Windows 11 through two full architectural variants —
+  staying entirely offline (Option A, Session 3) and inserting a live Audit Mode + Sysprep cycle
+  matching Microsoft's own OEM manufacturing flow (Option B, Session 4) — and **both terminate at
+  the identical, deterministic, kernel-level NTFS BSOD** during Windows 11's real first boot. A full
+  audit ruled out this project's own code, host environment, and input media as the cause; targeted
+  research found no community precedent for the exact combination. See the HARD STOP section for
+  the complete evidentiary record before assuming this note alone justifies anything.
+
+  **What's actually different this time, so this doesn't quietly re-open the door Findings 19/24/
+  25/27/28 closed**: `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` (Phase 3) proposes driving Setup.exe
+  via an ISO patched with Microsoft's own, officially-shipped `_noprompt` boot files
+  (`efisys_noprompt.bin`/`cdboot_noprompt.efi` — genuine 15-year-old Microsoft tooling, verified
+  present on this project's own cached install media, not a community hack) — this *eliminates* the
+  "press any key" prompt by construction, rather than timing a keystroke against it — combined with
+  a hand-built `qemu-system-x86_64` invocation using this project's own already-proven `bootindex=`
+  device control (not Packer's QEMU builder, whose own documented inability to set UEFI boot order
+  is what both this project's and the sibling project's prior Setup.exe investigations were actually
+  blocked on). **`boot_command`/VNC keystroke injection remain banned, for Windows 11 too** — this
+  relaxation does not readmit them; the whole point of the new approach is that no keystroke race
+  exists to drive in the first place. Whether `EarlyF6DriverInstall` or some other Setup.exe gate
+  refires under this different boot-medium shape is explicitly unconfirmed and is exactly what
+  `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`'s own Phase 3.1-3.2 gates test before anything is
+  trusted — treat this note as permission to attempt the plan, not confirmation the plan works.
 
 ---
 
