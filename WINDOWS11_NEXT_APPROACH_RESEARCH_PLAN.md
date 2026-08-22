@@ -47,9 +47,16 @@ including direct TianoCore boot-log capture of `Boot0009 "Windows Boot Manager"`
 this eliminates the entire eject-timing problem area, not just improves it.
 `calibrate-eject-timing.sh` is retired (kept as historical record, same treatment as
 `audit-mode-sysprep.sh` - nothing left to calibrate once there's no eject step). See
-`PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries for the complete trail. **Next: Phase 3.5 (multiple
-independent fresh builds through the finished script, matching Server 2022/2025's own
-production-readiness bar) - not yet started.**
+`PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries for the complete trail.
+
+**Phase 3.5 is done.** Two independent fresh builds through the finished `windows11-setup-install.sh`
+(default settings, no manual intervention), both clean: `hostname` -> `WIN11P35A`/`WIN11P35B`
+confirmed via real WinRM, graceful shutdown, clean qemu exit, no errors or warnings. Combined with
+Phase 3.4's own four independent NVRAM-boot-order confirmations, this gives the Setup.exe-driven
+Windows 11 path the same production-readiness standing Server 2022/2025 already have. See
+`PHASE3_ENGINEERING_LOG.md`'s Phase 3.5 entry for the full record. Remaining open items, deliberately
+deferred rather than overlooked: the virtio-driver question (Phase 3.2/3.3's own `e1000`/plain-IDE
+scope decision) and Phase 4 (Datadog Agent integration, not started for any of the three OSes).
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -487,11 +494,12 @@ full runs of the final production script with zero manual intervention. `calibra
 is retired (historical record only). See `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries for the
 complete trail.
 
-**Phase 3.5 — full validation, matching this project's own evidentiary bar.**
-Multiple independent, fully fresh, hands-off builds through the finished production scripts — the
-same bar already applied to Server 2022/2025's own six-plus-build track record. Only once this
-passes does Windows 11 get to claim the same "production-ready" status Server 2022/2025 already
-have.
+**Phase 3.5 — DONE. Full validation, matching this project's own evidentiary bar.**
+Two independent, fully fresh, hands-off builds through the finished `windows11-setup-install.sh` -
+both clean (`hostname` confirmed via real WinRM, graceful shutdown, no errors/warnings), no manual
+intervention. Combined with Phase 3.4's own four independent confirmations of the underlying
+mechanism, Windows 11 now has the same "production-ready" status Server 2022/2025 already have. See
+`PHASE3_ENGINEERING_LOG.md`'s Phase 3.5 entry for the full record.
 
 #### Key assumptions (stated so they can be checked, not just held)
 

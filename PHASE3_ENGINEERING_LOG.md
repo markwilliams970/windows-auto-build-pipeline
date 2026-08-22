@@ -1901,3 +1901,41 @@ started. The virtio-driver question (Phase 3.2/3.3's own deliberate `e1000`/plai
 remains open and deferred, unaffected by this session's findings.
 
 ---
+
+## Phase 3.5: production-readiness validation - two independent fresh builds through the finished
+## `windows11-setup-install.sh`, both clean, both fully unattended.
+
+Two fresh target disks, default script settings, no manual QMP intervention at any point (only
+periodic read-only `ps`/log checks to track progress - no decisions made externally, matching how a
+real invocation of this script actually runs). Screenshot-polling cadence was relaxed significantly
+compared to earlier phases' close-interval watching, since there's no longer a timing-sensitive
+window to catch - the whole point of the Phase 3.4 design change.
+
+**Build 1** (`windows11-phase35-build1.qcow2`, `ComputerName=WIN11P35A`): booted cleanly, ran
+unattended for ~14m54s to real WinRM confirmation (`hostname` -> `WIN11P35A`), shut down gracefully
+via QMP `system_powerdown`, clean qemu exit. No errors, no warnings, no manual steps.
+
+**Build 2** (`windows11-phase35-build2.qcow2`, `ComputerName=WIN11P35B`): fresh disk, same recipe,
+ran unattended for ~14m50s to real WinRM confirmation (`hostname` -> `WIN11P35B`), same graceful
+shutdown and clean exit. No errors, no warnings, no manual steps.
+
+**Both runs landed within a tight, consistent window (~14:50-14:54) of this session's own earlier
+production-validation run (Phase 3.4's own final run) and the two hand-run NVRAM tests before it** -
+five independent runs now, all in the same rough timing neighborhood on this host, none needing any
+timing-sensitive intervention. Combined with Phase 3.4's own four independent NVRAM-boot-order
+confirmations, this is `windows11-setup-install.sh` meeting the same evidentiary bar (2-3+ independent
+clean runs) this project has held every other successful mechanism to.
+
+**Persistent state**: `windows11-phase35-build1.qcow2` and `windows11-phase35-build2.qcow2` (~15GB
+and ~13GB) both kept as production-readiness reference disks, alongside `windows11-phase34-
+validate2.qcow2` from Phase 3.4's own final run - three real, independently-built, WinRM-confirmed
+Windows 11 disks via the finished script. No VM running, no `qemu-nbd` attached, confirmed via
+`pgrep`.
+
+**Phase 3.5 is done.** Windows 11's Setup.exe-driven build path now has the same production-readiness
+standing Server 2022/2025 already had. Remaining open items, unaffected by this phase and deferred
+deliberately, not overlooked: the virtio-driver question (Phase 3.2/3.3's own `e1000`/plain-IDE scope
+decision - untested with this pipeline), and Phase 4 (Datadog Agent integration), which applies to
+all three OSes equally and hasn't been started for any of them.
+
+---

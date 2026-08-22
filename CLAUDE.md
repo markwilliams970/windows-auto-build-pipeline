@@ -652,6 +652,16 @@ none of the Windows-11-specific work is in its code path. Next step for Windows 
 question (how unattended Windows 11 builds are actually done successfully elsewhere), not a further
 variant of Option A/B — not yet started as of this entry.
 
+**RESOLVED as of `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries: Windows 11 is now
+production-ready too**, via the Setup.exe-driven path this research question led to (see the
+"RECONSIDERED AGAIN, Windows 11 only" note above under "Relationship to
+`../windows-server-vm-automation/`" for why Setup.exe is back in play for Windows 11 specifically).
+`image-apply/windows11-setup-install.sh` is the real production script - confirmed via six
+independent clean runs total (Phase 3.3's three eject-based confirmations, since superseded, plus
+Phase 3.4's four NVRAM-boot-order confirmations and Phase 3.5's two full production-readiness
+builds). `build.sh` routes `windows11` through this script directly, with no Packer handoff (no
+Phase 3 roles apply to Windows 11).
+
 ---
 
 # Phase 4: Datadog Integration
