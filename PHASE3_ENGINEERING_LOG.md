@@ -928,4 +928,74 @@ Server 2022/2025 disk at the MFT/directory-index level; re-examining whether the
 Sysprep-then-*simpler*-unattend.xml combination succeed?); or setting Option B aside in favor of
 Option A. Flagged for the user, not decided unilaterally.
 
+### Finding 14: bisection ladder against the real `unattend.xml`'s own content - the crash has
+### nothing to do with `FirstLogonCommands` at all, in either its heavy or its lightweight form; it
+### reproduces identically with zero `FirstLogonCommands` present
+
+Per direction, picked up Finding 12's own speculation ("could be an interaction with this specific
+unattend.xml's complexity rather than Option B's core mechanism") and tested it directly with a
+graduated bisection ladder, each variant a genuinely fresh disk carried through the full pipeline
+(`partition-disk.sh` -> `apply-image.sh` -> `make-bootable.sh` -> `audit-mode-sysprep.sh`, each
+independently confirming its own `Sysprep_succeeded.tag`) before dropping a variant-specific
+`unattend.xml` and running the real solo boot.
+
+**Variant D** (`image-apply/unattend-windows11-ladder-d.xml`): `specialize` (`ComputerName`/
+`TimeZone`/`RegisteredOwner`) + OOBE-skip + `AutoLogon`/`AdministratorPassword` (a structural
+prerequisite, not a separately-isolated variable - `FirstLogonCommands` only run in the context of
+an actual logon, and Sysprep's own `/generalize` pass explicitly removes Audit Mode's built-in-
+Administrator auto-enable per Microsoft's own docs, so nothing would trigger a first logon at all
+without it) + only the two lightest `FirstLogonCommands` steps from the real production file
+(`pnputil /add-driver` for NetKVM, and a marker-file echo) - omitting both heavy PowerShell blocks
+(the network-readiness polling loop and the `Enable-PSRemoting`/WSMan-listener-rebuild/
+`Restart-Service WinRM` block). **Result: crashed, identically** - `PAGE_FAULT_IN_NONPAGED_AREA
+(0x50)`/`Ntfs.sys` then `KMODE_EXCEPTION_NOT_HANDLED (0x1E)` on the automatic retry, landing on the
+same unattended WinRE keyboard-layout screen as Findings 12 and 13. Checked offline afterward (disk
+mounted read-only after the forced `SIGKILL`, per the now-familiar "Metadata kept in Windows cache"
+warning): both `C:\ladder-d-pnputil-log.txt` (*"Driver package added successfully"*) and
+`C:\ladder-d-firstlogon-marker.txt` existed and were complete - **`FirstLogonCommands` finished
+successfully before the crash happened**, ruling out `pnputil` failing or corrupting something
+mid-run, and ruling out any specific FirstLogonCommands content (heavy or light) as the trigger.
+
+**Variant C** (`image-apply/unattend-windows11-ladder-c.xml`): identical to D minus
+`FirstLogonCommands` entirely - just `specialize` + OOBE-skip + `AutoLogon`. **Result: crashed,
+identically again** - same `0x50`/`Ntfs.sys` -> `0x1E` sequence, same WinRE landing screen. No
+`FirstLogonCommands` element was present in the answer file at all.
+
+**This is decisive: the crash has nothing to do with `FirstLogonCommands`, in either form tested.**
+Three independently-built, independently-Sysprep'd disks - the full production file (Finding 12),
+`pnputil`-only (Variant D), and no-`FirstLogonCommands`-at-all (Variant C) - all produced the
+*identical* stop-code sequence at nearly identical points in the boot. What's left implicated is the
+skeleton shared by all three and absent from the one file that's never crashed (Finding 10/11's
+`Reseal`/`RunSynchronous`-only trigger, which touches neither `specialize` nor `AutoLogon` at all):
+the `specialize` pass itself, and/or `AutoLogon`/`UserAccounts`/`AdministratorPassword` specifically.
+Both are also present, in essentially the same shape, in the sibling project's own proven Server
+2022/2025 templates - which never crash - so whatever this is, it's Windows-11-specific in how it
+interacts with this skeleton, not a defect in the skeleton on its own.
+
+**Not yet tested**: removing `AutoLogon` too (down to `specialize` alone, or `specialize` + OOBE-skip
+with no logon mechanism at all) - structurally harder to observe cleanly, since without a real logon
+there's no automatic path to a desktop and the crash (if it still happens) would need to be caught
+mid-`specialize`-pass or at/before an interactive OOBE screen rather than via a clean before/after
+comparison.
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored): `windows11-ladderd.qcow2`
+and `windows11-ladderc.qcow2`, two more independently-crashed disks, both left as-is - now five total
+crash artifacts across this plan's real end-to-end attempts (`windows11-phase4test.qcow2`,
+`windows11-auditphase2.qcow2` post-Finding-13, plus these two), all showing the identical two-stop-code
+signature. `windows11-auditphase1.qcow2` remains the sole surviving clean, never-booted-post-Sysprep
+reference disk. Two new template files committed: `unattend-windows11-ladder-d.xml`,
+`unattend-windows11-ladder-c.xml`. No VM left running, no `qemu-nbd` attached, environment fully clean
+at session end (confirmed via `pgrep`).
+
+**Next steps:** the field has narrowed sharply - from "somewhere in the real unattend.xml" to
+specifically "`specialize` and/or `AutoLogon`, independent of `FirstLogonCommands` entirely." Worth
+direct NTFS-level forensic comparison now between one of these five crashed Windows 11 disks and a
+same-recipe Server 2022/2025 disk at the point immediately after `specialize`/`AutoLogon` processing
+- a same-recipe Server disk exists and never crashes despite processing structurally similar
+settings, making it a real, available control rather than a hypothetical one. Also worth considering
+whether this is specific to *this pipeline's* `specialize`/`AutoLogon` processing on an offline-
+applied-then-Sysprep'd Windows 11 disk specifically (vs. Server 2022/2025's own offline-applied-but-
+never-Sysprep'd disks - genuinely different disk histories, not just different OSes) rather than a
+Windows-11-vs-Server difference per se. Flagged for the user, not decided unilaterally.
+
 ---

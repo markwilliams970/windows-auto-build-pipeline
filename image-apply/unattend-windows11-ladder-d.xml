@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Bisection ladder Variant D - PHASE3_ENGINEERING_LOG.md Finding 13's next step, isolating
+  whether the live `pnputil /add-driver` FirstLogonCommands step alone (with a real logon via
+  AutoLogon, but WITHOUT the two heavy PowerShell FirstLogonCommands blocks - the network-wait/
+  Set-NetConnectionProfile loop and the Enable-PSRemoting/WinRM-listener-rebuild/Restart-Service
+  block) is sufficient to reproduce Findings 8/12/13's BSOD.
+
+  AutoLogon/AdministratorPassword are NOT a separately-isolated variable here despite the original
+  ladder sketch listing them as "Variant C" - they're a structural prerequisite: FirstLogonCommands
+  only run in the context of an actual user logon, and Audit Mode's own built-in-Administrator
+  auto-enable (Finding 10/11's mechanism) is explicitly removed by Sysprep's own /generalize pass
+  (per Microsoft's own audit-mode docs), so without AutoLogon here there would be no logon at all
+  for FirstLogonCommands to run under.
+
+  No WinRM enablement in this variant, so no host-side "is it alive" signal via curl/wsman - success
+  is judged by (1) QMP screendump evidence of a stable desktop with no BSOD, and (2) an offline
+  post-boot check that C:\ladder-d-firstlogon-marker.txt exists (proves FirstLogonCommands actually
+  ran to completion, not just that boot reached a desktop before FirstLogonCommands even started).
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>WIN11-LADDERD</ComputerName>
+      <TimeZone>UTC</TimeZone>
+      <RegisteredOwner>Windows Lab</RegisteredOwner>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>5</LogonCount>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Install NetKVM network driver live (pnputil) - the one candidate this variant isolates</Description>
+          <CommandLine>cmd.exe /c pnputil /add-driver C:\Drivers\NetKVM\w11\amd64\netkvm.inf /install &gt; C:\ladder-d-pnputil-log.txt 2&gt;&amp;1</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Marker file - proves FirstLogonCommands ran to completion</Description>
+          <CommandLine>cmd.exe /c echo firstlogon-reached &gt; C:\ladder-d-firstlogon-marker.txt</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
+</unattend>

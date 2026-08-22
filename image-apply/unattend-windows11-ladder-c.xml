@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Bisection ladder Variant C - PHASE3_ENGINEERING_LOG.md Finding 13/14's next step. Variant D
+  (specialize + OOBE-skip + AutoLogon + ONLY lightweight FirstLogonCommands: pnputil + marker
+  echo, both confirmed completed successfully before the crash) still reproduced the identical
+  0x50/Ntfs.sys -> 0x1E crash sequence - ruling out FirstLogonCommands *content* as the trigger,
+  since the crash happened strictly after both commands finished cleanly.
+
+  This variant removes FirstLogonCommands entirely - specialize (ComputerName/TimeZone/
+  RegisteredOwner) + OOBE-skip + AutoLogon/AdministratorPassword only, otherwise identical to
+  ladder-d.xml. If this still crashes, the trigger is something in the base specialize/AutoLogon
+  mechanism itself (or the OOBE-skip -> desktop transition), independent of anything this
+  project's own FirstLogonCommands adds. If it does NOT crash, that would mean the mere presence
+  of a FirstLogonCommands element (even with trivial content) is itself somehow load-bearing -
+  worth treating as a surprising result needing its own explanation, not assumed away.
+
+  No WinRM, no FirstLogonCommands marker file possible this time - success/failure judged purely
+  by QMP screendump evidence (reaches a stable desktop with no BSOD, or doesn't).
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>WIN11-LADDERC</ComputerName>
+      <TimeZone>UTC</TimeZone>
+      <RegisteredOwner>Windows Lab</RegisteredOwner>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>5</LogonCount>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+    </component>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
+</unattend>

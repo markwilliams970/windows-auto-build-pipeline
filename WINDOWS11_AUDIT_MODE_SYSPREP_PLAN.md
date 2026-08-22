@@ -36,14 +36,25 @@ codes across two independent runs (one without any journal reset, one with) argu
 deterministic given this exact disk content rather than a journal-replay race, and that a journal
 reset specifically is not the fix. It doesn't yet identify the actual mechanism.
 
-**Status as of Session 4's end: genuinely undecided, not defaulted into anything.** Whether to
-attempt further Option B runs (to see if this reproduces or was a one-off — this plan's own evidence
-bar elsewhere requires 2-3 independent successes, and this is the inverse: one real failure isn't
-automatically conclusive either), pursue deeper NTFS forensics now that `$LogFile` staleness is ruled
-out (comparing MFT/directory-index state between the two crashed Windows 11 disks and a same-recipe,
-never-crashing Server 2022/2025 disk), test whether the crash is specific to this particular
-`unattend.xml`'s complexity (Finding 12's speculation, not yet tested), or fall back to Option A is a
-decision for the user, flagged explicitly rather than picked unilaterally.
+**Update, same session: a bisection ladder against the real `unattend.xml`'s own content (Finding 14)
+rules out `FirstLogonCommands` entirely as the trigger.** Three independently-built, independently-
+Sysprep'd disks - the full production file, a variant with only `pnputil`+a marker echo in
+`FirstLogonCommands`, and a variant with no `FirstLogonCommands` at all - all crashed with the
+*identical* `0x50`/`Ntfs.sys` -> `0x1E` sequence. What's left implicated is the skeleton all three
+share and the safe Finding 10/11 trigger file never touched: the `specialize` pass and/or
+`AutoLogon`/`AdministratorPassword`. Both are structurally similar to the sibling project's own
+proven, never-crashing Server 2022/2025 templates - so this is about how Windows 11 (or this
+project's specific offline-apply-then-Sysprep history) interacts with that skeleton, not a defect
+in the skeleton itself.
+
+**Status as of Session 4's end: genuinely undecided, not defaulted into anything.** The field has
+narrowed a lot (not `FirstLogonCommands`, not `$LogFile` staleness) but the actual mechanism is still
+unidentified. Whether to continue the ladder (isolating `specialize` from `AutoLogon` - harder to
+test cleanly since `AutoLogon` is what makes the crash observable via a real desktop transition at
+all), pursue direct NTFS-level forensics against a same-recipe Server 2022/2025 disk (a real,
+available control, though note its own disk history never includes a Sysprep pass - Server 2022/2025
+stay on the current, fully-offline architecture, so this isn't a perfectly matched comparison), or
+fall back to Option A is a decision for the user, flagged explicitly rather than picked unilaterally.
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s Session 3 (Findings 7-9) before touching anything below** —
 this document only makes sense in that context. Short recap: a completely fresh, hands-off Windows
