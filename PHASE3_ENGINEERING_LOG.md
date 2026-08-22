@@ -1597,4 +1597,68 @@ scripted failures on the fully-offline pipeline).
 **Next step**: Phase 3.3, attempt 3 - same recipe, third fresh target disk. If this also passes
 cleanly, treat the Setup.exe-driven approach as confirmed reliable and proceed to Phase 3.4.
 
+## Phase 3.3, attempt 3: PASSED - third consecutive clean run. Evidentiary bar met; Setup.exe-driven
+## Windows 11 approach is now confirmed reliable, not just promising.
+
+Fresh target disk (`win11-phase33-target.qcow2`; attempts 1 and 2 preserved as
+`win11-phase33-target-attempt1.qcow2`/`-attempt2.qcow2`) and a fresh `OVMF_VARS_phase33.fd` copied
+from the pristine `/usr/share/OVMF/OVMF_VARS_4M.fd` template (attempt 2's own vars file preserved as
+`OVMF_VARS_phase33-attempt2.fd`) - full independence from both prior attempts' NVRAM state, not just
+a fresh disk. Same `win11-noprompt.iso`, same `autounattend-windows11-phase33.xml`, same recipe.
+
+**Every stage passed a third time, in the same order:**
+- Install progress tracked the same pacing as both prior attempts (30% at ~3min, 44% at ~4min, 75%
+  at ~6min) - this host's own install timing continues to be consistent across three independent
+  runs, not coincidental.
+- QMP eject of both `installcd` and `answercd` at 75% complete, confirmed via `DEVICE_TRAY_MOVED`
+  events (`tray-open: true`) for both devices this time, not needing a follow-up `query-block` call
+  as attempts 1/2 sometimes did.
+- First reboot: `BdsDxe: starting Boot0004 "Windows Boot Manager"` from the disk's own GPT partition
+  GUID - clean landing on the hard disk, no CD-ROM fallback.
+- Steady progress through the `specialize` pass's "Installing X% / Please keep your computer on"
+  servicing screens (file sizes ~6.8-7.1KB, the established benign signature) for roughly 14 minutes,
+  including one brief plain-black loading-spinner transition screen (~3.4KB) between the servicing
+  pass and the second reboot/OOBE - a new but clearly benign transition not seen as its own distinct
+  frame in attempts 1/2 (likely just a matter of screenshot-timing luck relative to a fast transition,
+  not a different code path).
+- **No crash occurred anywhere in or around the WinRM-coming-up window** - the same window that
+  killed every fully-offline attempt (Findings 8, 12, 13, 14) without exception, and the same window
+  both prior Setup.exe-driven attempts already passed cleanly.
+- Real, authenticated WinRM confirmed against the finished desktop: `hostname` returned `WIN11-P33`,
+  `Get-NetAdapter` showed `Intel(R) PRO/1000 MT Network Connection`, `Status: Up`, `LinkSpeed: 1
+  Gbps`, and the `FirstLogonCommands` marker file (`C:\phase33-firstlogon-marker.txt`) was confirmed
+  present via a direct WinRM `type` read, containing `firstlogon-reached`.
+- One transient hiccup, same class as attempt 2's: the very first WinRM auth attempt (immediately
+  after the endpoint started responding) hit a `401`/`InvalidCredentialsError`, then succeeded
+  cleanly on retry a short time later. Same likely explanation as before - probed right as
+  `FirstLogonCommands` Order 3's own WinRM/Basic-auth configuration was still landing, not a sign of
+  instability in the build itself. Worth noting as a pattern now (two of three attempts hit a
+  transient WinRM auth/connection hiccup on the very first probe, both resolved on retry within
+  seconds) - real input for Phase 3.4's own WinRM-readiness polling logic (build in a retry loop by
+  default, don't treat the first failed probe as a build failure).
+
+Shut down via QMP `system_powerdown` - honored gracefully a third time.
+
+**This is the third consecutive clean pass of Phase 3.3's full recipe, on three independent fresh
+disks (and, this time, independent OVMF NVRAM state too) - the Setup.exe-driven Windows 11 approach
+now meets this project's own 2-3-independent-successes evidentiary bar in full.** Combined with
+attempts 1 and 2: three for three, zero BSODs, zero unskippable OOBE hangs, real WinRM every time,
+through the identical window that reliably killed every attempt on the old fully-offline pipeline.
+This is no longer just "promising evidence" - by this project's own standard, it's confirmed.
+
+**Persistent state that survives** (under `image-apply/output/iso-noprompt/`, gitignored):
+`win11-phase33-target.qcow2` (attempt 3's disk) alongside `-attempt1.qcow2` and `-attempt2.qcow2`
+(both preserved). Per this project's own disk-hygiene standard (CLAUDE.md), now that the
+evidentiary bar is met, these three are candidates for pruning down to one or two reference disks -
+not done yet, pending explicit confirmation with the user before any deletion. No VM left running,
+no `qemu-nbd` attached.
+
+**Next step**: Phase 3.4 - formalize into real, production `image-apply/*.sh`-style scripts. Open
+questions carried into that phase: automating the eject trigger (currently visual/screenshot
+judgment - candidates are a generous fixed timeout, a cheap fixed-pixel color-sample check, or
+dropping the static `bootindex=` override in favor of OVMF's own NVRAM-driven boot order), deciding
+the virtio-driver question left open by this phase's own `e1000`/plain-IDE scope decisions, and
+building a WinRM-readiness retry loop that tolerates the transient first-probe auth/connection
+hiccup observed in two of three attempts here.
+
 ---

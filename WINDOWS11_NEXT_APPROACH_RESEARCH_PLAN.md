@@ -23,9 +23,13 @@ Windows 11 attempt on the old pipeline previously failed. **Phase 3.3's second a
 just as cleanly, on a completely independent fresh disk**: same result in every particular that
 matters - no BSOD, real WinRM (`hostname` → `WIN11-P33`, `Get-NetAdapter` → `Intel(R) PRO/1000 MT`,
 `Status: Up`), `FirstLogonCommands` confirmed fully executed via a direct marker-file read over
-WinRM. See `PHASE3_ENGINEERING_LOG.md`'s corresponding entries for the full record. **Two
-consecutive clean runs is strong evidence but per this project's own hard-earned standard, attempt 3
-is still warranted before calling this reliable - not yet started.**
+WinRM. **Phase 3.3's third attempt then passed just as cleanly, on a third independent fresh disk
+with independent OVMF NVRAM state too**: same result again - no BSOD, real WinRM (`hostname` →
+`WIN11-P33`, `Get-NetAdapter` → `Intel(R) PRO/1000 MT`, `Status: Up`), `FirstLogonCommands` marker
+confirmed. See `PHASE3_ENGINEERING_LOG.md`'s corresponding entries for the full record. **Three for
+three - this project's own 2-3-independent-successes evidentiary bar is now fully met. The
+Setup.exe-driven approach is confirmed reliable, not just promising. Phase 3.4 (formalize into real
+production scripts) is the next step, not yet started.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -427,9 +431,9 @@ boundary via QMP screenshots.
   or dropping the static `bootindex=` override entirely in favor of OVMF's own NVRAM-driven boot
   order once Windows registers its own Boot Manager entry - untested).
 
-**Phase 3.3 — attempts 1 and 2 of 2-3 PASSED. Deliver a real, complete answer file through Setup.exe
+**Phase 3.3 — PASSED, all 3 of 3 attempts. Deliver a real, complete answer file through Setup.exe
 and confirm a genuinely working, WinRM-reachable result — the project's own established success bar,
-not a new one. Attempt 3 next.**
+not a new one. Evidentiary bar met; proceed to Phase 3.4.**
 Build a real answer file covering the passes Setup.exe actually processes (`windowsPE` for
 disk/image selection — new territory, not needed by this project's offline-apply path — plus
 `specialize`/`oobeSystem`, adapting this project's existing `unattend-windows11.xml` content where
