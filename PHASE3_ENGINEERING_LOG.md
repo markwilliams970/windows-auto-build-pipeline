@@ -1422,4 +1422,20 @@ QMP-eject fix included, and confirmation of real authenticated WinRM connectivit
 unskippable OOBE hang - matching this project's own established success bar, and requiring 2-3
 independent successes before being trusted, not one.
 
+## Housekeeping: Option A/B experiment disks deleted, by explicit direction, to free local disk space
+
+Six Windows 11 Audit-Mode/Sysprep-branch disk artifacts (`windows11-auditphase1.qcow2`,
+`windows11-auditphase2.qcow2`, `windows11-bisect4.qcow2`, `windows11-ladderc.qcow2`,
+`windows11-ladderd.qcow2`, `windows11-phase4test.qcow2` - Findings 10-14's evidence disks,
+`bisect4` itself already flagged "safe to delete" back in Session 3) deleted from
+`image-apply/output/builds/`, reclaiming ~91GB (host disk usage: 530GB -> 444GB used, 427GB free).
+These were the persistent-state artifacts referenced throughout the now-closed HARD STOP section -
+their disappearance is deliberate, not data loss, now that that pathway is closed and the findings
+themselves (stop codes, screenshots, log excerpts) are already fully captured in this log rather
+than depending on the disks themselves. Explicitly preserved, not touched: `server2022-test3.qcow2`/
+`server2025-test1.qcow2` (production Server reference disks), `win11-session13.qcow2` (the one
+valuable hand-run success reference), and everything under `iso-noprompt/` (this session's active
+Phase 3.1-3.3 work). Older Server 2022/2025 Phase 2 hand-run disks were identified as a separate,
+lower-priority cleanup candidate but left untouched, out of scope of this specific request.
+
 ---
