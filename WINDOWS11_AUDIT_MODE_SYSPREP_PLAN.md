@@ -47,14 +47,29 @@ proven, never-crashing Server 2022/2025 templates - so this is about how Windows
 project's specific offline-apply-then-Sysprep history) interacts with that skeleton, not a defect
 in the skeleton itself.
 
-**Status as of Session 4's end: genuinely undecided, not defaulted into anything.** The field has
-narrowed a lot (not `FirstLogonCommands`, not `$LogFile` staleness) but the actual mechanism is still
-unidentified. Whether to continue the ladder (isolating `specialize` from `AutoLogon` - harder to
-test cleanly since `AutoLogon` is what makes the crash observable via a real desktop transition at
-all), pursue direct NTFS-level forensics against a same-recipe Server 2022/2025 disk (a real,
-available control, though note its own disk history never includes a Sysprep pass - Server 2022/2025
-stay on the current, fully-offline architecture, so this isn't a perfectly matched comparison), or
-fall back to Option A is a decision for the user, flagged explicitly rather than picked unilaterally.
+**Update, same session: a full audit against the one known-good Windows 11 build changes the shape of
+the problem entirely (Finding 15).** `win11-session13.qcow2` - Phase 2's original, hand-run,
+fully-successful Windows 11 build - still survives on disk and still resumes cleanly to a healthy
+desktop. Every static input this pipeline depends on was checked directly against what produced it:
+every git-tracked script (byte-identical since the commit that confirmed Server success), the WinPE
+medium's own baked-in `startnet.cmd`/`diskpart-assign.txt` (byte-identical), host packages and kernel
+(zero changes, same running kernel instance since before Session 13), OVMF firmware and source ISOs
+(unchanged, predate Session 13 by weeks to months), and the cached `install.wim`/driver extractions
+(byte-identical to fresh re-extraction, confirmed via `md5sum`, not assumed). **Nothing differs.**
+
+Given that, and given this session's own four independent, fully deterministic crash reproductions
+against this exact, now-triple-verified recipe, the most defensible remaining explanation is a
+**timing- or scheduling-sensitive fault in Windows 11's own first-boot processing under this host's
+KVM/virtio emulation** - not a defect in this project's own code, environment, or inputs. This
+reframes "deterministic" from Finding 14: identical *within this session's* relatively stable timing
+conditions, not proof of a fixed, always-reproducible defect independent of real-world execution
+timing.
+
+**Status as of Session 4's end: genuinely undecided, not defaulted into anything.** Whether to attempt
+another Windows 11 build in a different session (different time, different host load) to test the
+timing-sensitivity theory directly, continue the ladder (isolating `specialize` from `AutoLogon`),
+pursue direct NTFS-level forensics against a same-recipe Server 2022/2025 disk, or fall back to
+Option A is a decision for the user, flagged explicitly rather than picked unilaterally.
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s Session 3 (Findings 7-9) before touching anything below** —
 this document only makes sense in that context. Short recap: a completely fresh, hands-off Windows

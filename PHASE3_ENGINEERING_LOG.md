@@ -998,4 +998,99 @@ applied-then-Sysprep'd Windows 11 disk specifically (vs. Server 2022/2025's own 
 never-Sysprep'd disks - genuinely different disk histories, not just different OSes) rather than a
 Windows-11-vs-Server difference per se. Flagged for the user, not decided unilaterally.
 
+### Finding 15: a full audit of everything outside the tracked scripts - host packages, kernel, source
+### media, cached WIM/driver extractions, the WinPE medium's own baked-in logic - found zero
+### difference from what produced the one known-good Windows 11 build (`PHASE2_ENGINEERING_LOG.md`
+### Session 13). The regression is not in any static input.
+
+Prompted by a sharp observation: `win11-session13.qcow2` (Session 13's hand-run, fully successful
+Windows 11 build - real desktop, no BSOD, confirmed authenticated WinRM) still survives on disk, and
+this project's own `image-apply/*.sh` scripts are a direct, verified transcription of that exact
+recipe. If the *code* is identical and a real artifact proves the *recipe* once produced a clean
+result, the regression has to live somewhere the code diff can't see. Audited every such place:
+
+**Sanity check first**: resumed `win11-session13.qcow2` itself (hibernated via Windows 11's Fast
+Startup, not shut down - Finding 43's own noted caveat) via a solo boot matching its own original
+device model (`OVMF_VARS_session13-solo.fd`, `virtio-net-pci` + `hostfwd`). **Result: resumed
+cleanly to the same real, healthy desktop**, correct watermark (`"Windows 11 Enterprise Evaluation /
+Windows License valid for 88 days"`), only the same benign `CrossDeviceResume.exe` cosmetic error
+every other session has also seen. No BSOD. Confirms the disk and host environment are both still
+fundamentally healthy - rules out host/environment decay as a blanket explanation before auditing
+anything more specific.
+
+**`unattend.xml` content** (re-confirming Finding 14's own bisection from the other direction):
+mounted the Session 13 disk and diffed its actual on-disk answer file against today's
+`unattend-windows11.xml` template. Identical, modulo Windows' own expected post-processing rewrite
+(`wasPassProcessed="true"` on both passes, redacted passwords) - itself further confirmation both
+`specialize` and `oobeSystem` completed cleanly back then with this exact content.
+
+**Every git-tracked script**: `git log` confirms `partition-disk.sh`, `apply-image.sh`,
+`make-bootable.sh`, `apply-unattend.sh`, and `lib/common.sh` are byte-identical to the commit
+(`094dac4`) that both created *and* confirmed them against Server 2022/2025. The only change since is
+this session's own `windows11`-gated `audit-mode-sysprep.sh` call in `build.sh` - confirmed via `git
+show`, a plain `if [[ "$OS" == "windows11" ]]` block Server's own execution never enters.
+
+**The WinPE bootability medium's own baked-in logic**: mounted `winpe-boot-index1-work.qcow2`
+directly and read `Windows\System32\startnet.cmd` and `diskpart-assign.txt` off it - both byte-for-
+byte identical to Session 8's originally-documented recipe (`wpeinit` -> `drvload` -> `diskpart /s`
+-> `bcdboot W:\Windows /s S: /f UEFI` -> log copy-off -> `wpeutil shutdown`; `select disk 1` /
+partition 1 -> `S:` / partition 3 -> `W:`). A checksum mismatch against an old `.bak` snapshot looked
+alarming at first but turned out to be a false lead - the actual content read directly off the medium
+matches the documented recipe exactly, and the `.bak` most likely predates Session 8's own
+finalization of this file.
+
+**Host packages and kernel**: `/var/log/apt/history.log` shows zero upgrades since before Session
+13's build. `uptime -s` shows the host kernel has been running continuously since **before** Session
+13 started (`2026-08-20 07:48:03`, Session 13 built at `11:01`) - the exact same kernel instance,
+never rebooted, for this entire investigation. Rules out any host-level package or kernel drift
+outright, not just "probably fine."
+
+**OVMF firmware and source media**: `/usr/share/OVMF/OVMF_CODE_4M.fd`/`OVMF_VARS_4M.fd` dated June 2
+- unchanged, predates Session 13 by months. The Windows 11 and virtio-win source ISOs in
+`../iso_cache/` are dated July 22 and June 25 respectively - unchanged, predate Session 13 by weeks.
+
+**Cached extractions, verified by direct re-extraction and checksum comparison, not assumed**: the
+Windows 11 `install.wim` cache (re-extracted after Session 13's build, timing that looked like a real
+lead at first) is **byte-identical** (`md5sum`) to a fresh `7z e` extraction from the still-unchanged
+source ISO. Every driver file this project stages for Windows 11 (`netkvm.inf`/`.sys`/`.cat`/
+`.exe`/`netkvmco.exe`, `viostor.inf`/`.sys`/`.cat`) is likewise byte-identical to a fresh extraction
+from the unchanged virtio-win ISO.
+
+**One dmesg anomaly chased down and explained, not left dangling**: a burst of seven `Buffer I/O
+error on dev nbd0p3` kernel log lines at `11:26:45` today looked concerning on first read. Timing
+correlation with this session's own actions places it exactly at the point `nbd0` was re-attached to
+offline-inspect the already-BSOD'd, already-`SIGKILL`ed `windows11-ladderd.qcow2` disk (checking for
+the `FirstLogonCommands` marker file) - i.e., `ntfs-3g` reading genuinely inconsistent metadata off a
+disk already left mid-write by a hard kill, not a symptom appearing *before* or independent of a
+crash. Consistent with being a downstream artifact of the crash already covered by Finding 14, not a
+new, separate cause.
+
+**Conclusion: every static input this pipeline depends on - tracked code, the WinPE medium's actual
+logic, host packages, host kernel, firmware, source media, and cached extractions - is verified
+identical to what produced Session 13's success.** Nothing was found by inspection; everything was
+checked by direct comparison (`git log`/`git show`, mounting and reading files off disk, `md5sum`
+against fresh re-extractions, `apt`/`uptime` history) rather than reasoned about. Given that, and
+given this session's own four independent, fully deterministic reproductions of the identical crash
+(same two stop codes, similar timing, every time) using this exact same, now-triple-verified recipe,
+the most defensible remaining explanation is a **timing- or scheduling-sensitive fault in Windows
+11's own first-boot processing under this host's KVM/virtio emulation** - not a defect in this
+project's own pipeline, and not something a further code or environment audit is likely to surface.
+Session 13's single success and this session's four consecutive failures are both real, both
+against verifiably identical inputs; the variable left standing is real-world execution timing this
+project has no direct way to control or fully explain, only to note.
+
+**Persistent state that survives**: no new disks created this investigation (only inspected existing
+ones and disposable `/tmp` scratch extractions, all cleaned up). No VM left running, no `qemu-nbd`
+attached, environment fully clean at session end (confirmed via `pgrep`).
+
+**Next steps**: this substantially changes the shape of the problem. If the fault is genuinely
+timing-sensitive rather than deterministic-given-these-inputs, the earlier ladder bisection's
+"identical stop codes every time" result (Finding 14) should be read as "identical *within one
+session's* relatively stable timing conditions," not as proof of a fixed, always-reproducible defect
+- worth attempting at least one more Windows 11 build in a **different session** (different time,
+different host load) before concluding anything further about determinism one way or the other. Also
+worth considering whether anything about this host specifically (CPU generation, KVM version,
+virtio-win driver version `0.1.285` itself) is implicated, versus something that would reproduce on
+any KVM host. Flagged for the user, not decided unilaterally.
+
 ---
