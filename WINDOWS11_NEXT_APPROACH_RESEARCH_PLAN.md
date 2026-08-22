@@ -12,9 +12,17 @@ static `bootindex=` alone didn't survive Setup's first reboot (attempt 1, a real
 failure), but adding a QMP `eject` of the install media right before that reboot fixed it completely
 — two separate reboots, zero fallback to the CD-ROM either time, landing on a genuine Windows 11
 OOBE screen. **This is the first time in this project's history a Setup.exe-driven Windows 11
-install has completed end to end.** See `PHASE3_ENGINEERING_LOG.md`'s corresponding entries for the
-full record. **Phase 3.3 (a complete answer file, real WinRM confirmation, 2-3 independent
-successes) is next, not yet started.**
+install has completed end to end.** **Phase 3.3's first attempt then passed completely cleanly**:
+a full `specialize`/`oobeSystem` answer file (adapted from the production template, `e1000` NIC
+scope decision), same recipe, reached a real, working Windows 11 desktop with **real authenticated
+WinRM confirmed** (`hostname` → `WIN11-P33`, `Get-NetAdapter` → `Intel(R) PRO/1000 MT`, `Status:
+Up`) - the exact evidentiary bar Server 2022/2025 met repeatedly, and the bar Findings 8/12/13/14
+never once reached on the fully-offline pipeline without a BSOD. **No crash anywhere in the run**,
+including through the exact window (WinRM coming up during first-boot servicing) where every prior
+Windows 11 attempt on the old pipeline previously failed. See `PHASE3_ENGINEERING_LOG.md`'s
+corresponding entries for the full record. **One success is not yet "reliable," per this project's
+own hard-earned standard - Phase 3.3 attempts 2 and 3 (independent reproduction) are next, not yet
+started.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -416,8 +424,9 @@ boundary via QMP screenshots.
   or dropping the static `bootindex=` override entirely in favor of OVMF's own NVRAM-driven boot
   order once Windows registers its own Boot Manager entry - untested).
 
-**Phase 3.3 — deliver a real, complete answer file through Setup.exe and confirm a genuinely
-working, WinRM-reachable result — the project's own established success bar, not a new one.**
+**Phase 3.3 — attempt 1 of 2-3 PASSED. Deliver a real, complete answer file through Setup.exe and
+confirm a genuinely working, WinRM-reachable result — the project's own established success bar,
+not a new one.**
 Build a real answer file covering the passes Setup.exe actually processes (`windowsPE` for
 disk/image selection — new territory, not needed by this project's offline-apply path — plus
 `specialize`/`oobeSystem`, adapting this project's existing `unattend-windows11.xml` content where

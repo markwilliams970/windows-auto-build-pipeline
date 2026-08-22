@@ -1460,3 +1460,86 @@ project's own "every build applies the WIM fresh" principle - these were never m
 permanent, one-of-a-kind artifacts in the first place.
 
 ---
+
+## Phase 3.3, attempt 1: PASSED, completely cleanly - real authenticated WinRM connectivity, no
+## BSOD anywhere in the run. First time this project's own established success bar has ever been
+## met by a Setup.exe-driven Windows 11 build.
+
+Built `image-apply/autounattend-windows11-phase33.xml` - Phase 3.2's proven `windowsPE` pass
+unchanged, plus a real `specialize`/`oobeSystem` pass adapted from the production
+`unattend-windows11.xml` (`ComputerName`, OOBE-skip, `AdministratorPassword`, `AutoLogon`,
+`FirstLogonCommands`). One deliberate scope decision, stated plainly: NIC is a plain `e1000`
+(Windows inbox driver, zero injection needed), not `virtio-net-pci`, matching Phase 3.2's own
+choice of plain IDE over `virtio-blk-pci` for the same reason - this phase's own question is
+whether the *complete answer file* works through Setup.exe end to end, not whether this project's
+own virtio driver-injection technique also applies here. `FirstLogonCommands` accordingly drops the
+production template's Order-1 `pnputil`/netkvm step entirely (not applicable) and keeps the
+network-wait + WinRM-enable steps unchanged.
+
+Fresh target disk, same recipe as Phase 3.2 attempt 2 (bypass -> disk config -> image install ->
+QMP-eject at ~75-76% complete, tracking the same pacing both prior attempts showed - confirms this
+project's own install timing on this host is genuinely consistent across independent runs, not
+coincidental). Watched the full run via `tools/qmp-watch.sh` plus periodic real HTTP checks against
+the forwarded WinRM port, not just screenshots.
+
+**Every stage passed, in order, with no intervention beyond the one scripted QMP eject:**
+- First reboot: landed cleanly on the hard disk (`Installing 33%`), no CD-ROM fallback - confirms
+  Phase 3.2's fix generalizes to a full answer file, not just the minimal one it was proven against.
+- Second reboot: `BdsDxe: loading Boot0004 "Windows Boot Manager"` - straight from the disk's own
+  real boot manager entry, no CD-ROM boot-log line at all this time.
+- OOBE's own brief "Hi." welcome animation appeared and passed on its own within about 15 seconds -
+  confirming this project's own long-standing open question (`unattend-windows11.xml`'s header
+  comment: "whether Windows 11's client-SKU OOBE pass needs anything beyond what worked for the
+  Server SKUs... is genuinely unverified") is answered: it doesn't need anything more. OOBE-skip
+  worked correctly on Windows 11 client SKU, non-interactively, first attempt.
+- The familiar "This might take a few minutes" / "Please keep your PC on and plugged in" real
+  first-boot servicing sequence followed - the exact same benign screens `PHASE2_ENGINEERING_LOG.md`
+  Session 13 already confirmed are normal for Windows 11's own more extensive client-SKU first-boot
+  component servicing, not a hang.
+- **A real HTTP `405` from the WinRM endpoint arrived during this exact servicing window** - the
+  same point in the sequence where Findings 12, 13, and 14 all previously BSOD'd, every single time,
+  across five independent attempts on the fully-offline pipeline. **No crash occurred here.** The
+  run continued straight through to a genuine, fully interactive Windows 11 desktop (Start menu,
+  real desktop icons, correct `"Windows 11 Enterprise Evaluation / Windows License valid for 90
+  days"` watermark), confirmed via screenshot, not inferred.
+- **Real, authenticated WinRM commands executed successfully against the finished desktop**, the
+  identical evidentiary bar this project has used since `PHASE2_ENGINEERING_LOG.md` Session 11/
+  Finding 41: `hostname` returned `WIN11-P33` - the exact `ComputerName` from the `specialize`
+  pass - and `Get-NetAdapter` showed `Intel(R) PRO/1000 MT Network Connection`, `Status: Up`,
+  `LinkSpeed: 1 Gbps` - a fully functional NDIS adapter working natively, not just a PCI-level
+  match, confirming the `e1000`-without-injection scope decision was sound for this phase's own
+  purpose.
+
+Shut down via QMP `system_powerdown` - **honored gracefully this time**, unlike every interactive-
+screen shutdown attempt earlier in this session's Setup.exe work, confirming this project's own
+established pattern (`system_powerdown` works once a real desktop/shell session is reached, not on
+interactive Setup/OOBE screens) holds true for this pipeline too.
+
+**This is the first time in this project's entire history that a Setup.exe-driven Windows 11 build
+has met this project's own full, established success bar** - the same bar Server 2022/2025 met
+repeatedly on the fully-offline pipeline, and the bar every attempt on Windows 11's own
+fully-offline pipeline (Findings 8, 12, 13, 14) never once reached without a BSOD.
+
+**What this does and doesn't establish, stated precisely, per this project's own hard-earned
+"one success is not the same as reliable" lesson from the Option A/B saga**: this is **one**
+successful run. Phase 3.3's own stated bar requires 2-3 independent successes before being trusted -
+not because this result is in doubt, but because this project has direct, recent, first-hand
+experience (Session 13's own single hand-run success vs. this session's four consecutive scripted
+failures) of how misleading a single clean run can be when timing-sensitive virtualization behavior
+is involved. This result is genuinely excellent evidence the new approach works: not yet sufficient
+alone to declare it production-ready.
+
+**Persistent state that survives** (under `image-apply/output/iso-noprompt/`, gitignored):
+`win11-phase33-target.qcow2` - a real, complete, working Windows 11 disk built via Setup.exe,
+confirmed via real authenticated WinRM, shut down gracefully - worth keeping as this pathway's own
+first genuine reference disk. `win11-noprompt.iso`/`autounattend.iso` remain valid and reusable
+as-is. New template file committed: `image-apply/autounattend-windows11-phase33.xml`. No VM left
+running, no `qemu-nbd` attached, environment fully clean (confirmed via `pgrep`).
+
+**Next step**: Phase 3.3, attempts 2 and 3 - same recipe, fresh target disks, confirming this
+result reproduces independently before treating it as reliable. If 2-3 consecutive clean runs are
+confirmed, Phase 3.4 (formalize into real, production `image-apply/*.sh`-style scripts, including
+solving the eject-trigger automation question and deciding the virtio-driver question left open by
+this phase's own `e1000` scope decision) becomes the natural next step.
+
+---
