@@ -1273,4 +1273,74 @@ disk-less test), environment fully clean at session end (confirmed via `pgrep`).
 confirm `bootindex=` correctly re-selects the hard disk across Setup's own reboot(s) rather than
 falling back into the still-attached ISO.
 
+## Phase 3.2, attempt 1: real progress plus a real, anticipated gate failure - the TPM/Secure Boot
+## bypass works cleanly; explicit `bootindex=` alone does NOT survive Setup's own first reboot
+
+Built `image-apply/autounattend-windows11-phase32.xml` - a minimal `windowsPE`-pass-only answer
+file (GPT partitioning matching `partition-disk.sh`'s own proven 100MiB-ESP/16MiB-MSR/rest-Primary
+layout, `ImageInstall` targeting Windows 11's own confirmed index 1, `WillShowUI=OnError` throughout
+so the run stays hands-off unless something actually goes wrong) - and a tiny second ISO
+(`autounattend.iso`, built via the same `xorriso` tooling already in use) to deliver it, per
+Setup.exe's own standard answer-file search convention. Target disk deliberately plain IDE, not
+`virtio-blk-pci`, to avoid needing driver injection into Setup's own `boot.wim` just to answer this
+phase's narrower boot-order question - matching the plan's own stated scoping.
+
+**First boot hit Windows 11's own Setup.exe hardware-compatibility check** - a real, interactive
+"This PC doesn't currently meet Windows 11 system requirements" (TPM 2.0, Secure Boot) screen,
+exactly the risk Phase 3's own "Key assumptions" section flagged in advance. Not a surprise, and a
+well-precedented, still-current fix: researched (not guessed) the exact mechanism - `RunSynchronous`
+commands in the `windowsPE` pass setting `HKLM\SYSTEM\Setup\LabConfig`'s `BypassTPMCheck`/
+`BypassSecureBootCheck`/`BypassRAMCheck`/`BypassStorageCheck`/`BypassCPUCheck` DWORDs, confirmed
+still working as recently as October 2025, exact command syntax cross-checked against
+`AveYo/MediaCreationTool.bat`'s own actively-maintained `bypass11/AutoUnattend.xml` rather than
+invented from memory. Added to the answer file, rebuilt the delivery ISO, retried.
+
+**Result: the bypass worked completely cleanly.** No compatibility screen at all this time - straight
+through language settings, EULA, disk partitioning, and image selection into a real "Installing
+Windows 11... X% complete" progress screen, watched climbing steadily (11% -> 37% -> 77%) over
+several minutes with zero interaction. This is itself real, meaningful progress: the full
+`windowsPE`-pass answer-file pipeline (locale, hardware-check bypass, disk configuration, image
+selection) all processed correctly and automatically, on this project's own actual media.
+
+**Then the anticipated gate failure, right on schedule.** After file-copy completed and Setup issued
+its own first reboot, `BdsDxe` loaded `Boot0001 "UEFI QEMU DVD-ROM"` again - the explicit
+`bootindex=1` on the CD-ROM device (unchanged since the initial boot) meant the firmware selected it
+again on this reboot too, exactly as it had the first time, since nothing about the device's boot
+priority had changed. Windows Setup itself detected this mismatch and surfaced its own built-in
+safeguard dialog: *"It looks like you started an upgrade and booted from installation media... If
+you want to perform a clean installation instead, click No."* - a real, informative failure signal,
+not a crash, but a fully interactive dialog that breaks unattended automation as-is.
+
+**This is precisely the caveat Phase 2's own research flagged in advance** (a Proxmox thread
+participant's vague mention of "cloning VM state after first phase" to handle CD re-attachment) and
+precisely what Phase 3.2's own gate was designed to test. Per the plan's own framing, this is real
+engineering work to close, not a hard stop on the whole approach - static `bootindex=`, set once at
+VM launch, cannot by itself express "prefer the CD-ROM on the very first boot, then prefer the hard
+disk on every boot after that" - the firmware only ever evaluates boot priority fresh at each
+reset/reboot, with no memory of what booted last time.
+
+**Fix identified, not yet attempted**: eject the install media via QMP's `eject` command once
+file-copy is confirmed complete (screenshot-detected, matching this project's own established
+observation convention, rather than a fixed timing guess) and before Setup's own reboot fires - once
+ejected, OVMF's own boot-option discovery has no bootable content in that drive and falls through to
+the next `bootindex` candidate (the hard disk) automatically, on every subsequent reboot, with no
+further intervention needed. This is a real, standard technique (the same reason Packer's own
+Windows builders and countless real-world unattended-install pipelines eject install media
+mid-build), not a novel workaround invented for this specific problem.
+
+**Persistent state that survives** (under `image-apply/output/iso-noprompt/`, gitignored):
+`win11-phase32-target.qcow2` - the target disk from this attempt, partially installed (Setup
+completed file-copy before the reboot-order problem was hit) - worth discarding rather than reusing,
+since Setup's own state-tracking (having already detected and surfaced the upgrade-vs-clean-install
+dialog once) makes it an unreliable starting point for a retry; a fresh blank disk is cheap
+(`qemu-img create`) and cleaner. `autounattend.iso`/`autounattend-src/` and the confirmed-working
+`win11-noprompt.iso` all remain valid and reusable as-is. New template file committed:
+`image-apply/autounattend-windows11-phase32.xml` (now includes the TPM/Secure Boot bypass,
+confirmed necessary and confirmed working). No VM left running, no `qemu-nbd` attached, environment
+fully clean (confirmed via `pgrep`).
+
+**Next step**: Phase 3.2, attempt 2 - same recipe, fresh target disk, add a QMP-`eject`-on-detected-
+completion step before the first reboot, and confirm the second (and any subsequent) reboot
+correctly lands on the hard disk instead of re-triggering the upgrade-vs-clean-install dialog.
+
 ---
