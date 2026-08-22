@@ -843,4 +843,89 @@ process only, and normal cleanup (unmount/detach) still ran correctly afterward.
 see the "does and doesn't rule out" discussion above. `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s own
 status needs updating to reflect this result before any further Option B work resumes.
 
+### Finding 13: directly tested the `$LogFile`/dirty-bit hypothesis with `ntfsfix` - it does not fix
+### the crash, and the *identical* stop codes recurring argue against a journal-staleness mechanism
+
+Per direction, picked up the NTFS-level mechanism investigation Session 3 flagged as out of scope and
+Finding 12 left open. `ntfsfix` (part of `ntfs-3g`, already installed on this host) is documented,
+in its own man page, as exactly the tool for this class of problem: *"resets the NTFS journal file
+and schedules an NTFS consistency check for the first boot into Windows."* Needed root to run against
+the raw `/dev/nbd*` partition device (same as `mkntfs`/`sgdisk` elsewhere in this project), which
+wasn't yet in `tools/sudoers-windows-auto-build-pipeline` - added it (read-only `ntfsinfo` plus
+`ntfsfix`, pinned to `/dev/nbd[0-9]*` exactly like every other rule in the file), asked the user to
+install it (requires a real root password this sandboxed session can't supply), and along the way hit
+the identical sudoers glob-matching gotcha the file's own "Update 2" note already documented for
+`sfdisk` (a bare `ntfsfix /dev/nbd0p3` invocation has only one space where the `ntfsfix * /dev/nbd*`
+rule's `*` requires two) - fixed with an explicit bare-invocation rule alongside the flagged one,
+same pattern as that earlier fix.
+
+**Diagnostic step first**: inspected `windows11-auditphase2.qcow2` (Finding 11's disk - completed a
+verified, successful Sysprep `/generalize` cycle, never crashed, real `unattend.xml` never applied)
+via `ntfsinfo -m`. `Volume Flags: 0x0000` - clean, no dirty bit. Ran `apply-unattend.sh` on it (the
+same real production `unattend.xml` that crashed in Finding 12), then re-checked immediately
+afterward, before any boot: **still `Volume Flags: 0x0000`.** This confirms directly (not just
+inferred from Session 3's write-vs-process bisection) that this project's own offline `ntfs-3g` write
+does not itself dirty the volume - whatever the eventual crash mechanism is, it isn't something
+visible at the volume-dirty-flag level immediately after the offline write.
+
+**Fix test**: ran `ntfsfix` (no `-d`, so it also sets the dirty flag to force Windows' own native
+check at next mount - the tool's stated purpose) against that same disk, right before its real first
+boot - i.e., the earliest point this project's pipeline could plausibly insert this fix, immediately
+before the customer-facing boot Finding 12's crash happened on. Confirmed the tool did what its docs
+say (`ntfsinfo` afterward showed `Volume Flags: 0x0001 DIRTY`, and a `--force`-flagged read was needed
+to inspect it, consistent with a genuinely scheduled check). Then booted solo with the same device
+model and WinRM-reachability check as Finding 12 (`virtio-net-pci` + QEMU user-mode `hostfwd`,
+corrected this session to use a real HTTP round-trip via `curl` rather than a bare TCP connect - a
+bare `/dev/tcp` connect test gave a false "open" reading immediately at QEMU startup, before the
+guest OS had even booted, because QEMU's SLIRP network backend accepts the *host-side* TCP handshake
+right away regardless of guest readiness; a real `curl` request confirmed this was meaningless by
+hanging with zero response at that same moment).
+
+**Result: no different from Finding 12, down to the specific stop codes.** WinRM answered a real
+`405 Method Not Allowed` early on again (same as Finding 12 - the boot reaches `FirstLogonCommands`
+either way), no chkdsk screen was ever visible despite the dirty flag being set beforehand, and the
+guest then BSOD'd with **the exact same first stop code** - `PAGE_FAULT_IN_NONPAGED_AREA (0x50)`,
+`What failed: Ntfs.sys` - at nearly the same point in the boot sequence, auto-rebooted, and crashed
+**again with the exact same second stop code** - `KMODE_EXCEPTION_NOT_HANDLED (0x1E)` - landing on
+the identical unattended WinRE "Choose your keyboard layout" screen Finding 12 also produced. Had to
+hard-kill the guest process the same way (`SIGTERM` then `SIGKILL`, WinRE's interactive screen not
+honoring QMP `system_powerdown`, matching the established pattern).
+
+**This is a real, useful negative result, not a null one.** Two things follow from the stop codes
+being identical, not just similar:
+- **It argues against `$LogFile`/journal staleness as the mechanism.** If the crash were caused by
+  Windows encountering an ntfs-3g-written journal it couldn't correctly interpret, resetting that
+  journal and forcing a fresh native check should have changed *something* about the failure mode -
+  a different stop code, a later crash point, visible repair activity, anything. Getting the
+  identical `0x50` -> `0x1E` sequence at nearly identical timing is a strong signal the crash is
+  **deterministic and reproducible given this exact disk content**, not a race or a
+  journal-replay-triggered fault that a journal reset would perturb.
+- **The determinism itself is informative for future investigation.** A crash this exactly repeatable
+  (not "varies across runs" the way Session 3's original framing described it, though Findings 8's
+  own crashes *did* vary in stop code across different runs - worth reconciling in a future session:
+  possibly what varies run-to-run is *which* of several latent, always-present inconsistencies gets
+  hit first, while the underlying trigger condition - Windows processing this exact class of complex
+  `unattend.xml` - is itself fully deterministic) is a better target for direct forensic
+  investigation (e.g., comparing MFT/directory-index state for the specific files
+  `FirstLogonCommands` touches, before vs. after Sysprep, between a Windows 11 disk and a
+  same-recipe Server 2022/2025 disk that never crashes) than a hard-to-reproduce heisenbug would be.
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored):
+`windows11-auditphase2.qcow2` - now itself a second, independently-crashed disk (previously Finding
+11's clean reference disk; consumed by this session's test, no longer a clean-Sysprep reference -
+`windows11-auditphase1.qcow2` remains the one surviving clean, never-booted-post-Sysprep reference).
+Both this disk and `windows11-phase4test.qcow2` (Finding 12's crash) now exist side by side as two
+independently-produced, identically-symptomed crash artifacts, worth keeping for any future direct
+forensic comparison. `tools/sudoers-windows-auto-build-pipeline` gained real, installed, working
+`ntfsinfo`/`ntfsfix` access for future sessions. No VM left running, no `qemu-nbd` attached,
+environment fully clean at session end (confirmed via `pgrep`).
+
+**Next steps:** still genuinely undecided. This session's negative result narrows the field (probably
+not `$LogFile` staleness) without yet identifying the actual mechanism. Candidates going forward:
+deeper NTFS forensics comparing the two crashed Windows 11 disks against a same-recipe, never-crashing
+Server 2022/2025 disk at the MFT/directory-index level; re-examining whether the crash is really
+`unattend.xml`-complexity-specific (Finding 12's speculation, not yet tested - e.g. does a
+Sysprep-then-*simpler*-unattend.xml combination succeed?); or setting Option B aside in favor of
+Option A. Flagged for the user, not decided unilaterally.
+
 ---

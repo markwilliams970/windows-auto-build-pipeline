@@ -26,12 +26,24 @@ eliminate Option B - the interaction could be with this specific unattend.xml's 
 than Option B's core mechanism - but it does mean Phase 5's own success bar was not met on this
 attempt, not marginally).
 
+**Update, same session: the NTFS-level mechanism was investigated directly (Finding 13) - the leading
+hypothesis (`$LogFile`/journal staleness from `ntfs-3g`'s writes) was tested with `ntfsfix` and does
+NOT fix the crash.** Reset the journal and forced Windows' own native consistency check on a disk
+in the identical pre-boot state Finding 12 crashed from, then repeated the same real boot. Result:
+the **exact same** stop code sequence (`0x50`/`Ntfs.sys` then `0x1E`) at nearly the same timing, with
+no visible repair activity in between. This is a real negative result, not a null one - identical stop
+codes across two independent runs (one without any journal reset, one with) argue the crash is
+deterministic given this exact disk content rather than a journal-replay race, and that a journal
+reset specifically is not the fix. It doesn't yet identify the actual mechanism.
+
 **Status as of Session 4's end: genuinely undecided, not defaulted into anything.** Whether to
 attempt further Option B runs (to see if this reproduces or was a one-off — this plan's own evidence
 bar elsewhere requires 2-3 independent successes, and this is the inverse: one real failure isn't
-automatically conclusive either), investigate the actual NTFS-level mechanism (still out of scope
-per the original Session 3 framing, but now a candidate for being back in scope), or fall back to
-Option A is a decision for the user, flagged explicitly rather than picked unilaterally.
+automatically conclusive either), pursue deeper NTFS forensics now that `$LogFile` staleness is ruled
+out (comparing MFT/directory-index state between the two crashed Windows 11 disks and a same-recipe,
+never-crashing Server 2022/2025 disk), test whether the crash is specific to this particular
+`unattend.xml`'s complexity (Finding 12's speculation, not yet tested), or fall back to Option A is a
+decision for the user, flagged explicitly rather than picked unilaterally.
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s Session 3 (Findings 7-9) before touching anything below** —
 this document only makes sense in that context. Short recap: a completely fresh, hands-off Windows

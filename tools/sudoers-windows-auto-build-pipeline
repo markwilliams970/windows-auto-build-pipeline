@@ -43,6 +43,20 @@
 # so widening the pinned suffix to match any `-o <columns> -l <disk>`
 # invocation carries the same read-only safety property as the original
 # rule, not a materially bigger grant.
+#
+# Update 3: added for the NTFS $LogFile/dirty-bit investigation flagged
+# back in PHASE3_ENGINEERING_LOG.md Session 3 as a real, not-yet-tested
+# hypothesis behind Windows 11's post-Sysprep BSOD (Session 4/Finding 12) -
+# ntfsinfo (read-only volume/journal inspection) and ntfsfix (resets the
+# NTFS journal file and schedules a native Windows chkdsk at next mount;
+# does not itself repair file/directory data) both need to run against the
+# nbd-attached partition device directly (not the ntfs-3g mount point uid=/
+# gid= options already make writable as the normal user), so both need
+# root the same way mkntfs/sgdisk already do. Pinned to /dev/nbd[0-9]*
+# exactly like every other rule in this file - never a real host disk.
+# ntfsinfo takes no device-modifying flags at all; ntfsfix's options are
+# limited to -b/-d/-n/-h/-V (see its own man page) - none of them can
+# target a path other than the pinned device argument.
 
 markw ALL=(root) NOPASSWD: /usr/sbin/sfdisk -o * -l /dev/nbd[0-9]*
 #
@@ -72,3 +86,14 @@ markw ALL=(root) NOPASSWD: /usr/bin/umount /tmp/win-build-mnt/*
 markw ALL=(root) NOPASSWD: /usr/bin/umount /dev/nbd[0-9]*
 
 markw ALL=(root) NOPASSWD: /usr/sbin/sfdisk -l /dev/nbd[0-9]*
+
+markw ALL=(root) NOPASSWD: /usr/bin/ntfsinfo * /dev/nbd[0-9]*
+markw ALL=(root) NOPASSWD: /usr/bin/ntfsfix * /dev/nbd[0-9]*
+# ntfsfix's most basic invocation (no flags, just the device) has only a
+# single space between the binary and its argument - the rule above
+# requires two (one on each side of the `*`), so it doesn't match a bare
+# call the same way `qemu-nbd -r -c ...` didn't match the -c-only rule
+# elsewhere in this file. Same fix as that gotcha: an explicit bare-form
+# rule alongside the flagged one, rather than forcing every caller to
+# always pass a flag just to satisfy the glob.
+markw ALL=(root) NOPASSWD: /usr/bin/ntfsfix /dev/nbd[0-9]*
