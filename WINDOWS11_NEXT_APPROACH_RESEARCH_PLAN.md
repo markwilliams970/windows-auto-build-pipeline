@@ -2,18 +2,19 @@
 
 ## Status
 
-**Phases 0-3 are complete on paper — nothing has been built or tested yet.** Phase 0 confirms the
+**Phases 0-3 are complete, and Phase 3.1 execution has passed its gate.** Phase 0 confirms the
 original blocker is still unresolved, as of today. Phase 1 surveyed the strongest candidate
 categories and found a real, community-confirmed technique (ISO-level `_noprompt` boot files).
 Phase 2 verified that finding against primary sources — confirmed directly on this project's own
 actual install media (all three target OSes), traced to genuine, 15-year-old Microsoft
-documentation, literal rebuild procedure captured verbatim. Phase 3 turns that verified finding
-into a concrete, phased design proposal (`_noprompt` ISO + hand-built `qemu-system-x86_64` with
-direct `bootindex=` control, Windows 11 only) with an explicit pass/fail gate at each step — see
-Phase 3 below for the full plan, including the standing-rule conflict this necessarily raises
-(`CLAUDE.md`'s "never run Setup.exe" rule) flagged explicitly for a real decision, not silently
-reversed. Categories 4-6 of the original Phase 1 survey remain deliberately deferred as a fallback.
-**Execution (Phase 3.1 onward) has not started — this document is design and research only.**
+documentation, literal rebuild procedure captured verbatim. Phase 3 turned that verified finding
+into a concrete, phased design proposal with an explicit pass/fail gate at each step, and **Phase
+3.1 has now actually been executed and passed cleanly**: a `_noprompt`-patched Windows 11 ISO,
+built and verified correct, boots completely hands-off — zero keystrokes — straight to a real
+"Windows 11 Setup" language-selection screen, no "press any key" prompt ever appearing. See
+`PHASE3_ENGINEERING_LOG.md`'s corresponding entry for the full record. **Phase 3.2 (confirm
+`bootindex=` survives Setup's own multi-phase reboots with a real target disk) is next, not yet
+started.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -369,7 +370,7 @@ having reversed the standing rule for nothing.
 
 #### Phased execution plan
 
-**Phase 3.1 — prove the `_noprompt` ISO alone eliminates the keystroke race, hands-off, in
+**Phase 3.1 — PASSED. Prove the `_noprompt` ISO alone eliminates the keystroke race, hands-off, in
 isolation.**
 Build the patched ISO via the verified `xorriso` recipe. Boot it **hands-off, zero keystrokes sent,
 not even a fallback keypress script** — CD-ROM only, no target disk needed yet, keep this phase
@@ -381,6 +382,12 @@ minimal. Hand-built `qemu-system-x86_64`, OVMF, watched via `tools/qmp-screensho
   This would mean the deeper OVMF issue is independent of the keystroke race entirely — a **hard
   stop** on this whole approach; return to the research phase (Categories 4-6, deferred above) or
   reconsider Setup.exe-free options again.
+- **Actual result (see `PHASE3_ENGINEERING_LOG.md` for the full record)**: passed cleanly.
+  `BdsDxe` loaded the DVD-ROM boot entry directly, no EFI Shell/PXE fallback at all, straight to a
+  real, settled "Windows 11 Setup" language-selection screen in ~20 seconds, zero keystrokes sent.
+  The rebuilt ISO was verified correct beforehand (`7z l` + `md5sum` against the `_noprompt` source
+  files), not assumed. Persisted at `image-apply/output/iso-noprompt/win11-noprompt.iso` for reuse
+  in Phase 3.2, since the rebuild itself is now confirmed correct.
 
 **Phase 3.2 — prove explicit `bootindex=` control correctly re-selects the target hard disk across
 Setup's own mid-install reboot(s), not just the initial CD-ROM boot.**

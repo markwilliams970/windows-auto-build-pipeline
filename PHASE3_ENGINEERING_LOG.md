@@ -1215,4 +1215,62 @@ whether that constraint itself needs to be revisited for Windows 11 specifically
 Setup.exe-free path has been shown to have its own real, currently-unsolved failure mode. Not yet
 begun as of this entry.
 
+## New pathway, Windows 11 only: `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`'s Phase 3.1 - the
+## `_noprompt` ISO technique cleanly passes its first gate
+
+Per that plan's own research (Phases 0-2, primary-source-verified: Microsoft's own 15-year-old
+`_noprompt` boot files, confirmed present on this project's own cached media, combined with this
+project's already-proven direct `bootindex=` control instead of Packer's QEMU builder) and Phase
+3's design (a gated, phased plan with an explicit pass/fail criterion at each step, not an
+assumption the whole thing works end to end), executed Phase 3.1 - CLAUDE.md's standing Setup.exe
+ban having just been explicitly, narrowly relaxed for Windows 11 to allow it.
+
+**What was done**: extracted the full Windows 11 Enterprise Evaluation ISO (`7z x`, all ~7GB, not
+just the boot files), swapped `efisys.bin`/`cdboot.efi` for the `efisys_noprompt.bin`/
+`cdboot_noprompt.efi` content already present on the same ISO, rebuilt via the verified `xorriso`
+recipe (`-eltorito-boot boot/etfsboot.com` for BIOS + `-eltorito-alt-boot -e
+efi/microsoft/boot/efisys.bin` for UEFI, `-isohybrid-gpt-basdat`). **Verified the rebuild actually
+took, not assumed**: `7z l` against the new ISO confirms `cdboot.efi`/`efisys.bin` are now the
+correct size, and `md5sum` confirms their content is byte-identical to the `_noprompt` source files
+- not just correctly-sized coincidentally.
+
+Booted the new ISO **completely hands-off - zero keystrokes sent, not even a fallback script** -
+via a hand-built `qemu-system-x86_64` invocation (`q35`/`accel=kvm`/`cpu host`, OVMF, CD-ROM-only,
+no target disk attached at all, kept minimal per the plan's own Phase 3.1 scope), explicit
+`bootindex=1` on the CD-ROM device, watched via `tools/qmp-watch.sh`.
+
+**Result: clean, unambiguous pass.** `BdsDxe` loaded `Boot0001 "UEFI QEMU DVD-ROM"` directly - no
+EFI Shell fallback, no PXE, no "Time out" the way the sibling project's own BCD boot log showed for
+the un-patched media. The boot went straight from firmware log to a Windows boot-transition screen
+to **a real "Windows 11 Setup" language-selection UI**, reached in roughly 20 seconds from boot
+start, confirmed settled (three consecutive 10s-apart captures, byte-identical file size) rather
+than a transient mid-render frame. At no point did any "press any key to boot from CD or DVD"
+prompt appear on screen - not skipped via timing, genuinely never rendered at all, matching what the
+`_noprompt` mechanism is documented to do.
+
+This directly passes Phase 3.1's own stated gate. Shut down via QMP `system_powerdown` (ignored, as
+expected for an interactive Setup UI screen matching this project's established pattern for
+non-desktop screens) then `SIGKILL` - no data loss concern, no target disk was ever attached in
+this minimal-scope test.
+
+**What this does and doesn't establish, stated precisely**: this confirms the keystroke race is
+genuinely eliminated for this project's own actual Windows 11 media, on this project's own actual
+host/QEMU/OVMF stack - not inferred from the Proxmox thread, independently reproduced. It does
+**not** yet confirm the deeper OVMF boot-device-ordering question (Phase 3.2's own job - does
+`bootindex=` correctly resume into a real target disk across Setup's own multi-phase reboots), and
+it does not yet confirm `EarlyF6DriverInstall` or any other Setup.exe-internal gate stays clear
+under this delivery shape (also untested by this minimal, disk-less boot). Genuine, real progress -
+not the whole plan validated yet.
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored):
+`image-apply/output/iso-noprompt/win11-noprompt.iso` (the rebuilt, verified-correct patched ISO -
+worth keeping rather than rebuilding, since the rebuild itself is now confirmed correct and
+reusable for Phase 3.2 directly) and its `extracted/` working directory (the full unpacked ISO
+content, also reusable). No VM left running, no `qemu-nbd` attached (none was ever needed for this
+disk-less test), environment fully clean at session end (confirmed via `pgrep`).
+
+**Next step**: Phase 3.2 - add a real target disk and a real (even if minimal) answer file, and
+confirm `bootindex=` correctly re-selects the hard disk across Setup's own reboot(s) rather than
+falling back into the still-attached ISO.
+
 ---
