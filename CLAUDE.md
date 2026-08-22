@@ -774,6 +774,27 @@ deliberate about how much of an existing tool to take on:
   screenshot.** See the "VM screen inspection" note under QEMU/KVM/libvirt above. This was a real
   hassle in the sibling project's debugging sessions and has a clean fix here — use it from the
   start rather than falling back to the old workflow out of habit.
+- **Disk hygiene for qcow2 test artifacts.** Every hand-run experiment in this project (Phase 2's
+  bootability work, Option A/B's bisections, the Setup.exe reproducibility attempts) leaves behind
+  a 5-20GB+ `.qcow2` disk. Left unmanaged, these accumulate fast enough to threaten the host's disk
+  space — this happened twice in one session (2026-08-22): once from Option A/B's now-dead-branch
+  artifacts (~91GB), once from redundant Server 2022/2025 reference disks (~110GB) once 6
+  independent successes had already been confirmed and most no longer needed preserving.
+  Concretely:
+  - **Check `df -h /` before starting a new multi-attempt sequence** (e.g. a fresh round of
+    reproducibility attempts), not just when a command starts failing from lack of space.
+  - **During an active reproducibility sequence** (the project's own 2-3-independent-successes
+    standard), keep each attempt's disk until the sequence concludes — they're the evidence a
+    result reproduces, not disposable scratch.
+  - **Once a sequence concludes and the evidentiary bar is met**, that's the natural checkpoint to
+    prune: keep at most one or two reference disks going forward (e.g. the most recent clean
+    success), not every attempt that got there.
+  - **Once a branch of work is explicitly closed** (a HARD STOP, an abandoned option, a superseded
+    approach), its artifacts stop being useful evidence and become pure disk pressure — clean them
+    up promptly rather than leaving them "just in case."
+  - **Always confirm with the user before deleting anything**, and prefer a targeted, reviewed list
+    (state what's being proposed for deletion and why) over a broad/wildcard delete — same standard
+    as any other destructive operation in this project.
 
 ---
 
