@@ -1668,3 +1668,183 @@ building a WinRM-readiness retry loop that tolerates the transient first-probe a
 hiccup observed in two of three attempts here.
 
 ---
+
+## Phase 3.4: formalize into production scripts. Real scripts, real bugs caught by actually
+## running them - including one genuine install failure that reshaped the eject-timing design.
+
+Design decisions made explicit before writing code (per CLAUDE.md's Claude Instructions), confirmed
+with the user rather than defaulted: (1) eject-trigger timing is a hybrid - a calibrated base
+timeout as the real signal, then a bounded pixel-sample poll window as a confirm/best-effort safety
+net, not OCR; (2) Windows 11 skips the Packer handoff entirely (no roles to provision, the new
+script already confirms first boot itself) - Server 2022/2025 keep Packer unchanged; (3) the
+eject-timing env vars must be genuinely configurable, not hardcoded, plus a convenience script to
+measure real per-host timing.
+
+**Scripts written:**
+- `image-apply/build-iso-noprompt.sh` - formalizes Phase 3.1's ISO patch (extract, swap
+  efisys.bin/cdboot.efi for their `_noprompt` counterparts, rebuild via the verified `xorriso`
+  recipe). Idempotent - verifies a cached output via its ISO9660 volume ID and a byte-for-byte
+  `isoinfo -x` comparison against the `_noprompt` source file before skipping a rebuild. Tested
+  directly: both the skip-if-verified path and a genuine fresh rebuild (11s once extraction is
+  cached) confirmed working.
+- `tools/qmp-eject.py` / `tools/qmp-pixel.py` - new formalized QMP helpers, matching this project's
+  existing `tools/qmp-*.py` convention (stdlib only, no new dependencies). `qmp-eject.py` confirms
+  via `query-block`'s own `tray_open` field rather than trusting the `eject` command's reply alone
+  (this session's own ad hoc Phase 3.3 work had already noticed the eject reply sometimes prints no
+  visible output). `qmp-pixel.py` decodes a QEMU screendump PNG (8-bit truecolor, non-interlaced -
+  the only shape `screendump` actually produces) using nothing but stdlib `zlib`/`struct` - no
+  Pillow, no ImageMagick, deliberately avoiding a new dependency for a simple job (this project's
+  own host had neither installed). Unit-tested against three real Phase 3.3 screenshots before
+  being trusted: the Setup blue background at (640,400) reads a clean, unambiguous `(0, 90, 158)`,
+  distinct from the TianoCore boot log `(1, 18, 68)`, the servicing/reboot black `(0, 0, 0)`, and a
+  real desktop's white `(255, 255, 255)` - a reliable, OCR-free "still on the Installing screen"
+  signal.
+- `image-apply/windows11-setup-install.sh` - the real production install script: answer-file ISO
+  generation (`sed`-substituted `ComputerName`, `mkisofs`), the proven `bootindex=`/QMP qemu
+  invocation, the hybrid eject trigger, a WinRM-readiness retry loop (Phase 3.3 attempts 2/3 both
+  hit a transient first-probe 401/connection-reset that cleared on retry - a single-shot check would
+  have misreported those as failures), graceful QMP shutdown. Hard-gated to Windows 11 only, with a
+  real runtime refusal (not just a doc comment) if the target path looks like a Server 2022/2025
+  disk.
+- `image-apply/calibrate-eject-timing.sh` - the requested convenience script for measuring a new
+  host's own real install timing rather than trusting the committed defaults blindly: boots a
+  throwaway disk through Setup's `windowsPE` pass only (Phase 3.2's own minimal answer file, no
+  eject), polls the same blue-background pixel to find T0 (Installing screen appears) and T1 (it
+  stops being blue - Setup's own reboot beginning), then prints recommended `W11_EJECT_*` env vars.
+  Deletes every throwaway artifact (disk, OVMF vars, answer-file ISO, QMP socket, work dir) on exit,
+  success or failure, per this project's disk-hygiene standard.
+- `build.sh` - a new `if [[ "$OS" == "windows11" ]]` branch calling the new script and exiting
+  before Packer; diffed against the pre-edit version to confirm the Server 2022/2025 branch
+  (`partition-disk.sh`/`apply-image.sh`/`make-bootable.sh`/`apply-unattend.sh`/Packer handoff) is
+  byte-for-byte unchanged, not just reviewed by eye. The dead `audit-mode-sysprep.sh` (Option B)
+  branch was removed from `build.sh`'s call sequence; the script itself stays in the repo as
+  historical record, matching `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s own "CLOSED" note.
+
+**Real bug caught while testing `calibrate-eject-timing.sh` itself**: its first draft passed the
+answer-file *template* path directly to `mkisofs`, so the resulting ISO contained a file named
+`autounattend-windows11-phase32.xml` instead of the exact name (`autounattend.xml`) Setup.exe
+requires to auto-detect an answer file. Setup.exe didn't error - it silently fell back to its
+interactive "Select language settings" screen, with no error of any kind, confirmed via a direct
+`tools/qmp-screenshot.py` capture rather than assumed from the log's own silence. Fixed by copying
+the template to a correctly-named file before building the ISO (`windows11-setup-install.sh` already
+did this correctly - only the new calibration script had the bug). A live, working stuck VM was the
+actual proof this was real, not a hypothesis - matching this project's own "verify before trusting"
+standard rather than trusting the script's own silence as success.
+
+**`calibrate-eject-timing.sh` then ran clean end-to-end** on this host: `T0=31s` (blue Installing
+screen first seen), `T1=439s` (screen stopped being blue - Setup's own reboot beginning),
+`duration=408s`. All throwaway artifacts confirmed deleted on exit (no leftover work dir, no
+leftover socket).
+
+**The real finding: `windows11-setup-install.sh`'s first actual automated run (using its own
+committed default `W11_EJECT_BASE_TIMEOUT_SEC=300`) produced a genuine, real "Windows 11
+installation has failed" error** - confirmed via direct screenshot, not inferred. Root cause: 300s
+was chosen as "safely before the earliest manually-observed 75% mark (348s)," which is the wrong
+direction of safety - Setup hadn't yet finished reading everything it needed from the install media
+at 300s elapsed on this run. The risk here is **asymmetric**: ejecting too early reliably breaks the
+install; ejecting anywhere from the real proven-safe point up to just before the actual reboot does
+not (this project's own 3 manual Phase 3.3 attempts all ejected within a ~30-second range around
+75-77% with zero failures, and the reboot itself never began before ~7:48 in any of them - there was
+real slack on the late side that the original 300s default didn't use). This is exactly why the
+calibration script's own naive "70% of blue-screen duration" formula was also wrong in the same
+direction - recomputed against this exact run's own real `T0=31s`/`T1=439s`, 70% would have
+recommended `316s`, barely later than the value that had just failed. **Both defaults were fixed
+to bias toward the later end of the observed-safe range instead of the middle**:
+`windows11-setup-install.sh`'s own default raised from 300s to 360s (with the header comment
+rewritten to state the asymmetric-risk lesson explicitly, not just the number), and
+`calibrate-eject-timing.sh`'s recommendation formula changed from 70% to 85% of the observed
+blue-screen duration. The failed run's artifacts (a 9.8GB throwaway disk, a small run-scoped work
+directory) were deleted immediately per this project's disk-hygiene standard - they were never a
+successful reference build, only debugging evidence, and the debugging was already captured here in
+writing.
+
+**Status update**: the re-run with the fixed 360s default was stopped mid-run, by explicit user
+direction, before reaching a result - not because of a problem with the fix, but because the user
+raised a sharper concern about the whole eject-timing design's own reliability (see the next entry).
+The 300s->360s fix and the 70%->85% calibration-formula fix both stand as real, documented
+corrections regardless - they're the right fix for the failure mode found, even though the design
+they're patching was about to be superseded.
+
+---
+
+## Phase 3.4, design reconsideration: dropping the static `bootindex=` override entirely (Category 3
+## from the original research plan) - tested and CONFIRMED, twice, eliminating the eject-timing
+## problem area altogether.
+
+Mid-validation, the user raised a sharp, correct objection to the eject-timing design: the pixel-
+sample poll window (added specifically per the user's own earlier request to "fine-sample pixels...
+to maximize probability of catching it") turns out to add near-zero real protection, because Windows
+Setup's blue "Installing Windows 11" background is the *same color* from roughly 10% through 90%
+complete - the poll loop can only distinguish "still blue" from "already black," not "how far
+through," so in practice it just rubber-stamps whatever `BASE_TIMEOUT` says on the very first sample.
+The entire safety margin was riding on one guessed number, dressed up to look more robust than it
+was. Combined with the real "Windows 11 installation has failed" failure already found this session,
+the user's assessment - "whack-a-mole... risks non-determinism in ways that could fail hard later on,
+and not gracefully" - was exactly right, and matched this project's own standing preference for
+adopting an existing, well-understood mechanism over patching a fragile one.
+
+Per the three options laid out earlier (fast-failure detection, digit-template OCR, or dropping the
+static `bootindex=` override to let OVMF's own NVRAM boot order handle it), the user chose to test
+the cheapest, most architecturally clean option first: **remove `bootindex=` entirely from both the
+install CD-ROM and the target disk devices, and don't eject anything at all.** The hypothesis: once
+Windows Setup's own `bcdboot`-equivalent step registers a real "Windows Boot Manager" NVRAM entry for
+the disk, OVMF's own boot-order logic might simply prefer it over the CD-ROM on its own, the same way
+real UEFI firmware conventions generally treat a freshly-created boot option. The risk this was
+specifically weighed against - Phase 3.2 attempt 1's original CD-ROM-fallback failure - turned out to
+be a distinct failure mode: that failure was caused by a *static* `bootindex=` override forcing CD-ROM
+preference regardless of NVRAM state, not by the disk's own registered entry losing on a level
+playing field. Removing the override entirely changes the actual competition being decided.
+
+**Attempt 1** (fresh 64GB disk, fresh OVMF vars, full Phase 3.3 answer file, `ComputerName=WIN11NVRAM`,
+no `bootindex=` on any device, no eject at any point): the first boot correctly selected the CD-ROM
+(the only bootable device on a blank disk - expected, unchanged). The first reboot (after the
+`windowsPE` pass) was not directly caught on camera (missed by the 15s poll interval - between two
+screenshots the screen went from the "Installing X%" blue screen straight to the specialize pass's
+own "Installing 0% / Please keep your computer on" servicing screen), but that screen's own presence
+is itself strong indirect evidence of success: it only ever appears after a real disk boot, never
+after a CD-ROM re-entry into Setup. The **second** reboot's boot log was caught directly:
+`BdsDxe: starting Boot0009 "Windows Boot Manager" from HD(1,GPT,F71E0910-55AE-4CCF-AFEA-
+C1F5D59AEFA0,...)/\EFI\Microsoft\Boot\bootmgfw.efi` - a real, disk-registered NVRAM boot entry, not
+the CD-ROM's own `Boot0001` from the very first boot. Reached a real desktop; WinRM confirmed
+(`hostname` -> `WIN11NVRAM`, `Get-NetAdapter` -> `Intel(R) PRO/1000 MT`, `Status: Up`, `1 Gbps`). Shut
+down gracefully via QMP `system_powerdown`.
+
+**Attempt 2** (second independent fresh disk and OVMF vars, `ComputerName=WIN11NVR2`, identical
+recipe): this time the **first** reboot's boot log was caught directly too -
+`BdsDxe: starting Boot0009 "Windows Boot Manager" from HD(1,GPT,106FAAFD-663D-44AF-970A-
+81B560733A70,...)/\EFI\Microsoft\Boot\bootmgfw.efi` - confirming, this time with direct evidence
+rather than inference, that the exact moment Phase 3.2 attempt 1 originally failed at (the first
+post-`windowsPE`-pass reboot) resolves cleanly to the disk's own boot entry with zero eject and zero
+static `bootindex=`. The second reboot repeated the same pattern. Reached a real desktop; WinRM
+confirmed (`hostname` -> `WIN11NVR2`, `Get-NetAdapter` -> `Intel(R) PRO/1000 MT`, `Status: Up`,
+`1 Gbps`). Shut down gracefully via QMP `system_powerdown`.
+
+**Two for two, with the critical first-reboot boot-manager selection directly confirmed on attempt 2
+(not just inferred, as attempt 1 required) - this is stronger, more direct evidence than the
+eject-based approach's own three Phase 3.3 successes ever produced for that specific moment.** No
+BSOD, no CD-ROM fallback, no eject-timing guesswork of any kind. Both runs ran notably slower than
+this session's earlier Phase 3.3 attempts (first reboot around 8-15 minutes elapsed rather than
+5-8 minutes) - consistent with general host-speed variance already observed earlier this session
+(the calibration script's own real run showed similar slowdown), not a sign of anything wrong with
+the mechanism itself; timing no longer matters to this approach's correctness at all, which is
+precisely the point.
+
+**This changes Phase 3.4's design fundamentally.** `windows11-setup-install.sh`'s entire eject-timing
+mechanism (`W11_EJECT_*` env vars, the pixel-sample poll loop, `tools/qmp-pixel.py`'s use as an eject
+trigger, `image-apply/calibrate-eject-timing.sh`) becomes unnecessary - not just simplified, genuinely
+removable. The corrected script becomes: boot with no `bootindex=` on any device, let Setup run
+completely unattended with no host-side intervention at all beyond waiting, poll for WinRM with the
+same retry logic already built. `tools/qmp-pixel.py`'s PNG-pixel-decode logic stays useful in its own
+right (a real, reusable, dependency-free primitive, already unit-tested) even though its specific
+eject-trigger use case goes away.
+
+**Persistent state**: `image-apply/output/nvram-test-attempt1/` (~15GB, attempt 1's artifacts,
+preserved) and `image-apply/output/nvram-test/` (attempt 2's artifacts, in place). No VM running, no
+`qemu-nbd` attached, confirmed via `pgrep`.
+
+**Next step**: rewrite `windows11-setup-install.sh` to drop the eject mechanism entirely per this
+result, decide whether to keep `calibrate-eject-timing.sh` at all (likely not - nothing left to
+calibrate) or retire it to historical record like `audit-mode-sysprep.sh`, and re-run the production
+validation with the simplified script before calling Phase 3.4 done.
+
+---

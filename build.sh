@@ -25,6 +25,25 @@ TARGET_QCOW2="${BUILD_DIR}/${OS}-$(date +%Y%m%d-%H%M%S).qcow2"
 
 log "=== Build: ${OS} -> ${TARGET_QCOW2} ==="
 
+# Windows 11 takes a completely different path as of Phase 3.4 (PHASE3_ENGINEERING_LOG.md):
+# a single Setup.exe-driven script covers partitioning, image install, bootability, and
+# specialize/oobeSystem in one unattended qemu session, confirmed via real WinRM inline -
+# there is no Packer handoff afterward (Windows 11 has zero Phase 3 roles to provision,
+# per CLAUDE.md's standing scope note, and the script already confirms first boot itself).
+# Server 2022/2025 are completely untouched by this branch - same partition-disk.sh /
+# apply-image.sh / make-bootable.sh / apply-unattend.sh / Packer sequence as always, no
+# exception (CLAUDE.md's absolute ban on Microsoft-Windows-Setup for those two OSes).
+if [[ "$OS" == "windows11" ]]; then
+  log "[1/1] windows11-setup-install.sh (Setup.exe-driven - see PHASE3_ENGINEERING_LOG.md Phase 3.4)"
+  if [[ -n "$COMPUTER_NAME_ARG" ]]; then
+    "${REPO_ROOT}/image-apply/windows11-setup-install.sh" "$TARGET_QCOW2" "$COMPUTER_NAME_ARG"
+  else
+    "${REPO_ROOT}/image-apply/windows11-setup-install.sh" "$TARGET_QCOW2"
+  fi
+  log "Build complete: ${TARGET_QCOW2} (Windows 11 - no Packer handoff, no roles to provision)"
+  exit 0
+fi
+
 log "[1/4] partition-disk.sh"
 "${REPO_ROOT}/image-apply/partition-disk.sh" "$OS" "$TARGET_QCOW2"
 
@@ -33,15 +52,6 @@ log "[2/4] apply-image.sh"
 
 log "[3/4] make-bootable.sh"
 "${REPO_ROOT}/image-apply/make-bootable.sh" "$OS" "$TARGET_QCOW2"
-
-# Windows 11 only (PHASE3_ENGINEERING_LOG.md Session 3/Finding 9, Session 4/Findings
-# 10-11; see WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md) - Server 2022/2025 go straight from
-# make-bootable.sh to apply-unattend.sh unchanged, matching their own six-independent-
-# success track record on the fully-offline architecture.
-if [[ "$OS" == "windows11" ]]; then
-  log "[3.5/4] audit-mode-sysprep.sh (windows11 only)"
-  "${REPO_ROOT}/image-apply/audit-mode-sysprep.sh" "$OS" "$TARGET_QCOW2"
-fi
 
 log "[4/4] apply-unattend.sh"
 if [[ -n "$COMPUTER_NAME_ARG" ]]; then

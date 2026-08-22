@@ -291,6 +291,15 @@ configured), plus additional packages this project specifically needs:
 - `ntfs-3g` (already used by the sibling project for forensic mounting; also needed here for
   `mkfs.ntfs`)
 - `qemu-utils` (for `qemu-nbd` — already available if the sibling project's tooling is installed)
+- `xorriso`, `mkisofs`/`genisoimage` (Windows 11's Setup.exe-driven build path only — rebuilding the
+  `_noprompt`-patched install ISO and the small answer-file delivery ISO, `image-apply/
+  build-iso-noprompt.sh`/`windows11-setup-install.sh`)
+- `pywinrm` (`pip3 install pywinrm`) for `python3`'s own `winrm` module — Windows 11's Setup.exe-
+  driven build path uses this directly for its own WinRM confirmation step, rather than reaching
+  into any unrelated virtualenv (a mistake made once during Phase 3.4's own interactive testing and
+  corrected before the production script was committed - see PHASE3_ENGINEERING_LOG.md). Confirmed
+  already present system-wide on this host as of Phase 3.4; a fresh host needs it installed
+  explicitly.
 
 ## Guest
 

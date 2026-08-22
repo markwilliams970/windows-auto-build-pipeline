@@ -30,3 +30,7 @@ tools/vendor/
 # config and should be tracked; these specific files are not).
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+
+# Python bytecode cache, regenerated automatically by any interpreter run
+# against tools/*.py - never source.
+__pycache__/
