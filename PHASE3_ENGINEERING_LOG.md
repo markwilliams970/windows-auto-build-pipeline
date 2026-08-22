@@ -1885,11 +1885,15 @@ mechanism (already shown twice by hand), but the actual committed script, run th
 be invoked, start to finish, with zero manual steps. Phase 3.4's original goal (formalize the
 Setup.exe-driven Windows 11 build into production scripts) is met.
 
-**Housekeeping**: this session accumulated several large test-disk directories during the NVRAM
-investigation and this final validation
-(`image-apply/output/nvram-test/`, `image-apply/output/nvram-test-attempt1/`, both ~15GB, plus the
-~15GB validation disk) - candidates for the same review-then-confirm pruning process used earlier
-this session, not yet actioned.
+**Housekeeping, actioned**: per the same review-then-confirm process used earlier this session, the
+user confirmed deletion of `image-apply/output/nvram-test/` and `image-apply/output/nvram-test-
+attempt1/` (~30GB, the two hand-run NVRAM-boot-order exploratory tests - fully superseded by the
+production script's own validation run, their evidentiary value already captured in writing above)
+plus `image-apply/output/iso-noprompt/win11-phase32-target.qcow2` and `win11-phase33-target.qcow2`
+(~28GB, reference disks from the now-superseded eject-based mechanism - that whole design was
+replaced by the NVRAM-boot-order approach, so these test a design no longer in use). ~59GB freed
+(912G volume: 390G used -> 334G used, 537G available). `windows11-phase34-validate2.qcow2` (the
+final production-script validation's own disk) is kept as the current reference.
 
 **Next step**: Phase 3.5 (full production-readiness validation - multiple independent fresh builds
 through the finished script, matching Server 2022/2025's own multi-build track record) - not yet
