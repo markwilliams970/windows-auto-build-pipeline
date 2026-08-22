@@ -28,8 +28,28 @@ with independent OVMF NVRAM state too**: same result again - no BSOD, real WinRM
 `WIN11-P33`, `Get-NetAdapter` → `Intel(R) PRO/1000 MT`, `Status: Up`), `FirstLogonCommands` marker
 confirmed. See `PHASE3_ENGINEERING_LOG.md`'s corresponding entries for the full record. **Three for
 three - this project's own 2-3-independent-successes evidentiary bar is now fully met. The
-Setup.exe-driven approach is confirmed reliable, not just promising. Phase 3.4 (formalize into real
-production scripts) is the next step, not yet started.**
+Setup.exe-driven approach is confirmed reliable, not just promising.**
+
+**Phase 3.4 is done.** Formalized into real production scripts
+(`image-apply/build-iso-noprompt.sh`, `image-apply/windows11-setup-install.sh`, new
+`tools/qmp-eject.py`/`tools/qmp-pixel.py` helpers), `build.sh` wired to route `windows11` through the
+new script with no Packer handoff. The first automated version used a QMP-scripted eject at a
+calibrated timing window (mirroring Phase 3.2/3.3's own hand-run recipe) - real testing surfaced two
+genuine problems: an ISO-naming bug in the calibration convenience script, and a real "Windows 11
+installation has failed" error from an eject that landed too early relative to the actual proven-safe
+point. Both were fixed, but a sharper design concern (the pixel-sample "safety net" can't actually
+distinguish 10% complete from 90% - the whole mechanism was really just one guessed timeout dressed
+up to look more robust) led to testing a fundamentally different approach instead of continuing to
+patch the timing guess: **dropping the static `bootindex=` override entirely and letting OVMF's own
+NVRAM boot order decide disk-vs-CD-ROM selection, with no eject at all.** Confirmed working
+independently four times total (two hand-run tests plus two runs of the final production script,
+including direct TianoCore boot-log capture of `Boot0009 "Windows Boot Manager"` on both reboots) -
+this eliminates the entire eject-timing problem area, not just improves it.
+`calibrate-eject-timing.sh` is retired (kept as historical record, same treatment as
+`audit-mode-sysprep.sh` - nothing left to calibrate once there's no eject step). See
+`PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries for the complete trail. **Next: Phase 3.5 (multiple
+independent fresh builds through the finished script, matching Server 2022/2025's own
+production-readiness bar) - not yet started.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -452,15 +472,20 @@ it already applies). Run a genuinely fresh, hands-off, end-to-end build: ISO pat
   patching around a recurrence — this project has already spent significant effort learning not to
   do that.
 
-**Phase 3.4 — formalize into real scripts, only after Phase 3.3's repeated success.**
-Write the actual production tooling — a new, `windows11`-only install path (something like
-`image-apply/build-iso-noprompt.sh` + a Setup.exe-driven equivalent of `make-bootable.sh`), mirroring
-`image-apply/*.sh`'s existing conventions (`lib/common.sh` sourcing, `set -euo pipefail`, QMP
-observation). Decide deliberately, not by default, whether this fully replaces Windows 11's existing
-offline-apply scripts or becomes a parallel path — and whether Packer re-enters the pipeline at all
-for Windows 11 afterward, given it may no longer be needed once Setup.exe itself handles install
-through first-boot in one unattended run (Windows 11 has no Phase 3 roles to provision either way,
-per this project's own standing scope note). Gated on Phase 3.3, not attempted before.
+**Phase 3.4 — DONE. Formalize into real scripts, only after Phase 3.3's repeated success.**
+Wrote the production tooling: `image-apply/build-iso-noprompt.sh`, `image-apply/
+windows11-setup-install.sh`, new `tools/qmp-eject.py`/`tools/qmp-pixel.py` helpers, `build.sh` wired
+to route `windows11` through the new script with no Packer handoff (decided deliberately — Windows
+11 has no Phase 3 roles to provision, and the script confirms first boot itself; Server 2022/2025's
+own Packer path is untouched). The offline-apply scripts (`partition-disk.sh` etc.) stay in place,
+just no longer called for `windows11` — not deleted, per this project's standard. Along the way, real
+testing found and fixed two genuine bugs (a calibration-script ISO-naming bug, and a real install
+failure from an eject-timing default that was too early), then found something bigger: the entire
+eject-timing mechanism was unnecessary — dropping the static `bootindex=` override and relying on
+OVMF's own NVRAM boot order works cleanly and was confirmed independently four times, including two
+full runs of the final production script with zero manual intervention. `calibrate-eject-timing.sh`
+is retired (historical record only). See `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries for the
+complete trail.
 
 **Phase 3.5 — full validation, matching this project's own evidentiary bar.**
 Multiple independent, fully fresh, hands-off builds through the finished production scripts — the

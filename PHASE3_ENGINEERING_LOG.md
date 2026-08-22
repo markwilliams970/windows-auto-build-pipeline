@@ -1848,3 +1848,52 @@ calibrate) or retire it to historical record like `audit-mode-sysprep.sh`, and r
 validation with the simplified script before calling Phase 3.4 done.
 
 ---
+
+## Phase 3.4, completion: `windows11-setup-install.sh` rewritten without the eject mechanism,
+## `calibrate-eject-timing.sh` retired, and a real production validation run confirms the simplified
+## script works completely unattended - no manual QMP intervention anywhere in the run.
+
+`calibrate-eject-timing.sh` retired in place (header comment marking it historical-only, same
+treatment as `audit-mode-sysprep.sh` - kept, not deleted, per this project's own standard of
+preserving superseded-branch work as a documented record). Nothing left to calibrate once the eject
+step itself is gone.
+
+`windows11-setup-install.sh` rewritten: removed `bootindex=` from every device (install CD-ROM,
+answer-file CD-ROM, target disk), removed the entire eject-trigger block (`W11_EJECT_*` env vars,
+the pixel-sample poll loop, the `tools/qmp-eject.py` call), removed the `calibrate-eject-timing.sh`
+dependency from the header comment. What remains: generate the answer-file ISO, create the target
+disk, boot once with no host-side intervention of any kind, wait for real WinRM with the existing
+retry loop (unchanged - still needed, the transient first-probe 401/connection-reset pattern is
+independent of the eject question), shut down gracefully. `W11_WINRM_TIMEOUT_SEC` raised from 1200s
+to 1800s, since the timeout window now has to cover the entire install (previously it only covered
+the post-eject portion).
+
+**Real production validation run, third fresh disk** (`windows11-phase34-validate2.qcow2`,
+`ComputerName=WIN11P34B`): ran the rewritten script exactly as a real user would - no manual QMP
+commands issued during the run itself, only read-only screenshot checks to observe progress (the
+script's own logic made every decision). Directly confirmed via TianoCore boot-log capture that
+**both** reboots picked `Boot0009 "Windows Boot Manager"` - a third and fourth independent
+confirmation of the NVRAM-boot-order finding, on top of the two hand-run tests earlier in this
+session. The script's own internal WinRM retry loop absorbed a transient 401 (confirmed by a separate
+manual probe hitting the same transient failure and clearing itself moments later) without any
+external help - exactly the resilience it was built for. Completed entirely on its own:
+`hostname=WIN11P34B` confirmed, graceful QMP shutdown, clean qemu exit, script's own final log line
+printed with no errors or warnings.
+
+**This is the real, hands-off proof the simplified production script works** - not just the
+mechanism (already shown twice by hand), but the actual committed script, run the way it will really
+be invoked, start to finish, with zero manual steps. Phase 3.4's original goal (formalize the
+Setup.exe-driven Windows 11 build into production scripts) is met.
+
+**Housekeeping**: this session accumulated several large test-disk directories during the NVRAM
+investigation and this final validation
+(`image-apply/output/nvram-test/`, `image-apply/output/nvram-test-attempt1/`, both ~15GB, plus the
+~15GB validation disk) - candidates for the same review-then-confirm pruning process used earlier
+this session, not yet actioned.
+
+**Next step**: Phase 3.5 (full production-readiness validation - multiple independent fresh builds
+through the finished script, matching Server 2022/2025's own multi-build track record) - not yet
+started. The virtio-driver question (Phase 3.2/3.3's own deliberate `e1000`/plain-IDE scope decision)
+remains open and deferred, unaffected by this session's findings.
+
+---

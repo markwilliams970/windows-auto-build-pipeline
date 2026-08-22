@@ -1,4 +1,15 @@
 #!/usr/bin/env bash
+# RETIRED - kept as historical record only, no longer called by anything in this
+# project. windows11-setup-install.sh dropped the entire eject-timing mechanism this
+# script existed to calibrate, in favor of removing the static bootindex= override
+# and letting OVMF's own NVRAM boot order handle disk-vs-CD selection - confirmed
+# working twice independently (PHASE3_ENGINEERING_LOG.md, Phase 3.4's "design
+# reconsideration" entry). There is nothing left for this script to calibrate: no
+# eject happens anymore, so no eject timing needs measuring. Left in the repo rather
+# than deleted per this project's own standard of keeping negative-branch/superseded
+# work as a documented record (same treatment as audit-mode-sysprep.sh) - the content
+# below is unmodified from when it was live.
+#
 # Windows 11 ONLY - convenience script to measure a real host's own Setup.exe install
 # timing, so windows11-setup-install.sh's W11_EJECT_* env vars can be tuned correctly
 # instead of guessing. Different hosts (storage/CPU throughput) run the install at

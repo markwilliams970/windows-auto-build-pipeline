@@ -7,19 +7,23 @@
 # Setup, no exception (CLAUDE.md) - this script hard-gates on windows11 and refuses
 # to run against anything else.
 #
-# One unattended qemu-system-x86_64 session takes a blank disk through: Setup.exe
-# partitioning + image install (windowsPE pass) -> a QMP-scripted eject of both CD-ROMs
-# at the calibrated safe point -> first reboot landing cleanly on the disk's own Boot
-# Manager entry -> specialize/oobeSystem passes -> a second reboot into a real desktop
-# -> WinRM confirmed live. Transcribed directly from PHASE3_ENGINEERING_LOG.md's Phase
-# 3.3 attempts 1-3 (three independent clean runs, zero BSODs) - not reconstructed from
-# memory. See WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md Phase 3 for the full design.
-#
-# The eject-trigger timing is NOT hardcoded - see the W11_EJECT_* env vars below.
-# Defaults are calibrated from this project's own three Phase 3.3 runs on this host;
-# a different host (different storage/CPU throughput) may need different values - use
-# image-apply/calibrate-eject-timing.sh to measure real numbers for a new host rather
-# than guessing.
+# One unattended qemu-system-x86_64 session takes a blank disk all the way through:
+# Setup.exe partitioning + image install (windowsPE pass) -> first reboot -> specialize/
+# oobeSystem passes -> second reboot into a real desktop -> WinRM confirmed live. No
+# eject, no bootindex= override of any kind - deliberately. Earlier versions of this
+# script pinned bootindex= on the install CD-ROM and target disk, then had to guess a
+# timing window to eject the CD-ROM before Setup's own reboot re-selected it. That
+# design was found unreliable (a genuine "Windows 11 installation has failed" error
+# from an eject that landed too early, and a structural gap where the pixel-sample
+# "safety net" couldn't actually distinguish 10% complete from 90%) and was replaced
+# after confirming, twice independently, that OVMF's own NVRAM boot order handles
+# disk-vs-CD-ROM selection correctly on its own once Windows registers a real "Windows
+# Boot Manager" entry - no static override needed at all. See
+# PHASE3_ENGINEERING_LOG.md's Phase 3.4 "design reconsideration" entry for the full
+# evidentiary trail (direct TianoCore boot-log confirmation of Boot0009 "Windows Boot
+# Manager" on both reboots, both attempts). The retired eject-based mechanism and its
+# own calibration convenience script (calibrate-eject-timing.sh) are kept in the repo
+# as historical record, not deleted.
 #
 # Usage: windows11-setup-install.sh <target-qcow2-path> [computer-name]
 set -euo pipefail
@@ -51,33 +55,14 @@ if [[ -e "$TARGET_QCOW2" ]]; then
   exit 1
 fi
 
-# --- Configuration, all overridable - see the header comment above. Defaults are
-# PHASE3_ENGINEERING_LOG.md Phase 3.3's own observed timing on this host: the
-# "Installing Windows 11 / N% complete" blue screen was consistently confirmed present
-# from ~5:00 through ~7:30 elapsed, with the proven-safe eject point (75-77% complete)
-# observed at roughly 5:48-6:18 elapsed and reboot never beginning before ~7:48 across
-# 3 manual runs. IMPORTANT, learned the hard way (Phase 3.4's own first automated
-# validation run): a 300s base timeout - chosen as "safely before 75%" without
-# realizing "safely before the proven-safe point" is the wrong direction of safety -
-# caused a real "Windows 11 installation has failed" error, because Setup hadn't yet
-# finished reading everything it needed from the install media at that point. The
-# risk is asymmetric: ejecting too EARLY reliably breaks the install; ejecting
-# anywhere from the proven-safe point up to just before the real reboot is fine. The
-# default below is deliberately biased toward the LATER end of the observed-safe
-# range, not the middle, for exactly this reason. Different hosts still need their own
-# calibration (calibrate-eject-timing.sh) rather than trusting this default blindly.
-W11_EJECT_BASE_TIMEOUT_SEC="${W11_EJECT_BASE_TIMEOUT_SEC:-360}"   # wait this long before polling starts
-W11_EJECT_POLL_INTERVAL_SEC="${W11_EJECT_POLL_INTERVAL_SEC:-15}"  # how often to sample during the poll window
-W11_EJECT_POLL_CEILING_SEC="${W11_EJECT_POLL_CEILING_SEC:-480}"   # hard cap - eject regardless once reached
-W11_EJECT_PIXEL_X="${W11_EJECT_PIXEL_X:-640}"                     # sample point: mid-screen, clear of any text/UI
-W11_EJECT_PIXEL_Y="${W11_EJECT_PIXEL_Y:-400}"
-# Windows Setup's own blue background color (confirmed via tools/qmp-pixel.py against
-# three independent real screenshots - PHASE3_ENGINEERING_LOG.md Phase 3.4).
-W11_INSTALLING_RGB="${W11_INSTALLING_RGB:-0 90 158}"
-
+# --- Configuration, overridable. W11_WINRM_TIMEOUT_SEC now covers the entire install
+# (there's no separate eject-wait phase before it starts) - Phase 3.4's two NVRAM-
+# boot-order confirmation runs took 14-16 minutes end to end on this host, sometimes
+# slower than this session's earlier eject-based runs; 1800s leaves real margin rather
+# than cutting it close.
 W11_WINRM_PORT="${W11_WINRM_PORT:-15985}"
-W11_WINRM_TIMEOUT_SEC="${W11_WINRM_TIMEOUT_SEC:-1200}"  # total time to wait for real desktop + WinRM after eject
-W11_WINRM_RETRY_SEC="${W11_WINRM_RETRY_SEC:-15}"         # gap between WinRM auth retries (Phase 3.3's own observed transient-401 pattern)
+W11_WINRM_TIMEOUT_SEC="${W11_WINRM_TIMEOUT_SEC:-1800}"  # total time to wait for real desktop + WinRM after boot
+W11_WINRM_RETRY_SEC="${W11_WINRM_RETRY_SEC:-15}"         # gap between WinRM auth retries (observed transient-401 pattern)
 W11_ADMIN_PASSWORD="${W11_ADMIN_PASSWORD:-TestP@ssw0rd123}"
 
 NOPROMPT_ISO="${REPO_ROOT}/image-apply/output/iso-noprompt/win11-noprompt.iso"
@@ -115,17 +100,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "Booting: install CD (bootindex=1) + answer-file CD + target disk (bootindex=2), e1000 NIC on hostfwd :${W11_WINRM_PORT}"
+# No bootindex= on any device, deliberately - see the header comment. OVMF picks the
+# CD-ROM on the very first boot (the only bootable device on a blank disk) and then
+# picks the disk's own newly-registered "Windows Boot Manager" NVRAM entry on every
+# reboot after that, on its own.
+log "Booting: install CD + answer-file CD + target disk (no bootindex= override), e1000 NIC on hostfwd :${W11_WINRM_PORT}"
 qemu-system-x86_64 \
   -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
   -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
   -drive if=pflash,format=raw,file="$OVMF_VARS_RUN" \
   -drive file="$NOPROMPT_ISO",media=cdrom,if=none,id=installcd \
-  -device ide-cd,drive=installcd,bus=ide.0,bootindex=1 \
+  -device ide-cd,drive=installcd,bus=ide.0 \
   -drive file="${WORK_DIR}/autounattend.iso",media=cdrom,if=none,id=answercd \
   -device ide-cd,drive=answercd,bus=ide.1 \
   -drive file="$TARGET_QCOW2",if=none,id=target,format=qcow2 \
-  -device ide-hd,drive=target,bus=ide.2,bootindex=2 \
+  -device ide-hd,drive=target,bus=ide.2 \
   -netdev "user,id=net0,hostfwd=tcp::${W11_WINRM_PORT}-:5985" \
   -device e1000,netdev=net0 \
   -qmp "unix:${QMP_SOCK},server,nowait" \
@@ -140,45 +129,14 @@ for i in $(seq 1 20); do
 done
 [[ -S "$QMP_SOCK" ]] || { echo "ERROR: QMP socket never appeared - qemu failed to start, see $QEMU_LOG" >&2; exit 1; }
 
-# --- Eject trigger: base timeout (the real, calibrated signal), then a bounded poll
-# window that samples the known Windows-Setup-blue pixel to (a) confirm we're not
-# ejecting into an already-black/rebooted screen and (b) still eject at the ceiling as
-# a best-effort fallback rather than never ejecting at all. This can't distinguish 40%
-# from 75% from 90% complete - only "still on the blue Installing screen" from "not" -
-# so the base timeout, calibrated per-host via calibrate-eject-timing.sh, is what
-# actually targets the proven-safe ~75-77% neighborhood; the poll window is a
-# confirmation/safety net around it, not an independent progress reader.
-log "Waiting ${W11_EJECT_BASE_TIMEOUT_SEC}s (base timeout) before polling for the safe eject window"
-sleep "$W11_EJECT_BASE_TIMEOUT_SEC"
-
-ELAPSED="$W11_EJECT_BASE_TIMEOUT_SEC"
-CONFIRMED_BLUE=0
-while [[ "$ELAPSED" -le "$W11_EJECT_POLL_CEILING_SEC" ]]; do
-  PIXEL="$(python3 "${REPO_ROOT}/tools/qmp-pixel.py" --socket "$QMP_SOCK" --x "$W11_EJECT_PIXEL_X" --y "$W11_EJECT_PIXEL_Y" 2>/dev/null || echo "")"
-  if [[ "$PIXEL" == "$W11_INSTALLING_RGB" ]]; then
-    log "Confirmed still on Setup's blue Installing screen at ${ELAPSED}s elapsed (pixel=${PIXEL}) - ejecting now"
-    CONFIRMED_BLUE=1
-    break
-  fi
-  log "Pixel at ${ELAPSED}s elapsed: '${PIXEL}' (not the expected Installing-screen blue yet/anymore) - continuing to poll"
-  sleep "$W11_EJECT_POLL_INTERVAL_SEC"
-  ELAPSED=$(( ELAPSED + W11_EJECT_POLL_INTERVAL_SEC ))
-done
-
-if [[ "$CONFIRMED_BLUE" -eq 0 ]]; then
-  echo "WARNING: never confirmed the blue Installing screen within the poll window (base=${W11_EJECT_BASE_TIMEOUT_SEC}s, ceiling=${W11_EJECT_POLL_CEILING_SEC}s) - ejecting anyway as best-effort. This host's timing may not match the calibrated defaults; consider running calibrate-eject-timing.sh and re-tuning W11_EJECT_* env vars. Inspect ${WORK_DIR} if this build fails." >&2
-fi
-
-python3 "${REPO_ROOT}/tools/qmp-eject.py" --socket "$QMP_SOCK" --device installcd --device answercd
-log "Ejected install + answer-file media"
-
-# --- Wait for real WinRM connectivity, with a retry loop - Phase 3.3 attempts 2 and 3
-# both hit a transient first-probe auth/connection failure (WinRM's own listener still
-# settling from FirstLogonCommands' own Restart-Service WinRM step) that cleared on
-# retry within seconds. A single-shot check would have misreported those as failures.
+# --- Wait for real WinRM connectivity, with a retry loop - this project's own Phase
+# 3.3 sessions repeatedly hit a transient first-probe auth/connection failure (WinRM's
+# own listener still settling from FirstLogonCommands' own Restart-Service WinRM step)
+# that cleared on retry within seconds. A single-shot check would have misreported
+# those as failures.
 python3 -c "import winrm" 2>/dev/null || { echo "ERROR: python3's 'winrm' module (pywinrm) not found - install it with 'pip3 install pywinrm' (or 'pip3 install --user pywinrm'). This is a real project dependency, not optional." >&2; exit 1; }
 
-log "Waiting for real WinRM connectivity on 127.0.0.1:${W11_WINRM_PORT} (up to ${W11_WINRM_TIMEOUT_SEC}s)"
+log "Waiting for real WinRM connectivity on 127.0.0.1:${W11_WINRM_PORT} (up to ${W11_WINRM_TIMEOUT_SEC}s) - no eject step, Setup runs fully unattended start to finish"
 DEADLINE=$(( $(date +%s) + W11_WINRM_TIMEOUT_SEC ))
 CONFIRMED_HOSTNAME=""
 while [[ "$(date +%s)" -lt "$DEADLINE" ]]; do
