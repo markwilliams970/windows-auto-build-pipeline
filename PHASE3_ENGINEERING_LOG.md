@@ -740,4 +740,107 @@ Phase 5 (full end-to-end validation, 2-3 independent successful builds) follows 
 the virtio drivers genuinely still work post-Sysprep, not just that Sysprep itself didn't reject
 them.
 
+### Finding 12: Phase 4/5 - the real production `unattend.xml` still BSODs on its first real boot,
+### even after a fully successful, live Audit Mode + Sysprep cycle. Option B's core hypothesis
+### (Finding 9) is not confirmed by this run - the fix this whole plan was built around does not,
+### by itself, resolve Finding 8
+
+Wrote the real `image-apply/audit-mode-sysprep.sh` script, mirroring the existing `image-apply/*.sh`
+conventions exactly (source `lib/common.sh`, `set -euo pipefail`, the same `qemu-nbd`/`ntfs-3g`
+offline-drop pattern, a `timeout`-wrapped foreground `qemu-system-x86_64` boot matching
+`make-bootable.sh`'s own established style rather than the ad hoc background+poll approach used for
+interactive testing in Findings 10-11) - windows11-only, hard-gated (`OS != "windows11"` is a fail-
+loud error, not a silent skip), transcribed directly from the proven Session 4 recipe: offline-drop
+`unattend-windows11-audit-sysprep.xml`, boot solo, wait for the guest's own shutdown, re-attach and
+verify `Sysprep_succeeded.tag` exists (checking the actual success marker, not just inferring
+success from the process exiting - a crash also ends the process). Wired it into `build.sh` between
+`make-bootable.sh` and `apply-unattend.sh`, conditional on `windows11`.
+
+Ran the complete revised pipeline from a fourth from-scratch disk
+(`windows11-phase4test.qcow2`): `partition-disk.sh` -> `apply-image.sh` -> `make-bootable.sh` ->
+**the new `audit-mode-sysprep.sh`** -> `apply-unattend.sh` (the real, full production
+`unattend-windows11.xml` - `ComputerName`, `TimeZone`, `RegisteredOwner`, full OOBE-skip,
+`AutoLogon`, and all four `FirstLogonCommands` steps, not the minimal audit-trigger file). Every
+offline stage succeeded exactly as designed, including the new script's own success-tag
+verification. Then booted the disk solo one more time - this time with a real `virtio-net-pci`
+device and QEMU user-mode `hostfwd` (`15985`-\>`5985`) so WinRM reachability could be checked
+directly from the host, not just inferred from a screenshot - to observe the real, customer-facing
+first boot this whole plan exists to make safe.
+
+**Result: it still crashed, in exactly the pattern Finding 8 already documented.** The boot reached
+further than Session 3's original crashes ever did - a real HTTP request to `http://<host>:15985/wsman`
+got a genuine `405 Method Not Allowed` response (the correct answer for a bare GET against a WS-
+Management endpoint, which only accepts SOAP POST - confirmed as a real response, not a false
+positive, after a first check via a bare TCP connect turned out to be exactly that: QEMU's SLIRP
+network backend accepts the *host-side* TCP handshake immediately at process start, before the guest
+OS has booted at all, so a plain `/dev/tcp` connect test is not a valid readiness signal for this
+setup - a follow-up `curl` to the same port hung and timed out with zero response at that same
+moment, confirming the first "port open" result was meaningless). Real WinRM being reachable means
+this run got as far as `FirstLogonCommands` actually running (network driver installed via the live
+`pnputil` step, WinRM listener created) - genuine progress no earlier Windows 11 attempt in this
+project reached. But: shortly after that same HTTP response, the guest **BSOD'd** -
+`PAGE_FAULT_IN_NONPAGED_AREA (0x50)`, `What failed: Ntfs.sys` - captured via `qmp-screenshot.py`, not
+inferred. It auto-rebooted (`BdsDxe` reloading `Windows Boot Manager`, confirmed via screenshot,
+ruling out a boot-configuration regression) and **crashed again**, this time with a **different**
+stop code: `KMODE_EXCEPTION_NOT_HANDLED (0x1E)`. This triggered Windows' own automatic-repair flow,
+landing on WinRE's interactive "Choose your keyboard layout" screen - which, per Session 3's own
+established finding, does not honor a graceful QMP `system_powerdown` (confirmed again here: the ACPI
+signal was accepted by QMP but the guest never responded, unlike Session 4's earlier real-desktop
+shutdowns in Findings 10-11) and had to be hard-killed (`SIGTERM`, then `SIGKILL` after that was also
+ignored) rather than shut down cleanly - acceptable here since the disk was already in a crashed,
+non-reusable state by that point, not a disk this session had any reason to preserve pristine.
+
+**This is the same "differing NTFS-referencing stop codes across independent runs" signature Finding
+8 described** (`0x50`/`Ntfs.sys` the first crash, `0x1E` the second) - reproduced on a disk that had
+just completed a fully successful, live `sysprep /generalize /oobe /shutdown` cycle (Finding 11's own
+`Sysprep_succeeded.tag` verification, re-run by the new script and confirmed again on this exact
+disk before `apply-unattend.sh` ever touched it). **Finding 9's central hypothesis - that a live
+Sysprep pass would re-validate the disk enough that Windows' subsequent real processing of a valid,
+complex `unattend.xml` wouldn't corrupt anything - is not confirmed by this result.** Sysprep having
+already run did not, by itself, prevent the crash on the very next real boot.
+
+**What this does and doesn't rule out, so a future session doesn't over- or under-read this single
+result:**
+- It doesn't cleanly rule out Option B - one run is not the same evidentiary bar as the six
+  independent Server 2022/2025 successes, or even Finding 8's own multi-run bisection. It's possible
+  something *specific* to the interaction between Sysprep's re-generalized state and this
+  particular unattend.xml's complexity (four `FirstLogonCommands`, a `PowerShell`-heavy network-wait
+  loop, `AutoLogon`) is the actual trigger, rather than Option B's core mechanism being wrong outright.
+  Session 3's own bisection already isolated the trigger to "Windows actually parsing and processing
+  a *valid* `unattend.xml`" specifically (a garbage file exercising the identical offline write
+  path was harmless) - and that finding stands unchanged; this session adds that a prior live
+  Sysprep pass doesn't neutralize it, but doesn't identify what would.
+- It does mean this plan's own success criteria (Phase 5: "no BSOD, no unskippable OOBE screen, real
+  authenticated WinRM connectivity... a single clean run is not sufficient evidence; plan for at
+  least 2-3 independent successes") are **not met**, and this first attempt failed outright, not
+  marginally.
+- The new `audit-mode-sysprep.sh` script itself worked exactly as designed and is not implicated -
+  every stage up through its own success-tag verification behaved correctly; the crash happened
+  strictly *after* `apply-unattend.sh`'s separate, unchanged offline-drop step, in the same place
+  Finding 8 already pointed to.
+
+**This is a genuine, sobering result surfaced immediately to the user rather than downplayed or
+spun as partial success** - per this project's own "avoid rabbit holes" and "time-box the research"
+standards (`WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s own Risks section: *"if it isn't converging
+within a reasonable number of attempts, that's a legitimate signal to fall back to Option A rather
+than open-ended troubleshooting"*), this is exactly the kind of decision point that belongs with the
+user, not something to keep iterating on unilaterally. Not yet decided: whether to attempt further
+Option B runs (to see if this is reproducible or was a one-off, matching the multi-run bar this
+project has applied everywhere else), pursue the not-yet-investigated NTFS-mechanism root-cause
+(Session 3's own deliberately-out-of-scope `$LogFile`/USN-journal hypothesis), or fall back to
+Option A.
+
+**Persistent state that survives** (under `image-apply/output/`, gitignored):
+`windows11-phase4test.qcow2` - the crashed disk from this session, left as-is (not cleaned up,
+not reused) as evidence for a future session's own inspection, matching this project's standard of
+preserving rather than discarding a real, unexplained failure. `windows11-auditphase1.qcow2` and
+`windows11-auditphase2.qcow2` (Sessions 4's earlier Phase 1/2 disks, both genuinely clean at the
+point Sysprep completed) also still survive. No VM left running, no `qemu-nbd` attached, environment
+fully clean at session end (confirmed via `pgrep`/`mount`) - the hard-kill above was of the guest
+process only, and normal cleanup (unmount/detach) still ran correctly afterward.
+
+**Next steps:** genuinely undecided, flagged explicitly for the user rather than defaulted into -
+see the "does and doesn't rule out" discussion above. `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s own
+status needs updating to reflect this result before any further Option B work resumes.
+
 ---

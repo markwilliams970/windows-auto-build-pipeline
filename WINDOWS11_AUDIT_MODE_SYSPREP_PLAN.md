@@ -2,20 +2,36 @@
 
 ## Status
 
-**Option B chosen. Phases 1 and 2 complete and confirmed — see `PHASE3_ENGINEERING_LOG.md` Session
-4, Findings 10-11.** The plan's two biggest unverified assumptions are now both empirically
-confirmed true: (1) the offline-drop delivery mechanism triggers real Audit Mode entry (fresh
+**Phases 1, 2, and the mechanical half of Phase 4 succeeded on their own terms — but Phase 5's real
+end-to-end validation then failed outright, contradicting this plan's own central hypothesis. See
+`PHASE3_ENGINEERING_LOG.md` Session 4, Finding 12 for the full record; summary below.**
+
+What's confirmed true: (1) the offline-drop delivery mechanism triggers real Audit Mode entry (fresh
 Windows 11 disk → built-in Administrator account, no OOBE, real Sysprep GUI auto-launched — exact
-match to Microsoft's documented behavior), and (2) `Microsoft-Windows-Deployment`/`RunSynchronous`
-under the `auditUser` pass automates Sysprep's own invocation with **zero live keystroke driving** -
-the VM ran `sysprep /generalize /oobe /shutdown` on its own and powered itself off, with Windows'
-own `Sysprep_succeeded.tag` confirming a clean completion. That same test disk carried this
-project's normal offline viostor/netkvm driver injection (not a stripped-down disk), so it also
-substantively answers Open Question 3 / Phase 3 below - Sysprep did not reject the disk over the
-non-standard injection. Phase 4 (write the real `image-apply/audit-mode-sysprep.sh` script) is next.
-Treat every claim in Phases 3-5 below as still "verify before trusting" in its fullest sense - Phase
-3's remaining open piece is confirming the injected drivers still *function* after the post-Sysprep
-`specialize` pass reprocesses them, not just that Sysprep didn't reject them outright.
+match to Microsoft's documented behavior, Finding 10); (2) `Microsoft-Windows-Deployment`/
+`RunSynchronous` under the `auditUser` pass automates Sysprep's own invocation with **zero live
+keystroke driving** — the VM ran `sysprep /generalize /oobe /shutdown` on its own and powered itself
+off, with Windows' own `Sysprep_succeeded.tag` confirming a clean completion (Finding 11); (3) the
+real `image-apply/audit-mode-sysprep.sh` script, built from that recipe and wired into `build.sh`,
+works correctly (Finding 12).
+
+**What is NOT confirmed, and actively contradicted by the one real end-to-end attempt made so far**:
+this plan's whole premise — that a live Sysprep pass would re-validate the disk enough to prevent
+Finding 8's BSOD on the real, customer-facing first boot. It didn't. A disk that had just completed
+a fully successful, verified Sysprep `/generalize` cycle **still BSOD'd** on its next real boot, with
+the same "differing NTFS-referencing stop codes across the crash-reboot sequence" signature Finding
+8 originally described (`0x50`/`Ntfs.sys`, then `0x1E` on the automatic retry) — see Finding 12 for
+the complete trail, including what this single result does and doesn't rule out (it doesn't cleanly
+eliminate Option B - the interaction could be with this specific unattend.xml's complexity rather
+than Option B's core mechanism - but it does mean Phase 5's own success bar was not met on this
+attempt, not marginally).
+
+**Status as of Session 4's end: genuinely undecided, not defaulted into anything.** Whether to
+attempt further Option B runs (to see if this reproduces or was a one-off — this plan's own evidence
+bar elsewhere requires 2-3 independent successes, and this is the inverse: one real failure isn't
+automatically conclusive either), investigate the actual NTFS-level mechanism (still out of scope
+per the original Session 3 framing, but now a candidate for being back in scope), or fall back to
+Option A is a decision for the user, flagged explicitly rather than picked unilaterally.
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s Session 3 (Findings 7-9) before touching anything below** —
 this document only makes sense in that context. Short recap: a completely fresh, hands-off Windows

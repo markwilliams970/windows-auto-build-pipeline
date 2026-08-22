@@ -34,6 +34,15 @@ log "[2/4] apply-image.sh"
 log "[3/4] make-bootable.sh"
 "${REPO_ROOT}/image-apply/make-bootable.sh" "$OS" "$TARGET_QCOW2"
 
+# Windows 11 only (PHASE3_ENGINEERING_LOG.md Session 3/Finding 9, Session 4/Findings
+# 10-11; see WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md) - Server 2022/2025 go straight from
+# make-bootable.sh to apply-unattend.sh unchanged, matching their own six-independent-
+# success track record on the fully-offline architecture.
+if [[ "$OS" == "windows11" ]]; then
+  log "[3.5/4] audit-mode-sysprep.sh (windows11 only)"
+  "${REPO_ROOT}/image-apply/audit-mode-sysprep.sh" "$OS" "$TARGET_QCOW2"
+fi
+
 log "[4/4] apply-unattend.sh"
 if [[ -n "$COMPUTER_NAME_ARG" ]]; then
   "${REPO_ROOT}/image-apply/apply-unattend.sh" "$OS" "$TARGET_QCOW2" "$COMPUTER_NAME_ARG"
