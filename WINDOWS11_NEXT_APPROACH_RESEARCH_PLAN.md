@@ -2,15 +2,17 @@
 
 ## Status
 
-**Phase 0 and a targeted Phase 1 pass are both complete.** Phase 0 confirms the original blocker is
-still unresolved, as of today. Phase 1 surveyed the strongest candidate categories and found a real,
-community-confirmed, primary-source technique (ISO-level `_noprompt` boot files, already present on
-stock Windows 11 media) that plausibly — not yet proven for this project specifically — solves the
-underlying problem when combined with this project's own existing direct boot-order control.
-Categories 4-6 of the original survey (MDT/SCCM/Autopilot mechanism, TPM bypass currency,
-cloud-vendor pipelines) were deliberately deferred rather than pursued exhaustively, since the
-strongest lead is specific and cheap enough to prototype directly. See Phase 0/1 findings below for
-the full detail. **Nothing has been built or tested yet — this is still a research document.**
+**Phases 0-2 are complete.** Phase 0 confirms the original blocker is still unresolved, as of
+today. Phase 1 surveyed the strongest candidate categories and found a real, community-confirmed
+technique (ISO-level `_noprompt` boot files). Phase 2 verified that finding against primary
+sources rather than trusting the forum thread's own retelling — confirmed directly on this
+project's own actual install media (all three target OSes), traced to genuine, 15-year-old
+Microsoft documentation, and the literal rebuild procedure captured verbatim. Categories 4-6 of the
+original Phase 1 survey (MDT/SCCM/Autopilot mechanism, TPM bypass currency, cloud-vendor pipelines)
+remain deliberately deferred as a fallback, not pursued, since the verified lead is specific and
+cheap enough to prototype directly. See the Phase 0-2 findings below for the full detail. **Nothing
+has been built or tested yet — this is still a research document; Phase 3 (design proposal) has not
+started.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -234,6 +236,81 @@ trusting" standard. Specifically worth checking for each real candidate: does it
 Windows 11 client SKU (not just assumed from Server support), and does it avoid or actually solve
 the sibling project's specific boot-timing race, or does it just get lucky with different timing
 the way this project's own Session 13 arguably did?
+
+#### Phase 2 findings — verifying the `_noprompt` finding against primary sources, not just the
+#### Proxmox thread's own retelling
+
+Phase 1's Proxmox-thread finding was itself a secondary source (a forum post describing a
+technique, however credibly confirmed by its own participants). Verified it three further ways,
+each against something more authoritative than the thread itself:
+
+1. **Checked our own actual install media directly, not a description of media.** `7z l` against
+   this project's own cached ISOs confirms `cdboot.efi`, `cdboot_noprompt.efi`, `efisys.bin`, and
+   `efisys_noprompt.bin` all genuinely exist at `efi/microsoft/boot/` on **all three of this
+   project's target OSes' media** — Windows 11 Enterprise Evaluation, Windows Server 2025, and
+   Windows Server 2022 (`cdboot.efi`/`cdboot_noprompt.efi` differ slightly in byte size between
+   builds, confirming they're genuinely distinct compiled binaries specific to each build, not
+   placeholder duplicates). This is the strongest form of verification available - not "a forum
+   says this is on the ISO," but "our own actual build input has been checked directly and the
+   claim holds."
+2. **This means the technique isn't Windows-11-specific at all** - it's a general Windows
+   installation-media feature present across every OS this project targets. Worth noting even
+   though Server 2022/2025 don't need it (their offline pipeline is already proven) - it's
+   corroborating evidence this is a real, general-purpose Windows Setup mechanism, not a
+   Windows-11-specific workaround that happens to exist by coincidence.
+3. **Traced the mechanism back further than the Proxmox thread, to actual Microsoft
+   documentation**, not just community description of it. A genuine Microsoft Support KB article
+   (["Boot failed" error... Windows 7/Server 2008 R2 UEFI installation
+   media](https://support.microsoft.com/en-us/topic/-boot-failed-error-message-when-you-start-a-uefi-enabled-computer-from-the-installation-dvd-of-a-64-bit-version-of-windows-7-or-windows-server-2008-r2-package-2-a19c6273-bd5a-a684-3c4f-f479b5f0522d),
+   fetched and read directly, lists `Cdboot_noprompt.efi`/`Efisys_noprompt.bin` in its own hotfix
+   file table (version `6.1.7600.20754`, dated **13-Jul-2010**) as files to be copied into place
+   during hotfix integration. This confirms these aren't a community reverse-engineering discovery
+   or an accidental artifact — they're a genuine, official Microsoft mechanism that's been present
+   and stable on Windows installation media for **over fifteen years**, from Windows 7 through
+   Windows 11/Server 2025 (confirmed directly, point 1 above). The KB itself doesn't explain the
+   *purpose* of the noprompt variant in so many words, but the naming is self-documenting and
+   matches every independent community source's consistent description exactly.
+4. **Got the literal rebuild procedure, not a paraphrase of it**, since the actual `xorriso`
+   command matters if this is ever really built:
+   ```
+   xorriso -as mkisofs \
+     -iso-level 3 \
+     -volid "WINSETUP" \
+     -eltorito-boot boot/etfsboot.com \
+       -eltorito-catalog boot/boot.cat \
+       -no-emul-boot \
+       -boot-load-size 8 \
+       -boot-info-table \
+     -eltorito-alt-boot \
+       -e efi/microsoft/boot/efisys.bin \
+       -no-emul-boot \
+     -isohybrid-gpt-basdat \
+     -o "output_path.iso" \
+     "extracted_content_directory"
+   ```
+   (after deleting the original `efisys.bin`/`cdboot.efi` and renaming the `_noprompt` variants
+   into their place). This is the standard, widely-documented dual-boot-catalog pattern for
+   rebuilding a Windows ISO (BIOS via `boot/etfsboot.com`, UEFI via `efi/microsoft/boot/
+   efisys.bin`) — recognizable as the same general recipe used across many independent "how to
+   build a custom Windows ISO" guides, not a fragile one-off invented for this specific thread.
+5. **One real, practical caveat surfaced and worth carrying into Phase 3's design, not dropped**:
+   a thread participant mentioned needing to handle CD-ROM re-attachment/ejection across Setup's
+   own multi-phase reboot (Windows Setup reboots partway through installation; if the ISO is still
+   attached and preferred at boot time, it can re-enter Setup instead of continuing the installed
+   system) — described only vaguely ("cloning VM state after first phase"), not as a solved,
+   documented technique. This project already has the tooling to handle this cleanly and
+   deliberately (QMP-based device control, already used throughout this project's own conventions,
+   or explicit `bootindex=` favoring the hard disk after the first reboot) rather than needing to
+   adopt the thread's own vague workaround — but it's a real design point for Phase 3, not
+   something the noprompt-ISO fix alone resolves.
+
+**Net assessment**: the `_noprompt` mechanism itself is now about as well-verified as research
+alone can make it — confirmed on this project's own actual media, traced to genuine 15-year-old
+Microsoft documentation, with a concrete, standard rebuild procedure in hand. What remains
+unverified (and can only be verified by actually building it, not further research) is whether
+combining it with this project's own direct `bootindex=` control genuinely avoids the *deeper*
+OVMF boot-device-ordering bug the way the Phase 0/1 hypothesis proposes — the Proxmox thread is
+consistent with that being true but doesn't isolate it as its own confirmed variable.
 
 ### Phase 3 — design proposal (not started, deferred until Phase 0-2 complete)
 
