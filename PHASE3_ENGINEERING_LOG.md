@@ -1438,4 +1438,25 @@ valuable hand-run success reference), and everything under `iso-noprompt/` (this
 Phase 3.1-3.3 work). Older Server 2022/2025 Phase 2 hand-run disks were identified as a separate,
 lower-priority cleanup candidate but left untouched, out of scope of this specific request.
 
+## Housekeeping, continued: all remaining Server 2022/2025 disk artifacts also deleted, by explicit
+## direction - reclaiming a further ~118GB (~110GB actual)
+
+Per explicit follow-up direction, deleted the Server 2022/2025 disk artifacts left untouched above -
+both the ones `PHASE2_ENGINEERING_LOG.md` Session 11 itself had already flagged as superseded
+(`win2025-session9.qcow2`, `win2025-session9b.qcow2`, `win2025-test.qcow2`, `win2025-target.qcow2`)
+*and* the ones previously flagged "the reference disk... treat as a valuable asset"
+(`win2025-session11.qcow2`, `win2022-session12.qcow2`, Session 11/12's own hand-run confirmations)
+*and* Phase 3 Session 2's own most-recent, most-authoritative production-pipeline disks
+(`builds/server2022-test3.qcow2` - real AD DS domain live, `builds/server2025-test1.qcow2` - real
+IIS+SQL Server verified). Host disk usage: 444GB -> 334GB used, 537GB free.
+
+**None of this touches the evidentiary record.** All six independent Server 2022/2025 successes
+(three each) remain fully documented in `PHASE2_ENGINEERING_LOG.md` (Session 11/Finding 41, Session
+12/Finding 42) and `PHASE3_ENGINEERING_LOG.md` (Session 2's confirmed-results table) regardless of
+which disk files survive - the findings themselves, not the underlying qcow2s, are what this
+project's own standards treat as the durable record. If a fresh reference disk is ever needed again,
+`build.sh server2022`/`build.sh server2025` reproduces one from scratch in minutes, per the
+project's own "every build applies the WIM fresh" principle - these were never meant to be
+permanent, one-of-a-kind artifacts in the first place.
+
 ---
