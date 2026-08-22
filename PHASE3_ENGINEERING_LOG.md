@@ -1343,4 +1343,83 @@ fully clean (confirmed via `pgrep`).
 completion step before the first reboot, and confirm the second (and any subsequent) reboot
 correctly lands on the hard disk instead of re-triggering the upgrade-vs-clean-install dialog.
 
+## Phase 3.2, attempt 2: PASSED. QMP-ejecting the install media before the first reboot fully
+## resolves the boot-order problem - a real Setup.exe-driven Windows 11 install reached a genuine
+## OOBE screen, first time in this project's history
+
+Fresh target disk (attempt 1's was discarded per its own persistent-state note - Setup's own
+upgrade-vs-clean-install detection made it an unreliable retry starting point), identical recipe to
+attempt 1. Watched via `tools/qmp-watch.sh` as before, tracking almost identically to attempt 1's
+own pacing (42% at ~3min, 59% at ~5min, 76% at ~5.5min) - confirms attempt 1's timing wasn't a
+fluke, this pipeline's install pacing is consistent run to run.
+
+**At 76% complete - the same point attempt 1 rebooted from within seconds - issued the fix directly**,
+not waiting for a more precise signal: `{"execute": "eject", "arguments": {"device": "installcd"}}`
+and the same for `answercd`, confirmed via a follow-up `query-block` showing both drives
+`tray_open: true` with no media before the reboot occurred. Chose to act immediately at 76% rather
+than wait for a more exact completion signal, given attempt 1's own evidence that the window between
+"visibly close to 100%" and "reboot fires" was under a minute - and confirmed empirically that
+ejecting this early doesn't interrupt anything: Setup's own file-copy continued normally to
+completion afterward, meaning the ISO's content was already fully consumed by this point in the
+process, matching the plan's own reasoning for why this fix should be safe.
+
+**Result: the fix works completely.** The first reboot after file-copy landed straight into a real
+"Installing X%　/ Please keep your computer on" specialize-pass continuation screen - no `BdsDxe`
+CD-ROM boot-log line at all this time (the now-empty drives are silently skipped by OVMF's own boot
+enumeration), no upgrade-vs-clean-install dialog, no interruption of any kind. Specialize-pass
+processing continued for several more minutes and included **a second reboot** (a bare `TianoCore`
+splash with no CD-ROM boot-log line, same clean pattern) before landing on **a real, genuine Windows
+11 OOBE screen** - "Is this the right country or region?", the actual out-of-box first-run
+experience, confirmed via screenshot, not inferred.
+
+**This is the first time in this project's entire history that a Setup.exe-driven Windows 11 install
+has completed end to end.** Every prior Setup.exe attempt (Sessions 3-6 of `PHASE2_ENGINEERING_LOG.md`,
+and this session's own Phase 3.1) either never got past `EarlyF6DriverInstall` or was deliberately
+scoped short of a full install. This run went from a patched ISO's own first boot, through the
+hardware-compatibility bypass, through disk partitioning and image installation, through file-copy,
+through **two separate reboots each correctly landing on the target hard disk with zero fallback to
+the now-ejected install media**, all the way to a real OOBE screen - fully unattended except for the
+one deliberate, scripted QMP intervention this phase exists to validate.
+
+Shut down via QMP `system_powerdown` (ignored, as expected for an interactive OOBE screen matching
+this project's established pattern) then `SIGKILL` - no further data to preserve, this phase's own
+gate was already conclusively met by the screenshot evidence.
+
+**This directly and cleanly passes Phase 3.2's own stated gate**: "every reboot correctly resumes
+into the installed system on the hard disk... never falling back into the ISO/EFI shell/PXE." Two
+separate reboots, zero fallback, either time.
+
+**What this does and doesn't establish, stated precisely**: confirms the `bootindex=`-plus-QMP-eject
+combination genuinely solves the reboot-order problem this project's own prior Setup.exe work never
+got far enough to even encounter. It does not yet confirm `EarlyF6DriverInstall` or any other
+Setup.exe-internal gate stays clear all the way through a *complete* run with a full `specialize`/
+`oobeSystem` answer file (this minimal `windowsPE`-only file never gave Setup anything to process in
+those later passes, so OOBE was reached in its normal interactive form, not skipped) - that's Phase
+3.3's own job, along with confirming real authenticated WinRM connectivity as this project's
+established success bar.
+
+**One open engineering question for Phase 3.4's eventual formalization, not resolved here**: this
+session used visual judgment (screenshot review) to decide when to eject, timed against attempt 1's
+own observed pacing. A real, unattended production script needs a scriptable, non-visual trigger -
+Phase 3's own design proposal already named two real candidates (a generous fixed timeout matching
+this project's existing `timeout 300`-style convention, or a cheap fixed-pixel color-sample check
+against repeated screenshots, avoiding any need for OCR) - neither implemented yet, and a third
+candidate surfaced mid-session worth testing before committing to either: dropping the static
+`bootindex=` override on the CD-ROM entirely and relying on OVMF's own NVRAM-driven boot order once
+Windows itself registers a Boot Manager entry during install, which may sidestep needing a
+timed/detected eject at all. Not yet tested.
+
+**Persistent state that survives** (under `image-apply/output/iso-noprompt/`, gitignored):
+`win11-phase32-target.qcow2` - a real, disk-image proof that a Setup.exe-driven Windows 11 install
+via this project's own tooling can reach a genuine OOBE screen, worth keeping as a reference rather
+than discarding. All other Phase 3.1/3.2 artifacts (`win11-noprompt.iso`, `autounattend.iso`, the
+`extracted/` working directory) remain valid and reusable. No VM left running, no `qemu-nbd`
+attached, environment fully clean (confirmed via `pgrep`).
+
+**Next step**: Phase 3.3 - a real, complete answer file covering `specialize`/`oobeSystem` (adapting
+this project's existing `unattend-windows11.xml` content), a genuinely fresh end-to-end run with the
+QMP-eject fix included, and confirmation of real authenticated WinRM connectivity with no BSOD and no
+unskippable OOBE hang - matching this project's own established success bar, and requiring 2-3
+independent successes before being trusted, not one.
+
 ---

@@ -2,19 +2,19 @@
 
 ## Status
 
-**Phases 0-3 are complete, and Phase 3.1 execution has passed its gate.** Phase 0 confirms the
-original blocker is still unresolved, as of today. Phase 1 surveyed the strongest candidate
-categories and found a real, community-confirmed technique (ISO-level `_noprompt` boot files).
-Phase 2 verified that finding against primary sources — confirmed directly on this project's own
-actual install media (all three target OSes), traced to genuine, 15-year-old Microsoft
-documentation, literal rebuild procedure captured verbatim. Phase 3 turned that verified finding
-into a concrete, phased design proposal with an explicit pass/fail gate at each step, and **Phase
-3.1 has now actually been executed and passed cleanly**: a `_noprompt`-patched Windows 11 ISO,
-built and verified correct, boots completely hands-off — zero keystrokes — straight to a real
-"Windows 11 Setup" language-selection screen, no "press any key" prompt ever appearing. See
-`PHASE3_ENGINEERING_LOG.md`'s corresponding entry for the full record. **Phase 3.2 (confirm
-`bootindex=` survives Setup's own multi-phase reboots with a real target disk) is next, not yet
-started.**
+**Phases 0-3 are complete, and Phase 3.1-3.2 execution have both passed their gates.** Phase 0
+confirms the original blocker is still unresolved, as of today. Phase 1 surveyed the strongest
+candidate categories and found a real, community-confirmed technique (ISO-level `_noprompt` boot
+files). Phase 2 verified that finding against primary sources. Phase 3 turned it into a concrete,
+phased design with an explicit pass/fail gate at each step. **Phase 3.1 passed cleanly** (the
+`_noprompt` ISO eliminates the boot-prompt race entirely). **Phase 3.2 passed on its second attempt**:
+static `bootindex=` alone didn't survive Setup's first reboot (attempt 1, a real, anticipated
+failure), but adding a QMP `eject` of the install media right before that reboot fixed it completely
+— two separate reboots, zero fallback to the CD-ROM either time, landing on a genuine Windows 11
+OOBE screen. **This is the first time in this project's history a Setup.exe-driven Windows 11
+install has completed end to end.** See `PHASE3_ENGINEERING_LOG.md`'s corresponding entries for the
+full record. **Phase 3.3 (a complete answer file, real WinRM confirmation, 2-3 independent
+successes) is next, not yet started.**
 
 **Read `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) before anything
 below.** Short recap: this project tried two architectural options for building Windows 11
@@ -389,8 +389,8 @@ minimal. Hand-built `qemu-system-x86_64`, OVMF, watched via `tools/qmp-screensho
   files), not assumed. Persisted at `image-apply/output/iso-noprompt/win11-noprompt.iso` for reuse
   in Phase 3.2, since the rebuild itself is now confirmed correct.
 
-**Phase 3.2 — prove explicit `bootindex=` control correctly re-selects the target hard disk across
-Setup's own mid-install reboot(s), not just the initial CD-ROM boot.**
+**Phase 3.2 — PASSED (on attempt 2). Prove explicit `bootindex=` control correctly re-selects the
+target hard disk across Setup's own mid-install reboot(s), not just the initial CD-ROM boot.**
 Add a real target disk alongside the patched ISO (a blank `partition-disk.sh`-created disk, or even
 fully blank — Setup.exe partitions it itself). Same hands-off approach, but now let Setup's own
 `windowsPE` pass actually run an install (a real answer file needed here — see 3.3 for its full
@@ -404,6 +404,17 @@ boundary via QMP screenshots.
   existing QMP device-control conventions, or a scripted `bootindex=` flip between phases, are real
   candidate fixes) — but it's real work to close, not assumed away, and worth confirming a fix
   actually works before Phase 3.3 builds on top of it.
+- **Actual result (see `PHASE3_ENGINEERING_LOG.md` for the full record)**: attempt 1 hit exactly
+  this failure mode - static `bootindex=` alone doesn't survive the first reboot, Windows Setup's
+  own "looks like you booted from installation media" dialog confirmed it. Attempt 2 fixed it with
+  a QMP `eject` on both CD-ROM devices right before the reboot, confirmed via `query-block`. Result:
+  **two separate reboots, zero fallback to the CD-ROM either time**, landing on a real, genuine
+  Windows 11 OOBE screen ("Is this the right country or region?") - the first time in this project's
+  history a Setup.exe-driven Windows 11 install has completed end to end. The eject trigger used
+  visual/screenshot judgment this session, not yet a scriptable signal - real open item for Phase
+  3.4's formalization (candidates: a generous fixed timeout, a cheap fixed-pixel color-sample check,
+  or dropping the static `bootindex=` override entirely in favor of OVMF's own NVRAM-driven boot
+  order once Windows registers its own Boot Manager entry - untested).
 
 **Phase 3.3 — deliver a real, complete answer file through Setup.exe and confirm a genuinely
 working, WinRM-reachable result — the project's own established success bar, not a new one.**
