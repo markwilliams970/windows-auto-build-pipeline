@@ -1648,10 +1648,16 @@ This is no longer just "promising evidence" - by this project's own standard, it
 
 **Persistent state that survives** (under `image-apply/output/iso-noprompt/`, gitignored):
 `win11-phase33-target.qcow2` (attempt 3's disk) alongside `-attempt1.qcow2` and `-attempt2.qcow2`
-(both preserved). Per this project's own disk-hygiene standard (CLAUDE.md), now that the
-evidentiary bar is met, these three are candidates for pruning down to one or two reference disks -
-not done yet, pending explicit confirmation with the user before any deletion. No VM left running,
-no `qemu-nbd` attached.
+(both preserved at the time this section was first written). No VM left running, no `qemu-nbd`
+attached.
+
+**Housekeeping, immediately following**: per this project's own disk-hygiene standard (CLAUDE.md),
+now that the evidentiary bar was met, attempt 1's and attempt 2's disks (`win11-phase33-target-
+attempt1.qcow2`, `win11-phase33-target-attempt2.qcow2`) and attempt 2's now-orphaned OVMF vars file
+(`OVMF_VARS_phase33-attempt2.fd`) were reviewed and deleted, by explicit user confirmation - ~33GB
+freed (912G volume: 369G used -> 347G used, 524G available). `win11-phase33-target.qcow2` (attempt
+3) is now the sole Phase 3.3 reference disk; `win11-phase32-target.qcow2` (a separate phase's own
+reference disk) was left untouched.
 
 **Next step**: Phase 3.4 - formalize into real, production `image-apply/*.sh`-style scripts. Open
 questions carried into that phase: automating the eject trigger (currently visual/screenshot
