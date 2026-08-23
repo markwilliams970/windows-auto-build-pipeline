@@ -241,11 +241,13 @@ and client cursors always agree."* This project's own ad hoc `qemu-system-x86_64
 use libvirt domain XML, so the equivalent fix is two raw device flags, needed on **any** invocation
 this project builds that might ever need `qmp-click.py` (not specific to Windows 11, or to any one
 phase — general-purpose, add it up front rather than rediscovering the gap each time):
-`-device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0`. `make-bootable.sh`'s own
-`qemu-system-x86_64` invocation does not currently include this (it has never needed mouse clicks),
-and neither did Session 4's ad hoc solo-boot command — that session had to fall back to
-keyboard-only `Alt+Tab`/`Escape` navigation via `qmp-sendkey.py` instead, which happened to be
-sufficient there but won't always be.
+`-device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0`. Session 4's own ad hoc solo-boot
+command didn't have this and had to fall back to keyboard-only `Alt+Tab`/`Escape` navigation via
+`qmp-sendkey.py` instead, which happened to be sufficient there but won't always be. **Closed as of
+Phase 3.4/3.5's completion**: both of this project's real production `qemu-system-x86_64`
+invocations (`make-bootable.sh`, covering Server 2022/2025; `windows11-setup-install.sh`, covering
+Windows 11) now include this device pair up front, verified with a real boot rather than assumed -
+all three target OSes are covered.
 
 **Convention going forward**: whenever a `qemu-system-x86_64` invocation is constructed for testing
 or experimentation in this project (not necessarily Packer-managed builds — see caveat below), add

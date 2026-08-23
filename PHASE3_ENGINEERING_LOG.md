@@ -1939,3 +1939,26 @@ decision - untested with this pipeline), and Phase 4 (Datadog Agent integration)
 all three OSes equally and hasn't been started for any of them.
 
 ---
+
+## Housekeeping: USB tablet device added to both production `qemu-system-x86_64` invocations, closing
+## a gap CLAUDE.md flagged (Session 4) but never actually fixed.
+
+CLAUDE.md's own "Known gotcha" note (under QEMU/KVM/libvirt) documented that a guest's default
+relative PS/2 mouse can't be driven by `tools/qmp-click.py`'s absolute-position clicks, and that
+`make-bootable.sh` didn't yet carry the fix (`-device qemu-xhci,id=usbbus -device
+usb-tablet,bus=usbbus.0`) the sibling project already uses via libvirt domain XML. Added directly to
+both of this project's real production `qemu-system-x86_64` invocations - `make-bootable.sh`
+(Server 2022/2025) and `windows11-setup-install.sh` (Windows 11) - covering all three target OSes,
+not just Windows 11. The two retired scripts (`audit-mode-sysprep.sh`, `calibrate-eject-timing.sh`)
+were deliberately left unmodified - they're frozen historical record of what actually ran, not live
+code to keep current.
+
+Verified two ways before trusting the change: `qemu-system-x86_64 -device help` confirmed both
+`qemu-xhci` and `usb-tablet` are available on this host, and a real (if minimal, disk-less)
+`qemu-system-x86_64` launch with both devices attached booted cleanly through SeaBIOS/iPXE with no
+device-init errors. Neither script needs a full end-to-end re-validation run for this specific
+change - it's a purely additive USB controller + generic HID tablet device (natively supported by
+every Windows version, no driver needed), doesn't alter any existing boot device, network
+configuration, or QMP behavior already proven across Phase 3.4/3.5's six independent clean runs.
+
+---

@@ -45,6 +45,12 @@ QMP_SOCK="/tmp/mkboot-${OS}.sock"
 rm -f "$QMP_SOCK"
 
 log "Booting WinPE + target together to run bcdboot (WinPE on ide.0, target on virtio-blk-pci, per Finding 17)"
+# USB tablet device (CLAUDE.md's "Known gotcha" under QEMU/KVM/libvirt): a guest's default
+# pointer is a relative PS/2 mouse, which any QMP absolute-position click (tools/qmp-click.py)
+# cannot drive at all - the sibling project hit the identical problem for its own VNC/SPICE
+# console and fixed it with libvirt's <input type='tablet' bus='usb'/>. Added here up front,
+# on every qemu-system-x86_64 invocation this project constructs, per that same convention -
+# cheap now, avoids rediscovering the gap mid-debugging session later.
 # bootindex is explicit and load-bearing, not defensive - discovered the hard way when
 # this script was re-run against a target that already had a valid BCD from a prior
 # run: OVMF's own boot-option discovery preferred the target's now-real Windows Boot
@@ -62,6 +68,7 @@ timeout 300 qemu-system-x86_64 \
   -device ide-hd,drive=winpe,bus=ide.0,bootindex=1 \
   -drive file="$TARGET_QCOW2",if=none,id=target,format=qcow2 \
   -device virtio-blk-pci,drive=target,bootindex=2 \
+  -device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0 \
   -qmp "unix:${QMP_SOCK},server,nowait" \
   -display none \
   || { rc=$?; if [[ $rc -eq 124 ]]; then echo "ERROR: WinPE+bcdboot boot timed out after 300s" >&2; exit 1; fi; }

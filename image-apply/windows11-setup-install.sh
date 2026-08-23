@@ -104,6 +104,14 @@ trap cleanup EXIT
 # CD-ROM on the very first boot (the only bootable device on a blank disk) and then
 # picks the disk's own newly-registered "Windows Boot Manager" NVRAM entry on every
 # reboot after that, on its own.
+# USB tablet device (CLAUDE.md's "Known gotcha" under QEMU/KVM/libvirt): a guest's default
+# pointer is a relative PS/2 mouse, which any QMP absolute-position click (tools/qmp-click.py)
+# cannot drive at all - the sibling project hit the identical problem for its own VNC/SPICE
+# console and fixed it with libvirt's <input type='tablet' bus='usb'/>. Added here up front,
+# on every qemu-system-x86_64 invocation this project constructs, per that same convention -
+# cheap now, avoids rediscovering the gap mid-debugging session later. This script itself
+# never clicks anything (fully unattended via answer files/WinRM), but the device costs
+# nothing to include and means a future debugging session doesn't have to rediscover this.
 log "Booting: install CD + answer-file CD + target disk (no bootindex= override), e1000 NIC on hostfwd :${W11_WINRM_PORT}"
 qemu-system-x86_64 \
   -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
@@ -117,6 +125,7 @@ qemu-system-x86_64 \
   -device ide-hd,drive=target,bus=ide.2 \
   -netdev "user,id=net0,hostfwd=tcp::${W11_WINRM_PORT}-:5985" \
   -device e1000,netdev=net0 \
+  -device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0 \
   -qmp "unix:${QMP_SOCK},server,nowait" \
   -display none \
   > "$QEMU_LOG" 2>&1 &
