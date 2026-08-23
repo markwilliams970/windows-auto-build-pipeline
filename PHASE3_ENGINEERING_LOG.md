@@ -1962,3 +1962,29 @@ every Windows version, no driver needed), doesn't alter any existing boot device
 configuration, or QMP behavior already proven across Phase 3.4/3.5's six independent clean runs.
 
 ---
+
+## Housekeeping: broader qcow2 review across the whole `image-apply/output/` tree, not just this
+## session's own churn - found real Phase 2-era dead weight still sitting around.
+
+A full inventory of every `.qcow2` under `image-apply/output/` (not just this session's artifacts)
+turned up three disks from now-closed Phase 2 branches, unreferenced by any current script (confirmed
+via `grep` across all `.sh` files, not assumed): `win11-session13.qcow2` (18GB, Phase 2's own final
+successful Windows 11 build via the now-fully-superseded fully-offline pipeline - that whole
+architecture is dead, replaced end to end by the Setup.exe-driven approach), `winpe-boot.qcow2`
+(2.0GB, an early predecessor to the still-active `winpe-boot-index1-work.qcow2`, superseded), and
+`winpe-boot-index2.qcow2` (1.5GB, an artifact of Phase 2's abandoned Setup.exe/`boot.wim` pivot -
+closed per CLAUDE.md's "RECONSIDERATION CLOSED" note back in Session 6). By explicit user
+confirmation, all three deleted (~21.5GB). `winpe-boot-index1-work.qcow2` - confirmed via `grep`
+as the actual `WINPE_QCOW2` `make-bootable.sh` requires - was left untouched.
+
+Also pruned, by explicit user confirmation: two of the three Phase 3.4/3.5 Windows 11 reference disks
+(`windows11-phase34-validate2.qcow2`, `windows11-phase35-build1.qcow2`, ~30GB) - more reference disks
+than this project's own "1-2 once the bar is met" standard calls for. `windows11-phase35-build2.qcow2`
+(the most recent, ~13GB) kept as the sole current reference.
+
+**Total freed this round: ~50GB** (912G volume: 361G used -> 311G used, 560G available). Remaining
+`image-apply/output/` qcow2 footprint is now just the two disks actually still needed:
+`winpe-boot-index1-work.qcow2` (required by `make-bootable.sh`) and `windows11-phase35-build2.qcow2`
+(current Windows 11 reference).
+
+---
