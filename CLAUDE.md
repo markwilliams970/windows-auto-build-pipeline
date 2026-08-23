@@ -349,7 +349,9 @@ watch for.
 Unchanged from the sibling project — see its `CLAUDE.md` for the full detail (Windows service
 exists, Agent service running, status healthy, connectivity succeeds, host registration confirmed
 if practical; the implementation must clearly report failures). Not yet implemented in either
-project — tracked here as Phase 4, same as the sibling project's own Phase 4.
+project — tracked here as Phase 4, now generalized beyond just Datadog (see Phase 4's own section
+below for the full "Tooling" scope) but this validation bar for the Datadog Agent specifically is
+unchanged by that generalization.
 
 ---
 
@@ -404,7 +406,13 @@ windows-auto-build-pipeline/
 │   ├── install-ad.ps1
 │   ├── install-sql-server.ps1
 │   ├── verify-post-reboot.ps1
-│   └── install-datadog.ps1     # future
+│   └── install-tools.ps1       # future (Phase 4, generalized "Tooling" - 7-Zip/PuTTY/WinSCP/
+│                                  # Chrome/Notepad++/Datadog Agent, see Phase 4's own section;
+│                                  # supersedes the originally-sketched install-datadog.ps1 name)
+
+├── tools.yaml                    # future (Phase 4) - which tools to install + Datadog config
+│                                  # (site/tags only, never the API key - see Phase 4's "Secret
+│                                  # handling" note)
 
 ├── dev/                        # fast-iteration harness, same pattern as the sibling project's
 │   └── ...
@@ -715,20 +723,130 @@ not just Windows-version-sensitive.
 
 ---
 
-# Phase 4: Datadog Integration
+# Phase 4: Tooling (generalized from "Datadog Integration", 2026-08-23)
 
-Implement:
+**Scope generalized, by explicit direction, from "install the Datadog Agent" to "install a
+configurable set of post-build tools, of which Datadog is one."** The original three-line Phase 4
+(runtime secret injection, Agent installation, configuration, validation) is now the Datadog-specific
+slice of a broader, YAML-driven tool installer covering: 7-Zip, PuTTY, WinSCP, Google Chrome,
+Notepad++, and the Datadog Agent. Nothing about Datadog's own success criterion changes (Agent
+healthy, same validation bar the sibling project uses) — it's just no longer the *only* thing this
+phase installs, and the mechanism that installs it should be reusable for the other five tools rather
+than Datadog-specific.
 
-- runtime secret injection
-- Agent installation
-- configuration
-- validation
+**Why this belongs here, not as a one-off script**: Phase 3A gave every OS (including Windows 11,
+which gets none of Phase 3's AD/IIS/SQL roles) a real, interactive, SPICE-reachable desktop for the
+first time in this project's history. A desktop a human might actually sit at benefits from having
+7-Zip/Chrome/Notepad++/PuTTY/WinSCP on it, not just headless monitoring - this phase is now genuinely
+useful to all three target OSes, not just the Server SKUs Phase 3's roles are scoped to.
 
-Success criteria:
+## Research first (per this project's own "search before you build" standard)
 
-Datadog Agent is healthy.
+- **The sibling project has a `tools.txt`** (`../windows-server-vm-automation/tools.txt`) listing
+  Notepad++, Google Chrome, Git For Windows, PuTTY, WinSCP, Visual Studio Code, 7-zip - confirmed via
+  direct inspection that it is **not referenced anywhere** in that project's own scripts (`grep -rn
+  "tools.txt"` there returns nothing). A real signal of intent, not working automation to adopt or
+  reuse - there is no existing mechanism to search for tools, download them, or install them silently
+  anywhere in either project. `install-datadog.ps1` also does not exist in either project's `scripts/`
+  despite being listed in this project's own repo-structure sketch as "future" - Phase 4 has never
+  been started anywhere.
+- **Chocolatey** (Windows' own established package manager) has real, actively-maintained community
+  packages for every tool on this list, including a documented silent-install-with-API-key syntax for
+  Datadog Agent specifically (`choco install -ia="APIKEY=""<key>"""  datadog-agent`, MSI properties
+  under the hood, `/qn /norestart`). **Considered and set aside, not adopted**: Chocolatey's own
+  ecosystem documentation states plainly that its public community repository's reliability "cannot be
+  guaranteed" for organizational/production use, and recommends internalizing packages or using a
+  private/proxy repository (Artifactory, Nexus, ProGet) for reliable, repeatable builds - i.e.,
+  Chocolatey's own maintainers say the same thing this project's own `ISO_CACHE_DIR` convention exists
+  to solve (pinned, checksummed, locally-cached binaries rather than live fetches during a build).
+  Adopting it as-is would also add a new bootstrapping dependency (Chocolatey itself needs installing
+  on the guest, needing live internet access from inside the guest at exactly the right unattended
+  moment) that this project's own Engineering Standards already warn against ("hidden dependencies").
+  **Recommended instead**: extend this project's own already-proven `../iso_cache/`/
+  `ISO_CACHE_INVENTORY.md` pattern (pinned URL, sha256 sidecar, downloaded once host-side, delivered
+  to the guest via a mounted ISO or WinRM copy - exactly how `image-apply/inject-virtio-spice.sh`
+  already delivers `spice-guest-tools-latest.exe`) to the other five tools' own official silent
+  installers, and run each vendor's own documented silent-install flags directly - no new runtime
+  dependency, no live-internet-from-the-guest requirement, consistent with every other binary this
+  project already handles.
 
-**Status:** not started — same as the sibling project's own Phase 4.
+## Proposed design (not yet implemented - documentation only, per explicit request)
+
+- **`tools.yaml`** (new, sibling to `services.yaml`, same flat-list-with-comments convention):
+  ```yaml
+  tools:
+    - 7zip
+    - putty
+    - winscp
+    - chrome
+    - notepadplusplus
+    - datadog-agent
+
+  # Datadog credentials are NOT stored here (see "Secret handling" below) - this file only
+  # says *whether* datadog-agent installs; the API key comes from outside this file.
+  datadog:
+    site: datadoghq.com   # or datadoghq.eu, etc. - real config, not a secret
+    tags:
+      - "env:lab"
+      - "project:windows-auto-build-pipeline"
+  ```
+  Applies to all three OSes (unlike `services.yaml`, which is Server-only per "Windows Configuration
+  Goals" above) - `tools.yaml` has no OS-exclusivity concept, every entry is expected to work
+  identically on Server 2022/2025 and Windows 11.
+- **`../iso_cache/` gains one pinned, checksummed installer per tool** (7-Zip, PuTTY, WinSCP, Chrome,
+  Notepad++, Datadog Agent), each documented in `ISO_CACHE_INVENTORY.md` exactly like the existing
+  five entries - same convention, not a new one.
+- **A new `scripts/install-tools.ps1`**, mirroring `run-services.ps1`'s own orchestrator model: reads
+  `tools.yaml`, and for each listed tool runs that vendor's own documented silent-install command
+  against the pre-staged installer (already delivered to the guest, matching
+  `inject-virtio-spice.sh`'s existing delivery pattern) - not a live download from inside the guest.
+- **Wiring into the build**: a new step in `build.sh` (or a dedicated `install-tools.sh` at the
+  `image-apply/` level, orchestrating delivery + the WinRM-invoked PowerShell call) - exact placement
+  still open, see below.
+
+## Secret handling for Datadog credentials - a real design constraint, not an afterthought
+
+The API key is a genuine secret (unlike this project's disposable lab passwords, e.g.
+`TestP@ssw0rd123`, which are intentionally not treated as real credentials). This project's own
+Engineering Standards already list "storing secrets" among the things to avoid - `tools.yaml` itself
+must never contain a real API key, and must stay safe to commit to git. Proposed approach, preserving
+the original Phase 4 requirement's own wording ("runtime secret injection") rather than replacing it:
+the key is supplied at build-invocation time via an environment variable (e.g. `DD_API_KEY`, matching
+this project's existing `ADMIN_PASSWORD`-style env-var-with-default convention used throughout
+`image-apply/*.sh`), never written to a git-tracked file, and passed through to the guest only at the
+point `install-tools.ps1` actually runs (WinRM call parameter, not a value baked into any delivered
+file). **Known, honestly-stated limitation, not glossed over**: Datadog's own MSI-based silent install
+takes the API key as an installer property, which can be transiently visible in the host or guest
+process list while the installer runs - a real, if narrow, exposure window inherent to MSI-based
+silent installs generally, not something this project's own design choice can fully eliminate.
+
+## Assumptions
+
+1. All six tools' own official installers support a real, documented silent-install flag (`/S`,
+   `/VERYSILENT`, `msiexec /qn`, etc.) - true for every tool on this list based on their vendors' own
+   published documentation, but not yet independently verified against this project's own cached
+   copies the way `CLAUDE.md`'s "verify before trusting" standard would want before shipping.
+2. `tools.yaml` applies uniformly to all three OSes - no per-OS tool exclusions anticipated, unlike
+   `services.yaml`'s Server-only roles.
+3. Datadog Agent validation reuses the sibling project's own already-documented bar (Windows service
+   exists, Agent service running, status healthy, connectivity succeeds, host registration confirmed)
+   unchanged - see "Datadog Validation Requirements" above.
+
+## Open questions
+
+1. **Exact delivery + orchestration point**: does `install-tools.ps1` run as its own new
+   `image-apply/install-tools.sh` stage (mirroring `inject-virtio-spice.sh`'s own two-script pattern),
+   or fold into `build.sh` directly as a new numbered step? No strong reason yet to prefer one over
+   the other - a real design decision, not resolved here.
+2. **Per-tool version pinning discipline**: should `tools.yaml` allow pinning a specific version per
+   tool (matching `virtio-win-0.1.285.iso`'s own pinned-version convention), or always track "latest"
+   for these six (lower risk of drift for general-purpose desktop tools than for boot-critical OS
+   media, but not risk-free - see the new "Version-sensitivity and brittleness" standard above)?
+3. **Confirm the six-tool list and the `tools.yaml` schema sketch above** before any implementation
+   starts, per this project's own "explain design, identify assumptions, identify risks, ask
+   questions" instruction - this section is a proposal, not a locked decision.
+
+**Status:** design documented, nothing implemented yet.
 
 ---
 
