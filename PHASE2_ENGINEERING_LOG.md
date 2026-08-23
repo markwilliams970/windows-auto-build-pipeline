@@ -2786,20 +2786,29 @@ begin.**
    starting Phase 3 - the recipe has been hand-run identically four times across three OSes with only a
    handful of parameterizable input values differing each time. This is a real decision point to raise,
    not a default action, per `CLAUDE.md`'s Claude Instructions - but the case for it is now about as
-   strong as it will ever get.
+   strong as it will ever get. (**Done** - see `PHASE3_ENGINEERING_LOG.md` Session 2, and for Windows
+   11 specifically, its separate Phase 3.4 entry once the Setup.exe-driven approach replaced this
+   recipe for that one OS.)
 3. Consider disabling or deferring Windows Update's automatic install-on-shutdown behavior (Finding 40's
    still-open note) and Windows 11's Fast Startup (this session's new note) as part of whatever the
    `unattend.xml`/offline-apply recipe becomes for real builds going forward, since both have caused
    confounds or friction in ad hoc testing sessions - worth doing once, not re-discovering per session.
 
 **Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
-- `win11-session13.qcow2` - **the reference "it works end-to-end" disk for Windows 11.** Bootable,
+- `win11-session13.qcow2` - **the reference "it works end-to-end" disk for Windows 11.** (Later
+  deleted in a routine housekeeping pass once the fully-offline Windows 11 architecture this disk
+  represented was superseded end to end by the Setup.exe-driven approach - see
+  `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries. This description remains the accurate record
+  of what the disk was at the time.) Bootable,
   specialized (`ComputerName=WIN11-S13`), `netkvm` live-installed via `pnputil`, real WinRM connectivity
   confirmed. Currently in a hibernated state (Fast Startup) rather than a clean shutdown - see the note
   above before attempting an offline read-write edit of it.
 - `image-apply/unattend-windows11.xml` - the working Windows 11 answer file, alongside
   `unattend-server2025.xml` and `unattend-server2022.xml` - all three real repo files now.
 - `win2022-session12.qcow2` / `win2025-session11.qcow2` - unchanged, still the Server reference disks.
+  (Both later deleted in a routine housekeeping pass once Phase 3's own production pipeline had
+  accumulated six independent successful Server 2022/2025 builds of its own, per this project's
+  disk-hygiene standard - not because anything here was found to be wrong.)
 - `winpe-boot-index1-work.qcow2` - unchanged, now confirmed reusable across **all three** target OS
   versions (Findings 42 and 43).
 - `tools/gen-viostor-ddb-reg.py` - unchanged since Session 10, its existing presets confirmed sufficient
