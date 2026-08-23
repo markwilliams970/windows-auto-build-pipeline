@@ -675,20 +675,98 @@ reasoning as 3A.2 (both clean from the first attempt, no intervening failures to
 
 ---
 
+## Finding 3A-4: `spice-guest-tools`' bundled QXL driver is not a real WDDM driver — Start Menu and
+## other XAML/Fluent-UI shell components crash immediately; fix is `virtio-win`'s own `qxldod` package
+
+Discovered 2026-08-23, the first time a Phase 3A-built disk was actually used interactively (not
+just headlessly verified) — `register-vm.sh`'s own first real end-to-end test (Server 2022) booted
+cleanly to a real desktop, but clicking Start did nothing. Root-caused live over WinRM (event log +
+process inspection on the running guest, not guesswork):
+
+- `StartMenuExperienceHost.exe` (the UWP process that renders Start/Search/Action Center) was not
+  running at all. Launching it manually terminated immediately (`HasExited: True`).
+- Windows Error Reporting / Application Error events showed the real signature: fault in
+  `Windows.UI.Xaml.dll`, exception `0xc0000409` (a `__fastfail`, not a literal buffer overrun) —
+  the XAML/Fluent-UI composition pipeline failing, not a profile or permissions issue (a separate,
+  real but unrelated temporary-profile fallback was hit on the very first login too — `Get-WinEvent`
+  Event IDs 1500/1511 — but a clean reboot resolved that on its own; it was not the cause of the
+  Start Menu crash, which persisted after the reboot).
+- Explorer.exe, Edge, and File Explorer all worked fine throughout — they don't depend on
+  `Windows.UI.Xaml.dll`'s composition path the way Fluent-UI shell surfaces do.
+- The installed QXL driver (via `spice-guest-tools-latest.exe`, this project's existing dependency)
+  was the classic driver: `DriverVer 09/22/2015`, no real Direct3D/WDDM support behind it — this is
+  a long-known, real limitation, not a one-off: Red Hat's own bug tracker has an open RFE asking for
+  exactly a proper WDDM driver
+  ([bugzilla.redhat.com/895356](https://bugzilla.redhat.com/show_bug.cgi?id=895356)), and there's a
+  related report of QXL driver unavailability on Server 2019
+  ([bugzilla.redhat.com/1902635](https://bugzilla.redhat.com/show_bug.cgi?id=1902635)).
+- Confirmed, not just theorized: the user's own long-used reference VM (`windows11vm-t14`, run
+  outside this project entirely) has a working Start Menu and is running a *different* QXL driver —
+  `Driver Date 11/20/2020`, `Driver Version 10.0.0.21000`, `Digital Signer: Microsoft Windows
+  Hardware Compatibility Publisher` (WHQL-signed). That exact driver — `qxldod`, Red Hat's "QXL
+  Display Only Driver" — turned out to already be sitting in this project's own cached
+  `virtio-win-0.1.285.iso`, the same ISO already mounted for `vioscsi`/`netkvm`. No new download,
+  no new dependency.
+
+**Fix, implemented in `image-apply/inject-virtio-spice.sh` (2026-08-23, not yet re-verified by a
+full end-to-end run since the change)**: stage `qxldod` from the virtio-win ISO in Stage 1 (folder
+`2k19`/`amd64` for Server 2022/2025, `w10`/`amd64` for Windows 11 — the `2k22`/`2k25`/`w11` folder
+names simply don't exist for this driver, but `qxldod.inf`'s own `[Manufacturer]` section targets
+`NTamd64.6.2` generically — Windows 8/Server 2012 and later, no per-version restriction above that —
+and the `2k16`/`2k19`/`w10` folder contents are sha256-identical, confirmed directly, so the folder
+choice is organizational only, not a compatibility risk). `spice-guest-tools` still runs unchanged
+(`spice-vdagent`/`vdservice` has no better source); only the competing display driver is added
+alongside it. Both `qxl.inf` (classic) and `qxldod.inf` target the identical PCI hardware ID
+(`PCI\VEN_1B36&DEV_0100&SUBSYS_11001AF4`), so this is genuine competition, not two unrelated
+drivers coexisting — and it resolves deterministically, not probabilistically: `qxldod.inf`
+declares `FeatureScore = F9`, classic `qxl.inf` declares `FeatureScore = FC` — lower wins under
+Windows' own documented driver-ranking rule, so simply staging both and letting the real Stage 2
+device bind is sufficient, no forced uninstall of the classic driver needed. Stage 2's own
+verification was extended to match: `Status: OK` alone doesn't distinguish which of the two
+competing drivers bound (the classic one also reaches `Status: OK` — it's not that Windows sees it
+as broken, only that XAML rendering on top of it fails), so the check now asserts the bound driver's
+`DriverVersion` is specifically `10.0.0.21000` (`Win32_PnPSignedDriver`), not just device status.
+
+**Correction, same night, after further testing: this fix does NOT actually resolve the Start Menu
+crash it was written to fix.** The "no crash" result that looked like confirmation was a false
+negative — it came from launching `StartMenuExperienceHost.exe` via a WinRM PowerShell session, which
+runs in Session 0 (services) and can't run UWP apps at all, so the test never really exercised the
+crash path. A valid test (a scheduled task launched with `/it` into the real interactive session)
+reproduced the **identical** crash — same fault offset, same module version — on a disk already
+running `qxldod`. Independent, decisive counter-evidence: the user's own long-lived `win2022-dc`
+reference VM has a *working* Start Menu while still running the *old* 2017 classic driver, directly
+contradicting a driver-based explanation. The `qxldod` swap itself is still a real, worthwhile fix
+for `spice-guest-tools`' outdated driver — it just isn't what was breaking Start Menu. The actual
+root cause (a documented Windows Server 2022 RPC/DCOM boot-race, triggered by this project's own
+multi-boot-cycle build pattern) and its fix (an offline `ServicesPipeTimeout` registry increase in
+`make-bootable.sh`) are recorded in `CLAUDE.md`'s Finding 3A-5, not here — it's not a virtio/SPICE
+driver issue and doesn't belong in this document's own scope.
+
+**Evidentiary status**: the `qxldod` driver swap itself (the actual subject of this finding) has been
+confirmed by one real end-to-end run (Server 2022) — `Win32_PnPSignedDriver` showed `qxldod` bound
+(`DriverVersion 10.0.0.21000`) after a real Stage 2 boot. This project's own evidentiary standard
+(2-3 independent clean runs) still applies before calling the driver swap itself fully confirmed
+across all three OSes — see the status summary below.
+
+---
+
 ## Phase 3A status summary (as of 2026-08-23)
 
-All three target OSes now have `vioscsi` storage + SPICE confirmed via the same, single, OS-parameterized
-`image-apply/inject-virtio-spice.sh`:
+All three target OSes had `vioscsi` storage + SPICE confirmed via the same, single, OS-parameterized
+`image-apply/inject-virtio-spice.sh`, **before** Finding 3A-4's `qxldod` fix landed:
 
-| OS | Storage swap | NIC swap | SPICE | Clean runs |
-|---|---|---|---|---|
-| Windows 11 | ✅ `vioscsi` | ✅ `netkvm` | ✅ | 2 |
-| Server 2022 | ✅ `vioscsi` (new) | — (already `netkvm`, untouched) | ✅ | 2 |
-| Server 2025 | ✅ `vioscsi` (new) | — (already `netkvm`, untouched) | ✅ | 2 |
+| OS | Storage swap | NIC swap | SPICE (classic QXL) | SPICE (qxldod) | Clean runs |
+|---|---|---|---|---|---|
+| Windows 11 | ✅ `vioscsi` | ✅ `netkvm` | ✅ | not yet re-run | 2 |
+| Server 2022 | ✅ `vioscsi` (new) | — (already `netkvm`, untouched) | ✅ | not yet re-run | 2 |
+| Server 2025 | ✅ `vioscsi` (new) | — (already `netkvm`, untouched) | ✅ | not yet re-run | 2 |
 
 Every clean run across all three OSes negotiated the identical `VEN_1AF4&DEV_1048` PCI ID for
 `vioscsi` — Finding 3A-3's topology-matching fix (Stage 1's verify device byte-identical to Stage 2's
 real device) has now been confirmed to generalize across every target OS, not just within one.
+**The "SPICE" column above reflects the pre-Finding-3A-4 state (classic QXL driver, Start Menu
+broken)** — Finding 3A-4's fix needs its own fresh evidentiary pass (2-3 clean runs) before the
+`vioscsi` row's own standard can be said to extend to it.
 
 ---
 

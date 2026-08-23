@@ -121,10 +121,13 @@ still current (see "Risks and limitations" below).
 ```
 
 - `server2022` / `server2025` run the full offline-apply pipeline (partition → apply image → make
-  bootable → specialize → hand off to Packer for first boot + role provisioning). `services_yaml_path`
+  bootable → specialize → hand off to Packer for first boot + role provisioning), then automatically
+  run `image-apply/inject-virtio-spice.sh` against Packer's own final, role-provisioned disk — so a
+  real build's disk always ends up on virtio-scsi + QXL/SPICE, not just on request (NIC stays on the
+  existing, already-proven offline-hivex VirtIO NIC mechanism, untouched). `services_yaml_path`
   (optional, defaults to `services.yaml`) selects which roles get provisioned — see "Roles" below.
-- `windows11` runs the Setup.exe-driven install, then injects VirtIO storage/NIC and SPICE display
-  drivers (`image-apply/inject-virtio-spice.sh`) — no Packer handoff, no roles.
+- `windows11` runs the Setup.exe-driven install, then the same `inject-virtio-spice.sh` step (storage
+  *and* NIC swapped to VirtIO this time, plus SPICE) — no Packer handoff, no roles.
 - `computer_name` (optional) overrides the default computer name baked into the unattend/answer
   file for that OS.
 
@@ -135,10 +138,19 @@ Example, a Windows Server 2025 IIS+SQL Server app-server build:
 ```
 
 Rough timings from real logged production runs on this project's own development host (expect
-these to vary with host hardware, not to be portable guarantees): Server 2022 + AD DS, ~7 minutes;
-Server 2025 + IIS/SQL Server, ~51 minutes; Windows 11 (install + driver injection), on a similar
-order. A completed build leaves a `.qcow2` disk image under `image-apply/output/builds/` and, for
-Server 2022/2025, a Packer-provisioned VM confirmed reachable over WinRM.
+these to vary with host hardware, not to be portable guarantees, and note these specific numbers
+predate the automatic driver-injection step above being added, which adds real time on top): Server
+2022 + AD DS, ~7 minutes; Server 2025 + IIS/SQL Server, ~51 minutes; Windows 11 (install + driver
+injection), on a similar order. A completed build leaves a `.qcow2` disk image under
+`image-apply/output/builds/` for Windows 11, or under `packer/output/<os>-<timestamp>/` (a unique
+directory per build — see the note below) for Server 2022/2025, with the disk itself already on
+virtio-scsi/virtio-net/QXL+SPICE and confirmed reachable over WinRM.
+
+Each real build gets its own unique build ID (`<os>-<timestamp>`), used for both the disk's own
+filename and Packer's output directory — so repeated builds of the same OS never collide on a shared
+path (an early version of this pipeline had a real bug here: a fixed `packer/output/<os>/` directory
+that a second build of the same OS would fail against; fixed 2026-08-23, see `CLAUDE.md`'s Phase 3A
+entry for the full account).
 
 ## Roles (Server 2022/2025 only)
 
@@ -161,9 +173,33 @@ python3 tools/qmp-screenshot.py --socket /tmp/<name>.sock --out /tmp/shot.png
 `tools/qmp-watch.sh` loops that at an interval for watching a boot sequence unfold frame by frame;
 `tools/qmp-sendkey.py`, `tools/qmp-click.py`, and `tools/qmp-type.py` send keystrokes, clicks, and
 typed text into a running VM (mouse clicks need a USB tablet device on the guest — already wired
-into this project's own production QEMU invocations). Windows 11 builds also come up with a SPICE
-display (QXL + guest tools), reachable with any SPICE client, for genuine interactive use — not
-just headless automation.
+into this project's own production QEMU invocations). Every build (all three OSes) now comes up with
+a SPICE display (QXL + guest tools), reachable with any SPICE client, for genuine interactive use —
+not just headless automation.
+
+## Registering a build with libvirt
+
+A finished build's disk is just a loose `.qcow2` file until it's registered as a libvirt domain —
+`register-vm.sh` does that, so it shows up in `virsh list --all` / virt-manager instead:
+
+```
+./register-vm.sh <server2022|server2025|windows11> [qcow2_path] [vm_name]
+```
+
+`qcow2_path` defaults to the most recently built disk for that OS; `vm_name` defaults to the disk's
+own baked-in computer name, lowercased. The registered domain's device model (virtio-scsi disk,
+virtio-net NIC, QXL + a real loopback-only SPICE channel, USB tablet) matches what
+`inject-virtio-spice.sh` already proved boots. Re-running it after a fresh build for the same OS is
+the normal case — it cleanly re-registers over a shut-off domain of the same name. Start it and
+connect with:
+
+```
+virsh -c qemu:///system start <vm_name>
+virt-viewer --connect qemu:///system <vm_name>
+```
+
+As of this writing this script's device model has not yet been confirmed by a real `virsh start`
+boot end-to-end — see "Risks and limitations" below.
 
 ## Risks and limitations
 
@@ -228,6 +264,13 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   against what's hardcoded in `image-apply/lib/common.sh`/`tools/gen-viostor-ddb-reg.py`, and fails
   loudly before a build runs against drifted media, is identified as worthwhile but not yet built
   (`CLAUDE.md`'s "Version-sensitivity and brittleness" standard).
+- `register-vm.sh`'s device model (virtio-scsi + QXL/SPICE) needs a real `virsh start` boot confirmed
+  end-to-end for both build paths (Windows 11 and Server 2022/2025) — written from the already-proven
+  QEMU-invocation device topology, not yet independently re-verified under libvirt's own PCI address
+  allocation.
+- `dev/role-test.pkr.hcl` (the fast-iteration harness, separate from the production `build.sh` path)
+  has the same fixed-per-OS Packer output-directory pattern that caused the collision bug fixed above
+  in the production path — not yet addressed there.
 
 ## Acknowledgements
 

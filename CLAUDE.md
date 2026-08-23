@@ -371,7 +371,11 @@ windows-auto-build-pipeline/
 ├── CLAUDE.md
 ├── HANDOFF_FROM_UNATTENDED_INSTALL.md   # read this first
 ├── services.yaml                         # copied/adapted from the sibling project
-├── build.sh                              # real: orchestrates image-apply/*.sh then Packer
+├── build.sh                              # real: orchestrates image-apply/*.sh then Packer, then
+│                                            # inject-virtio-spice.sh (Phase 3A, all three OSes)
+├── register-vm.sh                        # real: defines a libvirt domain from a finished build's
+│                                            # disk (virsh list/virt-manager visibility) - adapted
+│                                            # from ../windows-server-vm-automation/register-vm.sh
 
 ├── image-apply/                # real, confirmed production for Server 2022/2025
 │   │                             # (PHASE3_ENGINEERING_LOG.md Session 2). Windows 11 no longer uses
@@ -719,18 +723,120 @@ Phase 3 roles apply to Windows 11).
 `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`.** Not a continuation of Phase 3.1-3.5's own numbered
 sequence (that closed with Windows 11 production-ready, above) - a distinct addition layered on top
 of already-proven builds. Real, committed production tooling exists
-(`image-apply/inject-virtio-spice.sh`, OS-parameterized, wired into `build.sh`'s `windows11` branch)
-and is confirmed done for **all three target OSes**, 2 independent clean runs each (6 total): Windows
-11 gets `vioscsi` + `netkvm` + QXL/SPICE; Server 2022/2025 get `vioscsi` + QXL/SPICE (`netkvm` stays
-on the existing, already-proven offline-hivex mechanism, deliberately untouched - see the plan doc's
-"Scoping revised" note for why NIC stays Windows-11-only while storage doesn't). Every clean run, on
-every OS, negotiated the identical `VEN_1AF4&DEV_1048` PCI ID for `vioscsi`. See the plan doc's own
-Findings 3A-1 through 3A-3 for the real, hard-won mechanics (live-PnP-verify-before-swap; never
-relocate an already-primary device's PCI placement; a Stage 1 "verify" device must match Stage 2's
-real device topology exactly, or it can verify the wrong PCI hardware ID) - also generalized into the
-"Version-sensitivity and brittleness" standard under Engineering Standards below, since Finding 3A-3
-specifically exposed that PCI/driver hardware-ID assumptions are QEMU-version-sensitive,
-not just Windows-version-sensitive.
+(`image-apply/inject-virtio-spice.sh`, OS-parameterized) and is confirmed done for **all three target
+OSes**, 2 independent clean runs each (6 total): Windows 11 gets `vioscsi` + `netkvm` + QXL/SPICE;
+Server 2022/2025 get `vioscsi` + QXL/SPICE (`netkvm` stays on the existing, already-proven
+offline-hivex mechanism, deliberately untouched - see the plan doc's "Scoping revised" note for why
+NIC stays Windows-11-only while storage doesn't). Every clean run, on every OS, negotiated the
+identical `VEN_1AF4&DEV_1048` PCI ID for `vioscsi`. See the plan doc's own Findings 3A-1 through 3A-3
+for the real, hard-won mechanics (live-PnP-verify-before-swap; never relocate an already-primary
+device's PCI placement; a Stage 1 "verify" device must match Stage 2's real device topology exactly,
+or it can verify the wrong PCI hardware ID) - also generalized into the "Version-sensitivity and
+brittleness" standard under Engineering Standards below, since Finding 3A-3 specifically exposed that
+PCI/driver hardware-ID assumptions are QEMU-version-sensitive, not just Windows-version-sensitive.
+
+**Finding 3A-4 (2026-08-23): `qxldod` swap is real and worth keeping, but it did NOT fix the Start
+Menu crash - that was a wrong initial conclusion, corrected the same night by further testing.**
+`spice-guest-tools`' own bundled QXL driver is a genuinely outdated, non-WDDM driver (real gap,
+worth fixing on its own merits - see the `qxldod` staging/verification described above, still a good
+change). But the actual Start Menu crash (`StartMenuExperienceHost.exe` faulting in
+`Windows.UI.Xaml.dll`, `STATUS_STACK_BUFFER_OVERRUN`) was first "confirmed fixed" based on an invalid
+test: launching the process via a WinRM PowerShell session, which runs in Session 0 (services), not
+the real interactive Session 1 - UWP apps can't run in Session 0 at all, so that test's "no crash"
+result was a false negative, not evidence of a fix. A real test (a scheduled task with `/it`,
+launching into the actual interactive session) reproduced the **identical** crash - same fault
+offset (`0x92e66`), same module version - on a disk already running `qxldod`, proving the driver was
+never the cause. Independent, decisive counter-evidence from the user: a real, long-lived reference
+VM (`win2022-dc`) has a *working* Start Menu while still running the *old* 2017 classic driver -
+directly contradicting a driver-based explanation. See Finding 3A-5 below for the real root cause
+and fix. The `qxldod` change itself is unaffected by this correction and stays in
+`inject-virtio-spice.sh` - a real WDDM driver is still the right choice regardless of what turned out
+to actually cause the crash.
+
+**Finding 3A-5 (2026-08-23): the real root cause is a documented Windows Server 2022 RPC/DCOM
+boot-race, triggered by this pipeline's own multi-boot-cycle build pattern - fixed via an offline
+`ServicesPipeTimeout` registry increase, not yet re-verified by a fresh end-to-end run.** Root-caused
+live over WinRM: the crash's exact signature (identical fault offset across two separate builds) plus
+repeated `Microsoft-Windows-DistributedCOM` Event 10010 ("did not register with DCOM within the
+required timeout") for `StartMenuExperienceHost` specifically pointed away from the display driver
+entirely. A targeted search found a primary-source match describing this exact symptom triad -
+Start Menu, Search, **and IIS** all failing after a Windows Server 2022 restart -
+(https://learn.microsoft.com/en-us/answers/questions/5836440/): under heavy first-boot disk/CPU I/O
+("boot storm"), the RPC Endpoint Mapper doesn't finish initializing within the default 30s
+service-dependency timeout, so DCOM can't register local servers, so `SystemEventsBroker` and
+`Background Tasks Infrastructure` fail to start, so anything depending on them (Start Menu, Search,
+IIS) fails or crashes. This project's own build pattern is an unusually good match for the trigger
+condition: every real build's first *interactive* boot follows several already-automated
+boot/shutdown cycles on a freshly-applied, cold-cache disk (Packer's provision+restart, then
+`inject-virtio-spice.sh`'s two more) - real "boot storm" conditions, not a one-off. Fix: an offline
+`hivexregedit` merge in `make-bootable.sh` (same mechanism/location as the existing
+viostor/netkvm `DriverDatabase` merges), setting `HKLM\SYSTEM\ControlSet001\Control\
+ServicesPipeTimeout` = `120000` (120s - double the community-cited 60s, to leave real margin under
+this project's own heavier-than-typical four-boot-cycle pattern) before the very first boot ever
+happens, since the race is in early service startup and has usually already resolved (one way or the
+other) by the time `FirstLogonCommands` would otherwise be the place to fix it. Applies to Server
+2022 and Server 2025 identically (`make-bootable.sh` runs unmodified for both, no OS branching around
+this change) - not yet confirmed for Server 2025 specifically, and not yet re-verified for Server
+2022 either as of this entry; a fresh end-to-end run is in progress.
+
+**`build.sh` wiring, and `register-vm.sh` (added 2026-08-23, not yet live-verified):**
+`inject-virtio-spice.sh` was originally wired into `build.sh` only for the `windows11` branch; it now
+also runs for `server2022`/`server2025`, after the Packer handoff completes, against Packer's own
+final artifact rather than the pre-Packer copy under `image-apply/output/builds/` - so a real
+`build.sh server2022`/`server2025` run now produces a vioscsi+QXL/SPICE disk unconditionally, matching
+Windows 11's own build path exactly, not just on request.
+
+**Real bug found and fixed while first testing this wiring (2026-08-23), not hypothetical**: Packer's
+`output_directory` was fixed per OS (`packer/output/<os>/`), so a second `build.sh` run for the same
+OS always failed - `packer build` refuses to run if `output_directory` already exists, and this
+project's own earlier real Server 2022 production run (Phase 3, 2026-08-20) had already left that
+directory populated. This would have hit every subsequent build of the same OS, not just this one; it
+also would have made `inject-virtio-spice.sh`'s own per-run work-directory naming (derived from the
+disk's basename) collide the same way, one level down. Fixed by threading a single unique `BUILD_ID`
+(`build.sh`'s own `<os>-<timestamp>`, matching `image-apply/output/builds/*.qcow2`'s existing
+convention) through everything Packer-side that used to be OS-only-named: `boot-and-provision.pkr.hcl`
+gained a `build_id` variable driving `vm_name`/`output_directory`/`efi_firmware_vars`, and
+`build.sh` now fails loud with a clear message (rather than silently colliding) if its computed
+`TARGET_QCOW2`, Packer efivars path, or Packer output directory ever already exist before proceeding.
+Packer's final artifact is now at `packer/output/<build_id>/<build_id>.qcow2` (build-unique), not a
+fixed per-OS path - `register-vm.sh`'s own default disk resolution for Server 2022/2025 was updated to
+match (picks the most recently modified build, same convention already used for Windows 11's own
+timestamped builds). **`dev/role-test.pkr.hcl` (the separate fast-iteration harness, not the
+production path) has the identical fixed-per-OS `output_directory` pattern and was not touched by this
+fix** - flagged, not yet addressed; lower stakes there since that harness is explicitly a
+repeated-iteration tool, but the same collision would reproduce if run twice for the same OS.
+
+A new `register-vm.sh` (repo root, adapted from
+`../windows-server-vm-automation/register-vm.sh`'s own proven `virsh define` pattern) defines a
+libvirt domain from a finished build's disk so it shows up in `virsh list --all`/virt-manager instead
+of existing only as a loose qcow2 file - device model (virtio-scsi disk, virtio-net NIC, qxl-vga + a
+real SPICE channel, USB tablet) matches what `inject-virtio-spice.sh` already proved boots.
+
+**`build.sh`'s own Server 2022/2025 wiring (including the `build_id` fix) is now confirmed by a real
+run, not just written**: a fresh `build.sh server2022` run (2026-08-23, after the fix above) completed
+the full sequence end-to-end - offline apply, Packer handoff (IIS provisioned, WinRM confirmed),
+then `inject-virtio-spice.sh` Stage 1 (`vioscsi` live-verified `Status: OK`, SPICE tools installed) and
+Stage 2 (real boot on virtio-scsi as primary storage, WinRM confirmed again, disk Online/NIC Up/QXL
+OK/vdservice Running all verified). This is real evidence the Finding 3A-3 inference (a drive-attached
+virtio-scsi-pci controller negotiates the same PCI hardware ID regardless of exact bus address) holds
+for Server 2022, not just Windows 11. Final artifact:
+`packer/output/server2022-20260823-141034/server2022-20260823-141034.qcow2`.
+
+**`register-vm.sh` itself is now confirmed too, by a real `virsh start` boot (2026-08-23, same
+session)**: `./register-vm.sh server2022` (no args - default disk/vm_name resolution both worked)
+defined `win2022prod` cleanly, and `virsh start` booted it to a real, stable, logged-in Server Manager
+desktop entirely through libvirt's own generated device topology (not `inject-virtio-spice.sh`'s own
+raw QEMU flags) - confirmed via `tools/qmp-screenshot.py`-style evidence (here, `virsh screenshot`,
+libvirt's own equivalent) at three points: OVMF's own boot log showing it loading `Boot0001 "UEFI
+QEMU QEMU HARDDISK"` via `Scsi(0x0,0x0)` (proof libvirt's auto-assigned PCI address for the
+virtio-scsi controller still negotiated a hardware ID Windows already had registered), a live desktop
+with a "Networks" discoverability prompt for the newly-appeared NIC, and `virsh net-dhcp-leases
+default` showing a real DHCP lease for hostname `WIN2022PROD` (matching the disk's own baked-in
+ComputerName) at `192.168.122.214`. This is real evidence the Finding 3A-3 inference (libvirt's own
+PCI address allocation doesn't need to reproduce `inject-virtio-spice.sh`'s exact raw `addr=` values)
+holds, not just a plausible theory. **Not yet exercised: the Windows 11 device-model case** (NIC also
+swapped, unlike Server 2022/2025) - same script, different code path, still unconfirmed by a real
+boot.
 
 ---
 

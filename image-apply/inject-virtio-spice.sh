@@ -24,6 +24,23 @@
 #     `win2022-dc`'s own hand-built libvirt config has no SPICE graphics element at all, QXL video
 #     but VNC-only).
 #
+# Fourth hard-won lesson, added 2026-08-23 after a real virsh-registered Server 2022 boot: Start
+# Menu (and other XAML/Fluent-UI shell components) crashed immediately with STATUS_STACK_BUFFER_
+# OVERRUN in Windows.UI.Xaml.dll - root-caused via live WinRM event-log inspection to
+# spice-guest-tools' own bundled QXL driver (classic "qxl", DriverVer 09/22/2015, no real WDDM/
+# Direct3D support - matches a long-open Red Hat RFE, bugzilla.redhat.com/895356, asking for exactly
+# this to be fixed). Explorer/plain Win32 apps worked fine (they don't need XAML composition); only
+# Fluent-UI surfaces broke. Fix: virtio-win's own "qxldod" package (Red Hat's real, WHQL-signed WDDM
+# driver, already sitting in the same virtio-win ISO this script already mounts for vioscsi/netkvm)
+# targets the identical PCI hardware ID as spice-guest-tools' classic driver
+# (PCI\VEN_1B36&DEV_0100&SUBSYS_11001AF4) and declares a better (lower) FeatureScore (F9 vs FC) -
+# Windows' own documented driver-ranking rule means simply staging both and letting the real device
+# bind deterministically prefers qxldod, no forced uninstall of the classic one needed.
+# spice-guest-tools still runs unchanged (spice-vdagent/vdservice has no better source) - only the
+# competing, better display driver is added alongside it. Confirmed directly against a real running
+# reference VM (not just theory): the user's own long-used windows11vm-t14 already runs this exact
+# qxldod build (Driver Date 11/20/2020, Version 10.0.0.21000) with a working Start Menu.
+#
 # Three hard-won lessons this script exists to encode, not re-derive (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md
 # Findings 3A-1, 3A-2, 3A-3):
 #   1. A driver must be live-PnP-installed against an actually-present device (Get-PnpDevice
@@ -63,6 +80,16 @@ validate_os "$OS"
 [[ -f "$TARGET_QCOW2" ]] || { echo "ERROR: $TARGET_QCOW2 not found - build it first" >&2; exit 1; }
 
 DRIVER_SUBFOLDER="$(os_driver_subfolder "$OS")"
+
+# QXL's proper WDDM driver (qxldod, Red Hat's "QXL Display Only Driver") ships in virtio-win under
+# its own OS-folder set that stops at 2k19/w10 - no 2k22/2k25/w11 folder names exist even though
+# vioscsi/NetKVM have them. Confirmed (2026-08-23) this isn't a real gap: qxldod.inf's own
+# [Manufacturer] section targets NTamd64.6.2 (Windows 8/Server 2012 and later, generic - no
+# per-version decoration above that), and the 2k16/2k19/w10 folders are byte-identical
+# (sha256-verified) - so 2k19/w10 is simply the newest available build, safe to use unmodified for
+# every target OS here. See the header comment below for why this driver is needed at all.
+QXLDOD_SUBFOLDER="w10"
+[[ "$OS" != "windows11" ]] && QXLDOD_SUBFOLDER="2k19"
 
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-TestP@ssw0rd123}"
 WINRM_PORT="${WINRM_PORT:-15985}"
@@ -325,6 +352,15 @@ ${NIC_VERIFY_PS}
 & \"\${spiceLetter}:\\spice-guest-tools-latest.exe\" /S
 if (\$LASTEXITCODE -ne 0) { throw \"spice-guest-tools-latest.exe /S failed with exit \$LASTEXITCODE\" }
 Write-Output 'spice-guest-tools installed'
+
+# qxldod: staged only here, same as spice-guest-tools' own classic qxl driver just above - no QXL
+# device exists yet in Stage 1 to live-bind against (Stage 2 adds qxl-vga for the first time).
+# Windows' own driver ranking (qxldod's FeatureScore F9 beats classic qxl's FC - lower wins) picks
+# it deterministically once the real device appears in Stage 2; verified explicitly there, not
+# assumed here.
+pnputil /add-driver \"\${virtioLetter}:\\qxldod\\${QXLDOD_SUBFOLDER}\\amd64\\qxldod.inf\" /install
+if (\$LASTEXITCODE -ne 0) { throw \"pnputil /add-driver qxldod failed with exit \$LASTEXITCODE\" }
+Write-Output 'qxldod staged'
 "
 
 log "Stage 1 complete - graceful shutdown"
@@ -427,6 +463,16 @@ if (\$netUp.Count -eq 0) { throw 'virtio NIC not Up on any matching adapter' }
 \$qxlOk = @(Get-PnpDevice -Class Display | Where-Object { \$_.FriendlyName -like 'Red Hat QXL*' -and \$_.Status -eq 'OK' })
 if (\$qxlOk.Count -eq 0) { throw 'QXL display device not Status:OK on any matching device' }
 
+# Status:OK alone doesn't say WHICH of the two staged, competing drivers actually bound (Finding,
+# 2026-08-23: spice-guest-tools' own classic qxl driver also reaches Status:OK, but crashes any
+# XAML/Fluent-UI shell surface - Start Menu, Search - with STATUS_STACK_BUFFER_OVERRUN in
+# Windows.UI.Xaml.dll, since it has no real WDDM/Direct3D support). Assert the bound driver is
+# specifically qxldod (Red Hat's WHQL-signed WDDM build, DriverVersion 10.0.0.21000) - confirmed
+# against a real, long-used reference VM already running this exact build with a working Start Menu.
+\$qxlDrv = Get-CimInstance Win32_PnPSignedDriver | Where-Object { \$_.DeviceName -like 'Red Hat QXL*' } | Select-Object -First 1
+if (-not \$qxlDrv -or \$qxlDrv.DriverVersion -ne '10.0.0.21000') { throw \"QXL bound to unexpected driver version '\$(\$qxlDrv.DriverVersion)' - expected qxldod 10.0.0.21000; classic qxl driver may have won ranking instead (see Finding 3A-4)\" }
+Write-Output \"qxldod confirmed bound: DriverVersion \$(\$qxlDrv.DriverVersion), DriverDate \$(\$qxlDrv.DriverDate)\"
+
 # Known first-boot start-order race (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): vdservice can be
 # Stopped on its very first boot despite StartType Automatic, because it starts before the
 # QXL/virtio-serial channel is fully up. Nudge it rather than leaving it to chance - a real,
@@ -446,4 +492,4 @@ log "Stage 2 complete - graceful shutdown, disk left ready for real use"
 qmp_graceful_shutdown "$QMP_SOCK2" "$QEMU_PID2"
 trap - EXIT
 
-log "inject-virtio-spice.sh complete for ${OS}: ${TARGET_QCOW2} now has SPICE (QXL + vdagent), boots on virtio-scsi$( [[ "$DO_NIC_SWAP" == "true" ]] && echo "/virtio-net (swapped)" || echo " (NIC already virtio, untouched)" )"
+log "inject-virtio-spice.sh complete for ${OS}: ${TARGET_QCOW2} now has SPICE (qxldod + vdagent), boots on virtio-scsi$( [[ "$DO_NIC_SWAP" == "true" ]] && echo "/virtio-net (swapped)" || echo " (NIC already virtio, untouched)" )"

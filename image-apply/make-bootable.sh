@@ -134,6 +134,34 @@ python3 "${REPO_ROOT}/tools/gen-viostor-ddb-reg.py" --driver viostor -o "${TMP_R
 python3 "${REPO_ROOT}/tools/gen-viostor-ddb-reg.py" --driver netkvm -o "${TMP_REG_DIR}/netkvm.reg"
 hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SYSTEM' "$SYSTEM_HIVE" "${TMP_REG_DIR}/viostor.reg"
 hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SYSTEM' "$SYSTEM_HIVE" "${TMP_REG_DIR}/netkvm.reg"
+
+# ServicesPipeTimeout fix (2026-08-23 finding, real and reproduced - not theoretical): every real
+# build's first interactive boot follows several already-automated boot/shutdown cycles on a
+# freshly-applied disk (Packer's own provision+restart, then inject-virtio-spice.sh's two more) -
+# exactly the "boot storm" conditions (heavy disk I/O, cold caches) that trigger a documented
+# Windows Server 2022 race: RPC Endpoint Mapper doesn't finish initializing within the default
+# service-dependency timeout (30s), so DCOM can't register local servers, so SystemEventsBroker and
+# Background Tasks Infrastructure fail to start, so anything depending on them - StartMenuExperience-
+# Host (Start Menu), SearchHost, and IIS - fails or crashes (confirmed directly: identical
+# STATUS_STACK_BUFFER_OVERRUN/Windows.UI.Xaml.dll crash at the same fault offset across two separate
+# fresh builds, plus repeated DistributedCOM Event 10010 "did not register with DCOM within the
+# required timeout" for StartMenuExperienceHost specifically - not a QXL driver issue, ruled out by
+# a real independent comparison VM running an older driver with a working Start Menu). Real-world
+# confirmation this is a known, named Windows Server 2022 architectural issue, not specific to this
+# project: https://learn.microsoft.com/en-us/answers/questions/5836440/ (same symptom triad -
+# Start Menu, Search, IIS - same root cause chain, same registry-based fix). Applied offline, before
+# the very first boot, because the race is in early service startup - by the time FirstLogonCommands
+# runs the window has usually already closed. 120000 (120s, double the community-cited 60s) to leave
+# real margin under this project's own heavier-than-typical boot conditions (four automated cycles
+# per real build, not one).
+cat > "${TMP_REG_DIR}/services-pipe-timeout.reg" <<'REGEOF'
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SYSTEM\ControlSet001\Control]
+"ServicesPipeTimeout"=dword:0001d4c0
+REGEOF
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SYSTEM' "$SYSTEM_HIVE" "${TMP_REG_DIR}/services-pipe-timeout.reg"
+
 rm -rf "$TMP_REG_DIR"
 
 log "Copying OS-correct viostor.sys/netkvm.sys into System32/drivers (overwrites WinPE's own generic viostor.sys copy)"

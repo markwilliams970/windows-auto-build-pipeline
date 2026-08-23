@@ -2024,3 +2024,218 @@ section included, going forward) is left as-is - it was accurate when written an
 track the files' current location.
 
 ---
+
+## Open investigation (2026-08-23, unresolved as of this entry): Start Menu and other XAML/Fluent-UI
+## shell components crash on every offline-applied Server 2022 build - two real, independently-
+## useful fixes attempted and ruled out; the actual root cause is now understood but not yet fixed
+
+### Symptom
+
+The first time a Phase 3A build was actually used *interactively* rather than only verified
+headlessly (`register-vm.sh`'s own first real `virsh start` boot, Server 2022) - clicking Start does
+nothing. Plain Win32 apps (File Explorer, Edge, Server Manager) all work normally; only Start Menu,
+and by extension anything else built on the same modern shell stack (Search, Action Center), is
+affected. This is not specific to `register-vm.sh`'s own device model - it reproduces identically on
+Packer's own `boot-and-provision.pkr.hcl` device model too, confirmed on a second, completely fresh
+build later in this same investigation.
+
+### Diagnostic method
+
+Direct, live inspection of the running guest over WinRM throughout - event logs, process lists,
+registry, and (eventually) the guest's own SQLite package-state database - not guesswork from the
+outside. One real methodology bug worth flagging for next time: an early "confirmed fixed" read
+turned out to be a false negative caused by launching a UWP process via a WinRM PowerShell session,
+which runs in Session 0 (services) - UWP apps cannot run in Session 0 at all, so that test never
+actually exercised the crash path. The valid technique, used from that point on: `schtasks /create
+... /it /ru Administrator /rp <pw> /f` then `schtasks /run`, which launches the target process into
+the real interactive session (Session 1) - `schtasks /query /tn <task> /v /fo list | Select-String
+"Last Result"` then gives the process's real exit/exception code directly, no manual clicking needed
+to get a decisive answer.
+
+### Hypothesis 1 (ruled out): `spice-guest-tools`' bundled classic QXL driver lacks real WDDM support
+
+First crash captured directly: `StartMenuExperienceHost.exe` faulting in `Windows.UI.Xaml.dll`,
+exception `0xc0000409` (`STATUS_STACK_BUFFER_OVERRUN`, in practice a `__fastfail`, not a literal
+buffer overrun), fault offset `0x92e66`, `Windows.UI.Xaml.dll` version `10.0.20348.587` - captured via
+both `Get-WinEvent` (`Application Error`/`Windows Error Reporting` providers, event IDs 1000/1001) and
+`schtasks`'s own `Last Result` (`-1073740791`, which is `0xc0000409` reinterpreted as signed 32-bit).
+The installed QXL driver at the time was the classic driver bundled by `spice-guest-tools-latest.exe`
+(`DriverVer 09/22/2015`, no real Direct3D/WDDM support) - a real, independently-documented limitation
+(Red Hat's own open RFE, bugzilla.redhat.com/895356, "WDDM Display Only Driver for windows 10+"; a
+related report at bugzilla.redhat.com/1902635). Fix implemented: stage `virtio-win`'s own `qxldod`
+package (already in the same ISO this project already mounts for `vioscsi`/`netkvm` - no new
+dependency) alongside `spice-guest-tools` in `image-apply/inject-virtio-spice.sh`; both drivers target
+the identical PCI hardware ID (`PCI\VEN_1B36&DEV_0100&SUBSYS_11001AF4`), and `qxldod.inf`'s declared
+`FeatureScore` (`F9`) deterministically outranks the classic driver's (`FC`) under Windows' own
+documented driver-ranking rule (lower wins), so no forced uninstall was needed.
+
+**Initially misreported as confirmed working** - the WinRM-launch test described above showed no
+crash, which was actually the Session 0 false negative, not a fix. A `schtasks /it` re-test on the
+*same* `qxldod`-equipped disk reproduced the **identical** crash - same fault offset, same module
+version - proving the driver was never the cause. Independent, decisive counter-evidence supplied by
+the user: a real, long-lived reference VM (`win2022-dc`, built via the sibling project's Setup.exe-
+driven mechanism, not this project's offline apply) has a *working* Start Menu while still running
+the *original 2017* classic driver - directly contradicting a driver-based explanation. **The `qxldod`
+swap itself is kept regardless** - it's a real, worthwhile improvement (WHQL-signed, actual WDDM
+support) independent of what turned out to actually cause this crash; verified bound correctly
+(`Win32_PnPSignedDriver` → `DriverVersion 10.0.0.21000`) on two separate real builds.
+
+### Hypothesis 2 (ruled out): Windows Server 2022's own documented RPC/DCOM boot-storm race
+
+Repeated `Microsoft-Windows-DistributedCOM` Event 10010 ("did not register with DCOM within the
+required timeout") for `StartMenuExperienceHost` specifically, alongside the crash, pointed toward a
+real, documented Windows Server 2022 issue found via targeted web research and verified against the
+primary source directly (not just a search summary): a Microsoft Q&A thread
+(learn.microsoft.com/en-us/answers/questions/5836440/) describing the *identical* symptom triad -
+Start Menu, Search, **and IIS** all failing after a first restart - root-caused there to heavy
+first-boot disk/CPU I/O ("boot storm") preventing the RPC Endpoint Mapper from initializing within the
+default 30s service-dependency timeout, cascading through DCOM → `SystemEventsBroker` →
+`Background Tasks Infrastructure` failing to start. This project's own build pattern (several
+already-automated boot/shutdown cycles - Packer's provision+restart, then `inject-virtio-spice.sh`'s
+two more - before the first real interactive boot) is a genuinely good match for the trigger
+condition. Fix implemented: an offline `hivexregedit --merge` in `image-apply/make-bootable.sh`
+(same mechanism/location as the existing `vioscsi`/`netkvm` `DriverDatabase` merges), setting
+`HKLM\SYSTEM\ControlSet001\Control\ServicesPipeTimeout` = `120000` (120s) before the very first boot,
+applying identically to Server 2022 and Server 2025 (no OS branching around it).
+
+**Tested on a completely fresh build (offline apply → Packer → `inject-virtio-spice.sh`, all
+end-to-end) and the identical crash reproduced again** - same `0xc0000409` via the valid `schtasks
+/it` test. This fix is also kept (a real, primary-source-backed improvement with no real downside),
+but it also was not the actual cause.
+
+**Reasoning correction that reframed the whole investigation**: the crash has now reproduced at the
+**identical fault offset, on every single attempt, across three separate builds** (classic driver, `
+qxldod`, `qxldod`+`ServicesPipeTimeout`). That is not what a race condition looks like - a real timing
+race would be intermittent, sometimes resolving favorably. 100% reproducibility at the same exact
+instruction address points to a deterministic defect, not a timing collision. The DCOM timeout events
+were very likely a *downstream symptom* of `StartMenuExperienceHost` already being dead (it can't
+register with DCOM because it already crashed), not the cause - the causality in Hypothesis 2 was
+probably backwards.
+
+### Hypothesis 3 (root cause, high confidence, fix not yet completed): `wimlib`'s `wimapply` does not
+### carry over Windows AppX/MSIX package *provisioning* state the way `DISM`/Setup.exe does
+
+Prompted directly by the user: "check the sister project for clues, check win2022-dc for clues."
+Reading the sibling project's real, working `packer/answer_files/autounattend.xml.pkrtpl` (used to
+build `win2022-dc` via actual interactive Setup.exe) showed it skips OOBE the same way this project's
+own specialize/oobeSystem-only unattend pass does (`SkipMachineOOBE`/`SkipUserOOBE = true`,
+`AutoLogon` + `FirstLogonCommands`) - ruling out OOBE-skipping itself as the differentiator. The real
+difference: `win2022-dc` went through Microsoft's own `DISM`-driven `/Apply-Image` (as part of real
+Setup.exe), while this project deliberately uses `wimlib`'s own `wimapply` instead, specifically
+documented in this project's own `CLAUDE.md` as a deliberate choice to avoid ever needing to boot a
+Windows environment. Targeted research found direct, credible confirmation this is a real, documented
+limitation, not a guess: "wimlib-imagex has no awareness of Windows 'packages' ... importantly, it
+cannot manage or apply the AppX package provisioning information that may be embedded in the image."
+
+**Confirmed directly against this project's own actual offline-applied disk, not just inferred from
+research**: mounted the target disk's NTFS partition from this Linux host (`qemu-nbd` + `ntfs-3g`, the
+same mechanism this project already uses throughout) and queried
+`ProgramData\Microsoft\Windows\AppRepository\StateRepository-Machine.srd` directly with the host's own
+`sqlite3` CLI - the `.srd`/`.srd-wal`/`.srd-shm` file set confirms this is a genuine SQLite database
+(WAL mode), openable with zero Windows tooling. `Package`/`PackageIdentity` both show
+`Microsoft.Windows.StartMenuExperienceHost_10.0.20348.1_...` and
+`Microsoft.Windows.ShellExperienceHost_10.0.20348.1_...` present with normal-looking metadata
+(`IsInbox=1`, proper `DisplayName`/`PublisherDisplayName` resource references) - but
+**`ProvisionedPackage` (the table that specifically tracks "install this app for every user at first
+logon") has zero rows, for anything.** This is the direct, structural explanation: the package files
+and their catalog metadata come along fine via `wimapply`'s raw file copy (and whatever's embedded in
+`install.wim`'s own captured filesystem state), but the actual provisioning step - establishing that
+these packages should be deployed per-user - normally only happens during a real, live Setup.exe/DISM-
+driven install, never during a raw file-level WIM apply.
+
+A live cross-check muddies the picture slightly and is worth someone resolving before assuming the
+SQL table is the *only* place this state lives: `Get-AppxProvisionedPackage -Online` (the supported
+PowerShell/DISM cmdlet, run live against the running guest) reports **3** provisioned packages, not
+zero - `Microsoft.UI.Xaml.2.2`, `Microsoft.UI.Xaml.2.4`, `Microsoft.VCLibs.140.00` - all shared
+*framework* packages, not the *app* packages themselves. So there appear to be two, not necessarily
+consistent, provisioning-tracking layers in play (the StateRepository's own `ProvisionedPackage` SQL
+table, and whatever `Get-AppxProvisionedPackage -Online` actually reads from), and only the framework
+layer picked up anything via the raw copy. Not yet root-caused *why* those specific three came
+through and nothing else did - a real, open thread for whoever picks this back up.
+
+### Fixes attempted for Hypothesis 3, both failed so far
+
+1. `Add-AppxPackage -DisableDevelopmentMode -Register <AppxManifest.xml> -ForAllUsers` - **fails
+   immediately**: `-ForAllUsers` is not a valid parameter for `Add-AppxPackage -Register` in this
+   PowerShell/AppX module version (it belongs to a different `Add-AppxPackage` code path, installing
+   *from* a packaged `.appx`, not registering a loose in-box app). A plain `-Register` (no
+   `-ForAllUsers`) was already tried earlier in this same investigation (before Hypothesis 3 was even
+   formed) and also didn't fix the crash - it only affects per-user registration for the currently
+   logged-on account, not machine-wide provisioning, which is consistent with what the SQL table
+   later confirmed is actually missing.
+2. `Add-AppxProvisionedPackage -Online -PackagePath 'C:\Windows\SystemApps\<app folder>' -SkipLicense`
+   (the correct, supported cmdlet for machine-wide provisioning, confirmed present - `Dism` PowerShell
+   module version 3.0) - **fails**: `"PackagePath must point to a package, not a directory"`. This
+   cmdlet requires a real `.appx`/`.appxbundle`/`.msix` file; in-box Windows apps ship pre-extracted
+   ("loose") with no such packaged file anywhere on disk, so this specific cmdlet path is a dead end
+   for exactly the apps that need it.
+3. Raw `dism.exe /Online /Add-ProvisionedAppxPackage /PackagePath:'<AppxManifest.xml path>'
+   /SkipLicense` (trying the CLI directly in case its own syntax is more permissive than the
+   PowerShell wrapper) - **fails**: `Error: 0x8051100f`, "DISM failed. No operation was performed."
+   Not yet decoded/researched - genuinely the next thing to look up, not yet attempted.
+
+### What's confirmed real and staying in the pipeline regardless of Hypothesis 3's outcome
+
+- `image-apply/inject-virtio-spice.sh`'s `qxldod` staging (Stage 1) and driver-version verification
+  (Stage 2, asserts `DriverVersion -eq '10.0.0.21000'`) - real, WHQL-signed WDDM driver, confirmed
+  bound on two separate real builds.
+- `image-apply/make-bootable.sh`'s offline `ServicesPipeTimeout` registry increase - real,
+  primary-source-backed mitigation for a genuine (if not the actual culprit here) Windows Server 2022
+  boot-race risk, applies to Server 2022 and 2025 identically.
+- `build.sh`'s `BUILD_ID` fix (unique per-run identifier threading Packer's `output_directory`/
+  `vm_name`/`efi_firmware_vars`) - fixed a real, reproduced collision bug (a second build of the same
+  OS previously failed outright); confirmed by two full successful end-to-end runs tonight.
+- `register-vm.sh` - confirmed by one real `virsh start` boot to a genuinely working desktop
+  (Server 2022, virtio-scsi/virtio-net/QXL+SPICE all live) - the Start Menu crash investigated in this
+  section is unrelated to `register-vm.sh`'s own device-model correctness, which is a separate,
+  already-closed question.
+
+None of the above four are reverted or in question - all real, independently defensible changes. Only
+the Start Menu/AppX-provisioning problem itself remains open.
+
+### Next steps (not yet started)
+
+1. Decode/research DISM error `0x8051100f` for `/Add-ProvisionedAppxPackage` against a loose,
+   unpackaged in-box app specifically - may reveal a required flag or a fundamentally different
+   required mechanism (e.g. packaging the loose app into a real `.appx` first, offline, before
+   provisioning it).
+2. Reconcile why `Get-AppxProvisionedPackage -Online` shows 3 framework packages provisioned when the
+   `StateRepository-Machine.srd`'s own `ProvisionedPackage` table shows zero rows for everything -
+   two tracking layers, not yet understood which one actually gates `StartMenuExperienceHost`'s
+   runtime behavior, or whether both need to agree.
+3. As a fallback if the supported cmdlets/CLI genuinely cannot provision loose in-box apps at all:
+   construct a direct SQL `INSERT` into `ProvisionedPackage` by hand. Not yet attempted - deliberately
+   held off because there is no existing reference row in this project's own database to pattern-match
+   against (the table is completely empty), so the correct `Path`/`Flags`/`Region` values would be a
+   guess, not a verified fact, going into it. Getting a real reference row (e.g., the equivalent
+   query run against `win2022-dc`, a working machine) before attempting this would turn it from a
+   guess into a verified fix.
+4. Ask the user to run `Get-AppxProvisionedPackage -Online | Where DisplayName -like "*StartMenu*"`
+   (or the full unfiltered list) directly on `win2022-dc` - a real, working reference machine already
+   available, not yet consulted for this specific data.
+5. Re-run the same investigation against a Windows 11 build once Server 2022 is actually fixed -
+   `windows11-setup-install.sh` also never invokes Setup.exe's own image-apply/provisioning path in
+   quite the same way DISM would (confirm whether Windows 11's Setup.exe-driven install path is
+   actually immune to this - it does invoke real Setup.exe, unlike Server 2022/2025's fully offline
+   path, so it may already be fine, but this has not been verified either way).
+
+### Stopping place for tonight
+
+- **`win2022prod` libvirt domain is currently running** (`virsh -c qemu:///system list --all` shows
+  it `running`), disk `packer/output/server2022-20260823-154052/server2022-20260823-154052.qcow2` -
+  this is the build with `qxldod` + `ServicesPipeTimeout` both applied, Start Menu still broken.
+  Left running/registered as-is; no cleanup performed as part of stopping here.
+- **Nothing from tonight's pipeline work is committed.** `git status` shows modified:
+  `CLAUDE.md`, `README.md`, `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, `build.sh`,
+  `image-apply/inject-virtio-spice.sh`, `image-apply/make-bootable.sh`,
+  `packer/boot-and-provision.pkr.hcl`; and untracked: `register-vm.sh` (new file). All of this is real
+  and intentional (see "What's confirmed real" above) but deliberately left uncommitted since the
+  overall Start Menu problem this session set out to fix is still open - resume by re-reading this
+  section, not by re-deriving the investigation.
+- The two throwaway diagnostic WinPE qcow2 copies used for the offline DISM/SQLite investigation
+  (`/tmp/winpe-diag-test.qcow2`, `/tmp/winpe-diag-test2.qcow2`) were already deleted during the
+  session; no cleanup owed there. The production `image-apply/output/winpe-boot-index1-work.qcow2`
+  medium itself was only ever mounted read-only for inspection or copied before editing - never
+  modified in place.
+
+---

@@ -24,11 +24,23 @@ packer {
 
 variable "target_os" {
   type        = string
-  description = "Which OS this build is for - informational/for output naming only; the disk itself is already fully built by image-apply/*.sh by the time this runs."
+  description = "Which OS this build is for - informational/validation only; the disk itself is already fully built by image-apply/*.sh by the time this runs."
   validation {
     condition     = contains(["server2022", "server2025", "windows11"], var.target_os)
     error_message = "The target_os variable must be \"server2022\", \"server2025\", or \"windows11\"."
   }
+}
+
+# Unique per invocation (build.sh sets this to "<target_os>-<timestamp>", matching
+# image-apply/output/builds/*.qcow2's own existing naming convention) - drives vm_name and
+# output_directory below so repeated builds of the same OS never collide. Before this
+# variable existed, output_directory was fixed per-OS ("output/${target_os}"), so a second
+# build of the same OS always failed with "Output directory ... already exists" - a real,
+# confirmed bug, not a hypothetical (see PHASE3_ENGINEERING_LOG.md/CLAUDE.md's own account of
+# the run that hit it).
+variable "build_id" {
+  type        = string
+  description = "Unique identifier for this build (e.g. server2022-20260823-135557) - always set by build.sh. Used for output_directory/vm_name/efi_firmware_vars so concurrent-in-history builds of the same OS never collide."
 }
 
 variable "source_qcow2" {
@@ -71,8 +83,8 @@ variable "headless" {
 }
 
 source "qemu" "boot_and_provision" {
-  vm_name          = "${var.target_os}.qcow2"
-  output_directory = "${path.root}/output/${var.target_os}"
+  vm_name          = "${var.build_id}.qcow2"
+  output_directory = "${path.root}/output/${var.build_id}"
 
   disk_image = true
   iso_url    = "file://${var.source_qcow2}"
@@ -101,7 +113,7 @@ source "qemu" "boot_and_provision" {
 
   efi_boot          = true
   efi_firmware_code = var.efi_firmware_code
-  efi_firmware_vars = "${path.root}/output/${var.target_os}-efivars.fd"
+  efi_firmware_vars = "${path.root}/output/${var.build_id}-efivars.fd"
 
   communicator   = "winrm"
   winrm_username = "Administrator"
