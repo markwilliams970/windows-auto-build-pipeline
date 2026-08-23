@@ -696,20 +696,21 @@ Phase 3.4's four NVRAM-boot-order confirmations and Phase 3.5's two full product
 builds). `build.sh` routes `windows11` through this script directly, with no Packer handoff (no
 Phase 3 roles apply to Windows 11).
 
-**Phase 3A (new, cross-cutting, started 2026-08-23): VirtIO storage/NIC/SPICE display drivers,
+**Phase 3A (new, cross-cutting, done as of 2026-08-23): VirtIO storage/NIC/SPICE display drivers,
 `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`.** Not a continuation of Phase 3.1-3.5's own numbered
 sequence (that closed with Windows 11 production-ready, above) - a distinct addition layered on top
-of already-proven builds, real production tooling now exists
-(`image-apply/inject-virtio-spice.sh`, OS-parameterized, wired into `build.sh`). Windows 11: `vioscsi`
-+ `netkvm` + QXL/SPICE all confirmed via a genuinely clean, single-pass, fully unattended
-`build.sh windows11` run (two independent clean runs as of this writing). Server 2022/2025: `vioscsi`
-storage swap now in scope too (`netkvm` stays on the existing offline-hivex mechanism, deliberately
-untouched - see the plan doc's "Scoping revised" note); SPICE applies to every OS. See the plan doc's
-own Findings 3A-1 through 3A-3 for the real, hard-won mechanics (live-PnP-verify-before-swap;
-never relocate an already-primary device's PCI placement; a Stage 1 "verify" device must match Stage
-2's real device topology exactly, or it can verify the wrong PCI hardware ID) - also now generalized
-into the "Version-sensitivity and brittleness" standard under Engineering Standards below, since
-Finding 3A-3 specifically exposed that PCI/driver hardware-ID assumptions are QEMU-version-sensitive,
+of already-proven builds. Real, committed production tooling exists
+(`image-apply/inject-virtio-spice.sh`, OS-parameterized, wired into `build.sh`'s `windows11` branch)
+and is confirmed done for **all three target OSes**, 2 independent clean runs each (6 total): Windows
+11 gets `vioscsi` + `netkvm` + QXL/SPICE; Server 2022/2025 get `vioscsi` + QXL/SPICE (`netkvm` stays
+on the existing, already-proven offline-hivex mechanism, deliberately untouched - see the plan doc's
+"Scoping revised" note for why NIC stays Windows-11-only while storage doesn't). Every clean run, on
+every OS, negotiated the identical `VEN_1AF4&DEV_1048` PCI ID for `vioscsi`. See the plan doc's own
+Findings 3A-1 through 3A-3 for the real, hard-won mechanics (live-PnP-verify-before-swap; never
+relocate an already-primary device's PCI placement; a Stage 1 "verify" device must match Stage 2's
+real device topology exactly, or it can verify the wrong PCI hardware ID) - also generalized into the
+"Version-sensitivity and brittleness" standard under Engineering Standards below, since Finding 3A-3
+specifically exposed that PCI/driver hardware-ID assumptions are QEMU-version-sensitive,
 not just Windows-version-sensitive.
 
 ---
@@ -853,7 +854,11 @@ before trusting" standard. A new Server 2022/2025 servicing baseline or Windows 
 editions within the WIM breaks this silently: `wimapply` would apply the wrong SKU with no error,
 since there's no validation that the resolved index still matches the expected `EDITIONID` before
 using it. Cheap to re-verify against a new ISO (the exact recipe is already documented above), but
-nothing currently *forces* that re-verification before a build runs against a refreshed ISO.
+nothing currently *forces* that re-verification before a build runs against a refreshed ISO. **Not
+hypothetical**: `ISO_CACHE_INVENTORY.md`'s own re-download-link verification (2026-08-23) found the
+Windows 11 media fwlink already resolving to a 25H2 build, a full servicing generation past what's
+actually cached - confirming this class of drift happens on this project's own real timeline, not
+just in theory.
 
 **Third — Setup.exe's own OOBE/hardware-compatibility-bypass behavior (Windows 11's Setup.exe path
 only).** Already has one real, documented precedent of Microsoft changing this class of behavior

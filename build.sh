@@ -34,13 +34,17 @@ log "=== Build: ${OS} -> ${TARGET_QCOW2} ==="
 # apply-image.sh / make-bootable.sh / apply-unattend.sh / Packer sequence as always, no
 # exception (CLAUDE.md's absolute ban on Microsoft-Windows-Setup for those two OSes).
 if [[ "$OS" == "windows11" ]]; then
-  log "[1/1] windows11-setup-install.sh (Setup.exe-driven - see PHASE3_ENGINEERING_LOG.md Phase 3.4)"
+  log "[1/2] windows11-setup-install.sh (Setup.exe-driven - see PHASE3_ENGINEERING_LOG.md Phase 3.4)"
   if [[ -n "$COMPUTER_NAME_ARG" ]]; then
     "${REPO_ROOT}/image-apply/windows11-setup-install.sh" "$TARGET_QCOW2" "$COMPUTER_NAME_ARG"
   else
     "${REPO_ROOT}/image-apply/windows11-setup-install.sh" "$TARGET_QCOW2"
   fi
-  log "Build complete: ${TARGET_QCOW2} (Windows 11 - no Packer handoff, no roles to provision)"
+
+  log "[2/2] inject-virtio-spice.sh (Phase 3A - see WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)"
+  "${REPO_ROOT}/image-apply/inject-virtio-spice.sh" "$OS" "$TARGET_QCOW2"
+
+  log "Build complete: ${TARGET_QCOW2} (Windows 11 - virtio-scsi/virtio-net/qxl+SPICE, no Packer handoff, no roles to provision)"
   exit 0
 fi
 
