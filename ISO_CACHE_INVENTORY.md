@@ -28,6 +28,35 @@ file was written (`sha256sum` run directly against each cached file, not just re
 — confirmed byte-for-byte matching, not assumed. This is the same "verify before trusting" standard
 `CLAUDE.md`'s Engineering Standards section calls for elsewhere in this project.
 
+## Re-download links, verified live 2026-08-23
+
+Every source link below was checked with a real request (`curl -sL -o /dev/null -w '%{http_code}
+%{url_effective}'`) on the date above, not just copied from the `.meta` sidecars — all five
+resolved `HTTP 200`. The "resolves to" column is the *actual* final download URL after following
+Microsoft's/the vendor's own redirect, useful for a direct `curl`/`wget` without needing a browser.
+
+| File | Fetch this URL | Resolves to (checked 2026-08-23) |
+|---|---|---|
+| `2022-SERVER_EVAL_x64FRE_en-us.iso` | `https://go.microsoft.com/fwlink/p/?LinkID=2195280&clcid=0x409&culture=en-us&country=US` | `.../SERVER_EVAL_x64FRE_en-us.iso` (no build number in the filename itself — see caution below) |
+| `2025-...SERVER_EVAL_x64FRE_en-us.iso` | `https://go.microsoft.com/fwlink/?linkid=2345730&clcid=0x409&culture=en-us&country=us` | `.../26100.32230.260111-0550.lt_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso` — **same build number as what's cached**, confirmed matching |
+| `win11ent-CLIENTENTERPRISEEVAL_x64FRE_en-us.iso` | `https://go.microsoft.com/fwlink/?linkid=2334167&clcid=0x809&culture=en-gb&country=gb` | `.../26200.6584.250915-1905.25h2_ge_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso` — **see the caution immediately below, this is not confirmed to match what's cached** |
+| `virtio-win-0.1.285.iso` | `https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/stable-virtio/virtio-win.iso` | `.../archive-virtio/virtio-win-0.1.285-1/virtio-win-0.1.285.iso` — **same version as what's cached**, confirmed matching |
+| `spice-guest-tools-latest.exe` | `https://www.spice-space.org/download/windows/spice-guest-tools/spice-guest-tools-latest.exe` | same URL, no redirect (it's a permanent "latest" filename, not versioned — see "Known gap" below) |
+
+**Real, live caution, not a hypothetical risk — the Windows 11 fwlink has already moved on.** The
+cached `win11ent-CLIENTENTERPRISEEVAL_x64FRE_en-us.iso` was downloaded 2026-07-22; today's re-check
+of the same fwlink resolves to a build carrying `26200.6584.250915-1905.25h2` in its filename — a
+25H2 servicing baseline. The cached file's own name doesn't preserve a build number, so this isn't
+proof the two are byte-different, but the presence of `25h2` in today's resolution and the
+one-month gap make it likely they are. **This is a concrete, dated instance of exactly the
+"WIM image index" brittleness risk `CLAUDE.md`'s Engineering Standards section documents** — this
+fwlink is Microsoft's own rolling "current eval build" pointer, not a pinned release, so it will
+keep moving over time by design. **Do not treat "re-download via this link" as a drop-in
+replacement for the currently-cached file without re-verifying the WIM edition index
+(`os_wim_index` in `image-apply/lib/common.sh`) against whatever it actually downloads** — a newer
+build could reorder or rename editions inside the WIM, exactly the failure mode already flagged as
+unverified-by-default in `CLAUDE.md`.
+
 ## Known gap
 
 `spice-guest-tools-latest.exe` was cached ad hoc during Phase 3A work
