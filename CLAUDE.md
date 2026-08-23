@@ -36,6 +36,8 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 3** (role provisioning) is **done**, including the production pipeline — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server), through both a fast-iteration test harness (`dev/`) and the real production path (`image-apply/`'s scripts + `packer/boot-and-provision.pkr.hcl` + `build.sh`, taking a blank disk all the way to a provisioned VM with no hand-run steps). See its entry under Development Approach below and `PHASE3_ENGINEERING_LOG.md` for the full trail across both sessions. **Phases 4-5** are not yet started.
 
+**Windows 11 is also production-ready, as of Phase 3.4/3.5**, via a genuinely different mechanism than Server 2022/2025's Phase 2/3 pipeline above (Setup.exe-driven, `image-apply/windows11-setup-install.sh`, no Packer handoff, no roles - Windows 11 doesn't get AD DS/IIS/SQL Server). See the "RESOLVED" note under Phase 3's own section below and `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries for the full trail - six independent clean production runs total.
+
 ---
 
 # Relationship to `../windows-server-vm-automation/`
@@ -194,6 +196,13 @@ to a plain disk boot), so attaching a self-built WinPE image as a regular virtio
 *disk* rather than `media=cdrom` may sidestep the issue entirely. This only needs testing if the
 BCD-SYS attempt fails first.
 
+**RESOLVED as of Phase 2's completion**: both tiers were actually tested, not left as open
+questions. BCD-SYS and real `bcdboot` run from a self-built WinPE session (the fallback that
+shipped) both independently produce a correctly-booting BCD - see "Status: Phase 2 is done" under
+Phase 2 below for the full record. The production path that shipped is the WinPE `bcdboot` fallback
+(`image-apply/make-bootable.sh`), not BCD-SYS - the framing above (BCD-SYS as "first attempt")
+reflects the original plan, not what was ultimately adopted into production.
+
 ## QEMU/KVM/libvirt
 
 Same responsibilities as the sibling project: virtualization, VM lifecycle, CPU/memory allocation,
@@ -343,7 +352,11 @@ project — tracked here as Phase 4, same as the sibling project's own Phase 4.
 # Repository Structure
 
 Expect this to evolve significantly as the actual offline-apply pipeline gets built — this is a
-starting sketch, not a fixed target:
+starting sketch, not a fixed target. It has not been kept fully current (e.g. `tools/qmp-eject.py`,
+`tools/qmp-pixel.py`, `tools/qmp-sendkey.py`, `tools/qmp-click.py`, `tools/qmp-type.py`,
+`packer/`'s `dev/role-test.pkr.hcl` sibling, and `image-apply/`'s various `.xml` templates aren't
+listed below) - treat it as a rough map of the major pieces, not an exhaustive or current listing;
+`find` or `ls` the real tree for that.
 
 ```
 windows-auto-build-pipeline/
@@ -354,14 +367,23 @@ windows-auto-build-pipeline/
 ├── services.yaml                         # copied/adapted from the sibling project
 ├── build.sh                              # real: orchestrates image-apply/*.sh then Packer
 
-├── image-apply/                # real, confirmed for Server 2022/2025 (PHASE3_ENGINEERING_LOG.md
-│   │                             # Session 2) - Windows 11 covered by the OS config table but
-│   │                             # untested through these scripts specifically
+├── image-apply/                # real, confirmed production for Server 2022/2025
+│   │                             # (PHASE3_ENGINEERING_LOG.md Session 2). Windows 11 no longer uses
+│   │                             # this offline-apply sequence at all as of Phase 3.4 - it has its
+│   │                             # own separate, self-contained script (windows11-setup-install.sh,
+│   │                             # not listed below - this diagram is a known-stale sketch, see the
+│   │                             # note under Repository Structure's own heading)
 │   ├── lib/common.sh           # per-OS config table (WIM index, driver subfolder, disk size, name)
-│   ├── partition-disk.sh       # qemu-nbd + sgdisk + mkfs
-│   ├── apply-image.sh          # wimlib apply
-│   ├── make-bootable.sh        # WinPE + bcdboot, then offline viostor/netkvm driver injection
-│   └── apply-unattend.sh       # drops %WINDIR%\Panther\unattend.xml
+│   ├── partition-disk.sh       # qemu-nbd + sgdisk + mkfs - Server 2022/2025 only
+│   ├── apply-image.sh          # wimlib apply - Server 2022/2025 only
+│   ├── make-bootable.sh        # WinPE + bcdboot, then offline viostor/netkvm driver injection - Server 2022/2025 only
+│   ├── apply-unattend.sh       # drops %WINDIR%\Panther\unattend.xml - Server 2022/2025 only
+│   ├── windows11-setup-install.sh  # real production script for Windows 11 - Setup.exe-driven,
+│   │                                  # self-contained (partition+install+bootable+specialize in
+│   │                                  # one unattended run, no Packer handoff)
+│   ├── build-iso-noprompt.sh   # builds the _noprompt-patched Windows 11 install ISO
+│   └── historical/              # retired scripts, kept as record - audit-mode-sysprep.sh,
+│                                   # calibrate-eject-timing.sh
 
 ├── packer/
 │   └── boot-and-provision.pkr.hcl   # real: disk_image=true, no ISO/boot_command - boots the
@@ -417,6 +439,12 @@ completely different:
 8. Configure Windows roles (reused `services.yaml`/`scripts/` layer, unchanged).
 9. Install Datadog Agent.
 10. Run validation.
+
+**This 10-step sequence is Server 2022/2025's real production lifecycle.** Windows 11's, as of
+Phase 3.4, is different and simpler: steps 3-7 collapse into one unattended Setup.exe-driven run
+(`image-apply/windows11-setup-install.sh`) with no Packer handoff, and step 8 doesn't apply (no
+roles for Windows 11 - see "Windows Configuration Goals" above). Steps 9-10 (Datadog, validation)
+remain Phase 4, not yet implemented for any OS.
 
 ## Verify / Destroy
 
