@@ -323,3 +323,8 @@ one, in case this project's tooling is ever redistributed rather than just run i
 
 Have not made these edits yet — flagging them here so the update can happen as a deliberate,
 reviewed step rather than silently while writing this analysis.
+
+**Update: done.** `CLAUDE.md`'s "Making the disk bootable" section now documents BCD-SYS as the
+first attempt with WinPE as the fallback, matching this recommendation. `START_PROMPT.md` was
+updated too at the time, though that file is itself now a stale Session-7 snapshot superseded by
+later phases (see its own top-of-file note) - not relevant to this specific TODO's own resolution.

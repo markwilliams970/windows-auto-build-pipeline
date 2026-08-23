@@ -19,11 +19,19 @@ not assumed from memory — see `CLAUDE.md`'s "verify before trusting" standard.
 | `wimlib-imagex` | `wimtools` | `wimapply` — applying the Windows image (`.wim`) to the formatted NTFS partition, offline |
 | `hivexsh`, `hivexget`, `hivexml` | `libhivex-bin` | Reading/writing Windows registry hives offline (BCD store construction, driver-injection registry edits) |
 | `hivexregedit` | `libwin-hivex-perl` | **Not included in `libhivex-bin`** — this is a separate Perl-bindings package. `hivexregedit` specifically is what BCD-SYS (see below) uses to apply `.reg`-style edits to an offline hive. Easy to miss: installing only `libhivex-bin` leaves `hivexregedit` still missing. |
+| `xorriso` | `xorriso` | Windows 11's Setup.exe-driven build path only (`image-apply/build-iso-noprompt.sh`) — rebuilds the `_noprompt`-patched install ISO with a correct dual El Torito boot catalog |
+| `mkisofs` / `genisoimage` | `genisoimage` | Windows 11's Setup.exe-driven build path only — builds the small answer-file delivery ISO (`autounattend.iso`) in `image-apply/build-iso-noprompt.sh` and `image-apply/windows11-setup-install.sh` |
 
-Install both in one shot:
+Install in one shot:
 
 ```
-sudo apt-get install -y gdisk ntfs-3g wimtools libhivex-bin libwin-hivex-perl
+sudo apt-get install -y gdisk ntfs-3g wimtools libhivex-bin libwin-hivex-perl xorriso genisoimage
+```
+
+Plus one Python package, not an apt package — `pywinrm`, used by `image-apply/windows11-setup-install.sh`'s own WinRM confirmation step (not borrowed from any unrelated virtualenv — see `CLAUDE.md`'s host prerequisites note):
+
+```
+pip3 install pywinrm
 ```
 
 (`sudo` here needs an interactive terminal/password — if running through an agent session without
@@ -75,9 +83,10 @@ confirmed necessary for our specific invocation as of this writing.
 ## Quick verification
 
 ```bash
-for c in sgdisk mkfs.ntfs wimlib-imagex hivexsh hivexregedit qemu-nbd qemu-system-x86_64 virsh virt-install; do
+for c in sgdisk mkfs.ntfs wimlib-imagex hivexsh hivexregedit qemu-nbd qemu-system-x86_64 virsh virt-install xorriso mkisofs; do
   command -v "$c" >/dev/null 2>&1 && echo "$c: OK" || echo "$c: MISSING"
 done
 lsmod | grep -q '^nbd' && echo "nbd module: loaded" || echo "nbd module: not loaded (modprobe nbd max_part=8)"
 test -x tools/vendor/BCD-SYS/Linux/bcd-sys.sh && echo "BCD-SYS: present" || echo "BCD-SYS: not cloned yet"
+python3 -c "import winrm" 2>/dev/null && echo "pywinrm: OK" || echo "pywinrm: MISSING (pip3 install pywinrm)"
 ```

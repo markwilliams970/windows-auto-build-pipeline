@@ -1,3 +1,17 @@
+> **STALE — this entire file is a snapshot frozen at Phase 2/Session 7, before Phase 3 even
+> started.** Everything below describes Windows Server 2025 as the only OS with a working
+> mechanism and treats the offline specialize/unattend pass as the next open task. Since then:
+> Phase 2 finished for all three target OSes, Phase 3 (role provisioning) finished including the
+> production pipeline for Server 2022/2025, and Windows 11 — after the offline-apply mechanism hit
+> an unresolved BSOD — got its own Setup.exe-driven build path (`image-apply/
+> windows11-setup-install.sh`), now production-ready and confirmed via six independent clean
+> builds. **Do not use this file to resume work.** Read `CLAUDE.md` (current per-phase status) and
+> `PHASE3_ENGINEERING_LOG.md`'s final entries instead — see `README.md`'s own "Resuming work"
+> section for the up-to-date reading order. This file is left in place as a real historical
+> artifact of how Phase 2 resumption prompts were written at the time, not maintained further.
+>
+> Original Session 7 content follows, unmodified:
+
 This is a resumption prompt, not a fresh kickoff — this project has real history and real
 in-progress investigation behind it. Read documents before doing or suggesting anything else, in
 this order:
