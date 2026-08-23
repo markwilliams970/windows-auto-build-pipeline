@@ -60,6 +60,10 @@ reinvent wherever the two overlap:
   than hardcoding a path. The currency-check convention itself (version-keyed ISO filenames,
   `.sha256`/`.meta` sidecars, ETag-based freshness checks before re-downloading) carries over
   unchanged — see the sibling project's `CLAUDE.md`/`README.md` for the history of the move.
+  Since the cache itself is binary and untracked, `ISO_CACHE_INVENTORY.md` (this repo, git-tracked)
+  is the durable record of what's cached, when, and from where — checksums independently
+  re-verified against their sidecars, not just copied. Regenerate it (recipe included in the file
+  itself) whenever the cache's contents change, rather than letting it go stale.
 - **Reuse the pattern, not necessarily the exact files**: the `dev/` fast-iteration harness pattern
   (a frozen baseline disk + Packer's `disk_image = true`/`use_backing_file = true` copy-on-write
   overlay, for testing changes in minutes instead of a full rebuild).
@@ -692,6 +696,22 @@ Phase 3.4's four NVRAM-boot-order confirmations and Phase 3.5's two full product
 builds). `build.sh` routes `windows11` through this script directly, with no Packer handoff (no
 Phase 3 roles apply to Windows 11).
 
+**Phase 3A (new, cross-cutting, started 2026-08-23): VirtIO storage/NIC/SPICE display drivers,
+`WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`.** Not a continuation of Phase 3.1-3.5's own numbered
+sequence (that closed with Windows 11 production-ready, above) - a distinct addition layered on top
+of already-proven builds, real production tooling now exists
+(`image-apply/inject-virtio-spice.sh`, OS-parameterized, wired into `build.sh`). Windows 11: `vioscsi`
++ `netkvm` + QXL/SPICE all confirmed via a genuinely clean, single-pass, fully unattended
+`build.sh windows11` run (two independent clean runs as of this writing). Server 2022/2025: `vioscsi`
+storage swap now in scope too (`netkvm` stays on the existing offline-hivex mechanism, deliberately
+untouched - see the plan doc's "Scoping revised" note); SPICE applies to every OS. See the plan doc's
+own Findings 3A-1 through 3A-3 for the real, hard-won mechanics (live-PnP-verify-before-swap;
+never relocate an already-primary device's PCI placement; a Stage 1 "verify" device must match Stage
+2's real device topology exactly, or it can verify the wrong PCI hardware ID) - also now generalized
+into the "Version-sensitivity and brittleness" standard under Engineering Standards below, since
+Finding 3A-3 specifically exposed that PCI/driver hardware-ID assumptions are QEMU-version-sensitive,
+not just Windows-version-sensitive.
+
 ---
 
 # Phase 4: Datadog Integration
@@ -804,6 +824,60 @@ deliberate about how much of an existing tool to take on:
   evaluation, not an afterthought — a single-maintainer project with real recent activity and a
   documented use case matching ours (BCD-SYS) is worth a cheap empirical test; an abandoned or
   vague one isn't worth the same trust without more scrutiny.
+
+## Version-sensitivity and brittleness: what actually breaks when the pinned ISO/driver/QEMU version changes
+
+Asked and answered directly (2026-08-23, during Phase 3A work) because it's a real, standing risk
+this project's own history already has concrete evidence for, not a hypothetical to gesture at.
+Ranked by how brittle each layer actually is, most fragile first:
+
+**Most brittle — PCI/driver hardware-ID assumptions.** `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`'s
+Finding 3A-3 (discovered on this project's own first genuinely clean, single-pass Phase 3A run) found
+that a bare `virtio-scsi-pci` controller and the identical controller with a backing drive attached
+negotiate *different* PCI hardware IDs (`VEN_1AF4&DEV_1048` modern vs. `DEV_1004` legacy/transitional)
+under the exact same QEMU version - meaning this layer is sensitive to **QEMU version/configuration
+behavior**, not just Windows version. A host QEMU upgrade could silently shift virtio legacy/modern
+negotiation and break the hardcoded hardware IDs baked into both the offline `hivex` `DriverDatabase`
+registration (`tools/gen-viostor-ddb-reg.py`) and `image-apply/inject-virtio-spice.sh`'s own
+topology-matching approach - with no error, just a disk that used to boot and now doesn't. A virtio-win
+driver version bump carries the same risk from the other direction: Phase 3 Finding 6 already found one
+real INF dependency gap (`netkvmp.exe`, required by `netkvm.inf`'s own `[SourceDisksFiles]` section but
+invisible until a live `pnputil` install actually needed it) that a routine driver-package update could
+easily reintroduce in a different form.
+
+**Second — WIM image index (`os_wim_index` in `image-apply/lib/common.sh`).** Hardcoded per OS
+(Server 2022/2025 index 2, Windows 11 index 1), each verified exactly once against one specific
+pinned ISO (`PHASE2_ENGINEERING_LOG.md` Session 12 Finding 42, Session 13 Finding 43) via direct `7z`
+extraction and `strings -el ... | grep EDITIONID` - never assumed, per this project's own "verify
+before trusting" standard. A new Server 2022/2025 servicing baseline or Windows 11 release reordering
+editions within the WIM breaks this silently: `wimapply` would apply the wrong SKU with no error,
+since there's no validation that the resolved index still matches the expected `EDITIONID` before
+using it. Cheap to re-verify against a new ISO (the exact recipe is already documented above), but
+nothing currently *forces* that re-verification before a build runs against a refreshed ISO.
+
+**Third — Setup.exe's own OOBE/hardware-compatibility-bypass behavior (Windows 11's Setup.exe path
+only).** Already has one real, documented precedent of Microsoft changing this class of behavior
+out from under existing tooling: an NTLite forum thread (cited during `PHASE3_ENGINEERING_LOG.md`
+Session 3's research pass) documents a Windows 11 24H2 regression where `windowsPE`-pass unattend
+settings are silently ignored by WinPE Setup. This project's own `windows11-setup-install.sh` depends
+on `LabConfig` bypass registry keys and specific OOBE-skip settings continuing to work exactly as
+currently observed - a future Windows 11 servicing update changing Setup.exe's own gate behavior again
+is a real, not theoretical, risk category for this one pathway specifically. Server 2022/2025's
+offline path doesn't invoke Setup.exe at all, so it's structurally immune to this particular risk.
+
+**Least brittle — the core offline mechanism** (`wimlib` WIM apply, `bcdboot`, `hivex` registry
+edits). Built on long-stable, Microsoft-documented primitives (`DISM /Apply-Image` + `bcdboot`'s own
+behavior changes slowly and deliberately, unlike Setup.exe's own UX/compatibility-check surface) -
+this is the part of the pipeline least likely to break from a routine ISO refresh.
+
+**What to actually do about it, not just note it**: this project's own "verify before trusting"
+discipline is already the right mitigation in principle - the real gap is that nothing *forces*
+re-verification (WIM index, driver hardware IDs, PCI negotiation behavior) when the pinned ISO/
+driver/QEMU version changes; it only happens when someone remembers to check by hand. A worthwhile,
+not-yet-built addition: a preflight script that dumps WIM edition metadata and virtio-win driver
+hardware IDs against whatever is currently cached, diffs that against what's hardcoded in
+`lib/common.sh`/`tools/gen-viostor-ddb-reg.py`, and fails loud *before* a build runs rather than
+producing a silently-wrong or silently-broken disk after one.
 
 ## The rest of the standards
 
