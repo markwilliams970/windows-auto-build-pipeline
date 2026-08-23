@@ -2193,49 +2193,85 @@ through and nothing else did - a real, open thread for whoever picks this back u
 None of the above four are reverted or in question - all real, independently defensible changes. Only
 the Start Menu/AppX-provisioning problem itself remains open.
 
-### Next steps (not yet started)
+### Hypothesis 3, REFUTED (addendum, same night): a direct `win2022-dc` comparison invalidates the
+### AppX-provisioning theory entirely, and closes a fourth hypothesis (Xaml.dll patch level) too
 
-1. Decode/research DISM error `0x8051100f` for `/Add-ProvisionedAppxPackage` against a loose,
-   unpackaged in-box app specifically - may reveal a required flag or a fundamentally different
-   required mechanism (e.g. packaging the loose app into a real `.appx` first, offline, before
-   provisioning it).
-2. Reconcile why `Get-AppxProvisionedPackage -Online` shows 3 framework packages provisioned when the
-   `StateRepository-Machine.srd`'s own `ProvisionedPackage` table shows zero rows for everything -
-   two tracking layers, not yet understood which one actually gates `StartMenuExperienceHost`'s
-   runtime behavior, or whether both need to agree.
-3. As a fallback if the supported cmdlets/CLI genuinely cannot provision loose in-box apps at all:
-   construct a direct SQL `INSERT` into `ProvisionedPackage` by hand. Not yet attempted - deliberately
-   held off because there is no existing reference row in this project's own database to pattern-match
-   against (the table is completely empty), so the correct `Path`/`Flags`/`Region` values would be a
-   guess, not a verified fact, going into it. Getting a real reference row (e.g., the equivalent
-   query run against `win2022-dc`, a working machine) before attempting this would turn it from a
-   guess into a verified fix.
-4. Ask the user to run `Get-AppxProvisionedPackage -Online | Where DisplayName -like "*StartMenu*"`
-   (or the full unfiltered list) directly on `win2022-dc` - a real, working reference machine already
-   available, not yet consulted for this specific data.
+Per this project's own standard (get the real reference machine's own data before trusting a
+guessed fix - Next step 4 above), the user ran the exact same `Get-AppxProvisionedPackage -Online`
+query directly on `win2022-dc` and shared the output. Result: **`win2022-dc`'s own provisioned list
+is `Microsoft.MicrosoftEdge.Stable`, `Microsoft.UI.Xaml.2.2`, `Microsoft.UI.Xaml.2.4`,
+`Microsoft.VCLibs.140.00` - i.e. the identical three framework packages this project's own broken
+build has, plus Edge (a live-updated package, unsurprising for an internet-connected machine).
+`Microsoft.Windows.StartMenuExperienceHost` and `Microsoft.Windows.ShellExperienceHost` are absent
+from `win2022-dc`'s own provisioned list too, on a machine where Start Menu works fine.**
+
+This directly refutes Hypothesis 3: the missing `ProvisionedPackage` rows for these two packages
+is normal, not a defect - core OS shell components are evidently serviced through a different
+mechanism than the AppX "provision for every new user" system `Get-AppxProvisionedPackage`/
+`ProvisionedPackage` actually tracks (which is for Store-style apps like Edge, not in-box shell
+components in `%windir%\SystemApps\`). The SQLite finding itself (three tables, real schema, zero
+`ProvisionedPackage` rows) was accurate - the conclusion drawn from it was wrong.
+
+A follow-up command (`Get-HotFix | Sort-Object InstalledOn | Format-Table ...` immediately followed
+by `(Get-Item '...\Windows.UI.Xaml.dll').VersionInfo.FileVersion`, meant to test a revived,
+corrected version of Hypothesis 2 - not "this exact wrong KB" but "our image has simply never
+received any cumulative-update servicing at all, unlike an internet-connected reference machine" -
+was accidentally pasted as a single line, so `Get-HotFix` itself never ran (PowerShell tried to bind
+the `Get-Item` sub-expression's own return value as a positional argument to `Format-Table` and
+errored). But the error message itself leaked the one value that mattered: **`win2022-dc`'s own
+`Windows.UI.Xaml.dll` FileVersion is `10.0.20348.1 (WinBuild.160101.0800)` - identical, down to the
+build-lab tag, to this project's own broken build's version, confirmed via a direct `Get-Item` query
+earlier in this same investigation.** Same exact crashing DLL, same exact version, on a machine
+where it doesn't crash - this rules out Xaml.dll's own patch level as the differentiator too,
+without needing the `Get-HotFix` list at all (a useful, real result even though the parent command
+partially failed).
+
+**Running honest tally as of this addendum: four real, independently well-evidenced hypotheses
+tested and disproven** - classic QXL driver, Windows Server 2022's documented RPC/DCOM boot-race,
+missing AppX provisioning state, and Xaml.dll's own patch level. The actual differentiator between
+`win2022-dc` (works) and this project's own offline-applied builds (100% reproducible crash) remains
+unidentified as of this entry.
+
+### Next steps (revised after the `win2022-dc` comparison above)
+
+1. **Windows activation/licensing state, newly promoted to leading candidate.** Earlier in this same
+   investigation (before Hypothesis 1 was even formed), the Application event log showed real,
+   dismissed-at-the-time activation failures: `Microsoft-Windows-Security-SPP` events 8198/1014/8200,
+   `slui.exe` (`Trigger=UserLogon`) failing with `hr=0x80072EE7` (`ERROR_INTERNET_NAME_NOT_RESOLVED` -
+   this project's own builds have no real internet access, by design, so KMS/activation server
+   contact always fails). `win2022-dc`, if it has real internet access and successfully activates
+   (not yet confirmed either way - worth asking the user directly, or checking `slmgr /xpr` /
+   `Get-CimInstance SoftwareLicensingProduct` there), would differ from every one of this project's
+   own builds on exactly this axis. Not yet connected to Start Menu/XAML specifically by any concrete
+   evidence - a real candidate to test next, not yet a confirmed mechanism.
+2. `win2022-dc`'s own `Get-HotFix` list still hasn't actually been captured (the command errored
+   before running) - worth getting for real, even though the one value that mattered most
+   (`Windows.UI.Xaml.dll`'s version) already came through and ruled out that specific angle. A
+   general patch-level gap could still matter for some *other* component even though not this one.
+3. Compare CPU/machine-model configuration between `win2022-dc`'s own libvirt domain XML (`virsh
+   dumpxml win2022-dc`) and this project's own `register-vm.sh`/Packer-generated domains - both run
+   on the same physical host/KVM, but if `win2022-dc`'s own domain was defined with different
+   `-cpu`/machine-type settings (e.g. a specific `-cpu` model rather than `host-passthrough`, or a
+   different QEMU machine type version), that's a real, testable, mechanical difference, not yet
+   ruled out.
+4. Decode/research DISM error `0x8051100f` for `/Add-ProvisionedAppxPackage` - lower priority now
+   that Hypothesis 3 itself is refuted, but still an open, undecoded error worth understanding if
+   AppX servicing comes back into play for a different reason later.
 5. Re-run the same investigation against a Windows 11 build once Server 2022 is actually fixed -
-   `windows11-setup-install.sh` also never invokes Setup.exe's own image-apply/provisioning path in
-   quite the same way DISM would (confirm whether Windows 11's Setup.exe-driven install path is
-   actually immune to this - it does invoke real Setup.exe, unlike Server 2022/2025's fully offline
-   path, so it may already be fine, but this has not been verified either way).
+   `windows11-setup-install.sh` invokes real Setup.exe (unlike Server 2022/2025's fully offline
+   path), so it may already be immune to whatever this actually is - not yet verified either way.
 
 ### Stopping place for tonight
 
-- **`win2022prod` libvirt domain is currently running** (`virsh -c qemu:///system list --all` shows
-  it `running`), disk `packer/output/server2022-20260823-154052/server2022-20260823-154052.qcow2` -
-  this is the build with `qxldod` + `ServicesPipeTimeout` both applied, Start Menu still broken.
-  Left running/registered as-is; no cleanup performed as part of stopping here.
-- **Nothing from tonight's pipeline work is committed.** `git status` shows modified:
-  `CLAUDE.md`, `README.md`, `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, `build.sh`,
-  `image-apply/inject-virtio-spice.sh`, `image-apply/make-bootable.sh`,
-  `packer/boot-and-provision.pkr.hcl`; and untracked: `register-vm.sh` (new file). All of this is real
-  and intentional (see "What's confirmed real" above) but deliberately left uncommitted since the
-  overall Start Menu problem this session set out to fix is still open - resume by re-reading this
-  section, not by re-deriving the investigation.
-- The two throwaway diagnostic WinPE qcow2 copies used for the offline DISM/SQLite investigation
-  (`/tmp/winpe-diag-test.qcow2`, `/tmp/winpe-diag-test2.qcow2`) were already deleted during the
-  session; no cleanup owed there. The production `image-apply/output/winpe-boot-index1-work.qcow2`
-  medium itself was only ever mounted read-only for inspection or copied before editing - never
-  modified in place.
+- **Tonight's pipeline work (the `qxldod`/`ServicesPipeTimeout`/`BUILD_ID`/`register-vm.sh` changes,
+  plus this log's own original entry) was committed and pushed** (`f174dca`) before this addendum was
+  written - all real, all kept, none of it reverted by anything in this addendum. This addendum
+  itself, and the "Next steps" revision above, still need their own commit.
+- `win2022prod` libvirt domain was left running (disk `packer/output/server2022-20260823-154052/
+  server2022-20260823-154052.qcow2`) at the point the original entry was written; not re-checked as
+  of this addendum - confirm current state before resuming rather than assuming.
+- Resume by reading this whole section (including this addendum) before re-deriving anything -
+  four specific, real hypotheses are now closed, with the evidence that closed each one recorded
+  above, so there's no need to re-test any of them from scratch.
 
 ---
