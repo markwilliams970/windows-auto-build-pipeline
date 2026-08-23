@@ -2232,32 +2232,43 @@ missing AppX provisioning state, and Xaml.dll's own patch level. The actual diff
 `win2022-dc` (works) and this project's own offline-applied builds (100% reproducible crash) remains
 unidentified as of this entry.
 
-### Next steps (revised after the `win2022-dc` comparison above)
+### Hypothesis 5, REFUTED same night: Windows activation/licensing state
 
-1. **Windows activation/licensing state, newly promoted to leading candidate.** Earlier in this same
-   investigation (before Hypothesis 1 was even formed), the Application event log showed real,
-   dismissed-at-the-time activation failures: `Microsoft-Windows-Security-SPP` events 8198/1014/8200,
-   `slui.exe` (`Trigger=UserLogon`) failing with `hr=0x80072EE7` (`ERROR_INTERNET_NAME_NOT_RESOLVED` -
-   this project's own builds have no real internet access, by design, so KMS/activation server
-   contact always fails). `win2022-dc`, if it has real internet access and successfully activates
-   (not yet confirmed either way - worth asking the user directly, or checking `slmgr /xpr` /
-   `Get-CimInstance SoftwareLicensingProduct` there), would differ from every one of this project's
-   own builds on exactly this axis. Not yet connected to Start Menu/XAML specifically by any concrete
-   evidence - a real candidate to test next, not yet a confirmed mechanism.
+Proposed immediately after Hypothesis 3/4 fell (the real, previously-dismissed `slui.exe`/KMS
+`0x80072EE7` activation failures in the event log were the basis - this project's own builds have no
+real internet access by design, so activation always fails there). **Refuted directly by the user,
+who confirmed `win2022-dc` is also not activated, and its Start Menu works fine regardless.** Closed
+without needing further diagnostic work - a clean, fast refutation from someone with direct
+knowledge of the reference machine's own state, not something that needed to be tested empirically
+this time.
+
+**Five real hypotheses now closed** (QXL driver, RPC/DCOM boot-race, AppX provisioning, Xaml.dll
+patch level, activation state) - each with real, direct evidence, none abandoned on a guess. The
+actual differentiator between `win2022-dc` (works) and this project's own offline-applied builds
+(100% reproducible crash) remains unidentified as of this entry.
+
+### Next steps (revised again after Hypothesis 5's refutation)
+
+Five one-off hypothesis-and-test cycles is enough to justify a more systematic approach next time,
+rather than reaching for a sixth individual guess under pressure to keep momentum. Promoted to the
+top:
+
+1. **A full, systematic state diff between `win2022-dc` and a broken build, not another single
+   hypothesis.** Start with the cheapest, most comprehensive comparison available:
+   `virsh dumpxml win2022-dc` side-by-side against `register-vm.sh`'s own generated domain XML (or
+   Packer's `boot-and-provision.pkr.hcl`-driven one) - CPU model (`host-passthrough` vs. a specific
+   named model), machine type version, memory, TPM/Secure Boot presence, and any other device
+   difference neither of us has specifically looked for yet. This is pure information-gathering, not
+   a fix attempt, and might surface a concrete lead (or several) worth individually testing rather
+   than guessing what to check next one at a time.
 2. `win2022-dc`'s own `Get-HotFix` list still hasn't actually been captured (the command errored
-   before running) - worth getting for real, even though the one value that mattered most
-   (`Windows.UI.Xaml.dll`'s version) already came through and ruled out that specific angle. A
-   general patch-level gap could still matter for some *other* component even though not this one.
-3. Compare CPU/machine-model configuration between `win2022-dc`'s own libvirt domain XML (`virsh
-   dumpxml win2022-dc`) and this project's own `register-vm.sh`/Packer-generated domains - both run
-   on the same physical host/KVM, but if `win2022-dc`'s own domain was defined with different
-   `-cpu`/machine-type settings (e.g. a specific `-cpu` model rather than `host-passthrough`, or a
-   different QEMU machine type version), that's a real, testable, mechanical difference, not yet
-   ruled out.
-4. Decode/research DISM error `0x8051100f` for `/Add-ProvisionedAppxPackage` - lower priority now
+   before running) - worth getting for real as part of the same systematic pass above, even though
+   the one value that mattered most (`Windows.UI.Xaml.dll`'s own version) already came through and
+   ruled out that specific angle.
+3. Decode/research DISM error `0x8051100f` for `/Add-ProvisionedAppxPackage` - lower priority now
    that Hypothesis 3 itself is refuted, but still an open, undecoded error worth understanding if
    AppX servicing comes back into play for a different reason later.
-5. Re-run the same investigation against a Windows 11 build once Server 2022 is actually fixed -
+4. Re-run the same investigation against a Windows 11 build once Server 2022 is actually fixed -
    `windows11-setup-install.sh` invokes real Setup.exe (unlike Server 2022/2025's fully offline
    path), so it may already be immune to whatever this actually is - not yet verified either way.
 
