@@ -72,7 +72,9 @@ in the skeleton itself.
 **Update, same session: a full audit against the one known-good Windows 11 build changes the shape of
 the problem entirely (Finding 15).** `win11-session13.qcow2` - Phase 2's original, hand-run,
 fully-successful Windows 11 build - still survives on disk and still resumes cleanly to a healthy
-desktop. Every static input this pipeline depends on was checked directly against what produced it:
+desktop. (This disk was later deleted in a routine housekeeping pass once the Setup.exe-driven
+approach made the fully-offline architecture it referenced obsolete - not because anything here was
+found to be wrong; the forensic findings below remain the accurate record of what was checked.) Every static input this pipeline depends on was checked directly against what produced it:
 every git-tracked script (byte-identical since the commit that confirmed Server success), the WinPE
 medium's own baked-in `startnet.cmd`/`diskpart-assign.txt` (byte-identical), host packages and kernel
 (zero changes, same running kernel instance since before Session 13), OVMF firmware and source ISOs

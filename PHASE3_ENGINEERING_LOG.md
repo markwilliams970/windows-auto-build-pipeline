@@ -8,6 +8,15 @@ found and fixed in the new test harness itself (Finding 1 below) — not in the 
 not in Phase 2's mechanism. See `CLAUDE.md`'s Phase 3 section for the current status summary and
 `PHASE2_ENGINEERING_LOG.md` for the offline-apply mechanism this phase builds on.
 
+**This banner describes only where the file starts, not where it ends.** This same log later covers
+Windows 11's entire separate journey - the fully-offline pipeline's Findings 7-9 and eventual HARD
+STOP, the Setup.exe-driven pivot (Phase 3.1-3.3), formalizing it into production scripts and
+discovering the NVRAM-boot-order design (Phase 3.4), and production-readiness validation (Phase 3.5)
+- ending with Windows 11 reaching the same production-ready status Server 2022/2025 have here. See
+`CLAUDE.md`'s Phase 3 section and `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` for the current,
+rolled-up status of all three OSes; treat this file as the chronological record behind that summary,
+not a replacement for reading it.
+
 This log follows the sibling project's and `PHASE2_ENGINEERING_LOG.md`'s own convention: symptom,
 diagnosis, root cause, fix, in the order they were actually hit, including the dead ends.
 
@@ -275,9 +284,11 @@ build itself is broken.
 
 Both built from completely blank qcow2 disks by the new scripts - no dev-harness reference disk, no
 hand-run steps anywhere in the chain. `image-apply/output/builds/server2022-test3.qcow2` and
-`server2025-test1.qcow2` are the two confirmed-good disks this session produced (both still present,
-gitignored, disposable per this project's ephemeral-infrastructure principle - not meant to be kept
-long-term).
+`server2025-test1.qcow2` are the two confirmed-good disks this session produced (both still present
+as of this writing, gitignored, disposable per this project's ephemeral-infrastructure principle -
+not meant to be kept long-term; both were in fact deleted in a later housekeeping pass once the
+evidentiary bar was independently re-confirmed elsewhere - see the "Housekeeping, continued" section
+below).
 
 ---
 
@@ -308,7 +319,8 @@ worked around downstream.
    `build.sh` run end-to-end before treating it as proven, even though every stage it calls has now
    been individually confirmed.
 
-**Persistent state that survives** (under `image-apply/output/`, gitignored):
+**Persistent state that survives** (under `image-apply/output/`, gitignored, as of this writing -
+both `.qcow2` files below were deleted in a later housekeeping pass, see "Housekeeping, continued"):
 `server2022-test3.qcow2` and `server2025-test1.qcow2` are this session's two confirmed-good
 from-scratch disks. `image-apply/output/virtio-drivers/` and `image-apply/output/wim-cache/` hold
 extracted driver files and `install.wim`s respectively, reused across runs to avoid re-extracting on
@@ -566,7 +578,8 @@ facing first boot) and lays out two real architectural options, explicitly not d
 
 **Persistent state that survives** (under `image-apply/output/`, gitignored): `server2022-test3.qcow2`
 and `server2025-test1.qcow2` (Session 2's confirmed-good disks, unchanged, unaffected by this
-session). `windows11-bisect4.qcow2` (this session's last disk - reached the graceful "invalid answer
+session; both later deleted in housekeeping, see "Housekeeping, continued" below).
+`windows11-bisect4.qcow2` (this session's last disk - reached the graceful "invalid answer
 file" dialog, not a real confirmed-good Windows 11 build; safe to delete, not a reference artifact
 worth keeping). No VM left running, no `qemu-nbd` attached, environment fully clean at session end
 (confirmed via `pgrep`).

@@ -529,15 +529,19 @@ mechanism, Windows 11 now has the same "production-ready" status Server 2022/202
   investigation per this project's own standing principle — a hard stop and return to Categories
   4-6 (or further reconsideration) is a legitimate outcome, not a failure of the plan.
 
-#### Open questions carried forward from Phases 0-2
+#### Open questions carried forward from Phases 0-2 — both now answered by Phase 3.4
 
 - Does Setup.exe coming back for Windows 11 make it a genuinely separate implementation track
   within this project, or should it converge toward looking more like the sibling project's own
-  approach instead? Real architecture-boundary question — worth revisiting once Phase 3.3 actually
-  succeeds (or doesn't), not decided in the abstract now.
+  approach instead? **Answered: separate implementation track.** `image-apply/windows11-setup-
+  install.sh` is its own dedicated production script - not a shared code path with the offline-apply
+  `image-apply/*.sh` scripts (which stay Server 2022/2025-only), and not a convergence toward the
+  sibling project's own Packer/`boot_command` approach either.
 - Does Packer re-enter the pipeline at all for Windows 11 post-install, or does the hand-built
   `qemu-system-x86_64` approach cover the whole lifecycle the way `image-apply/*.sh` already does
-  for the offline path? Deferred to Phase 3.4.
+  for the offline path? **Answered: no.** `build.sh` routes `windows11` straight through
+  `windows11-setup-install.sh` with no Packer handoff at all - Windows 11 has no Phase 3 roles to
+  provision, and the script confirms first boot/WinRM itself.
 
 ---
 
@@ -554,6 +558,10 @@ mechanism, Windows 11 now has the same "production-ready" status Server 2022/202
 
 ## Open questions this plan deliberately leaves unresolved until research happens
 
+**Both resolved as of Phase 3.4 - see "Open questions carried forward from Phases 0-2" above for the
+answers.** Left below unmodified as the record of what was genuinely unknown when this plan was
+first written, before Phase 0 even started.
+
 - Does Setup.exe need to come back into play for Windows 11 specifically, given the original
   reason it was banned may be Packer-QEMU-builder-specific rather than a fundamental Windows
   11/QEMU incompatibility?
@@ -566,6 +574,15 @@ mechanism, Windows 11 now has the same "production-ready" status Server 2022/202
 ---
 
 ## Next step
+
+**STALE - preserved below as the record of what "next" meant before Phase 3 was executed. All of
+Phase 3.1-3.5 are now done; see the "Status" section at the top of this document for current state.**
+Windows 11's Setup.exe-driven build is production-ready, confirmed via six independent clean runs
+total. The actual next steps for this project now are the virtio-driver question (deferred, Phase
+3.2/3.3's `e1000`/plain-IDE scope decision) and Phase 4 (Datadog Agent integration, not started for
+any of the three OSes) - not anything in this research plan.
+
+Original text, accurate as of when Phase 3's design was first written and before any of it had run:
 
 **Research (Phases 0-2) and design (Phase 3) are both done.** The next step is real, not more
 documentation: execute **Phase 3.1** — build the `_noprompt`-patched Windows 11 ISO and confirm,
