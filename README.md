@@ -1,120 +1,253 @@
 # Windows Auto-Build Pipeline
 
-Fully reproducible Windows Server 2022/2025 and Windows 11 lab VMs, built without
-relying on Packer's interactive-installer boot path — which reliably fails for
-Server 2025 and Windows 11 media due to an unresolved upstream Packer/QEMU/OVMF
-issue. Two different mechanisms per OS, not one: Server 2022/2025 use offline
-image application (`DISM /Apply-Image`-equivalent via `wimlib`, no boot involved
-until the disk is already bootable); Windows 11 uses a Setup.exe-driven install
-with a patched, prompt-free ISO instead, after the offline-apply mechanism hit an
-unresolved BSOD specific to Windows 11 (see `CLAUDE.md` and
-`PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries). Server 2022/2025 additionally
-get AD DS/IIS/SQL Server role provisioning for Datadog Agent integration testing
-— Windows 11 doesn't (those roles are Server-20XX-specific by design, not yet
-implemented for Windows 11). See `HANDOFF_FROM_UNATTENDED_INSTALL.md` for the
-full background on why this project exists as a separate repo from its sibling,
-`../windows-server-vm-automation/`.
+Build fully reproducible, disposable Windows lab VMs — Windows Server 2022, Windows Server 2025,
+and Windows 11 Enterprise Evaluation — without relying on an interactive installer boot. Every
+build applies a fresh Windows image straight to disk from Linux and comes up unattended, ready for
+automated configuration and testing.
 
-## Status (as of Phase 3.5)
+This is a working, hand-run-from-the-command-line research/lab tool, not a packaged product. It's
+documented here so it can be picked up, understood, and driven by someone who wasn't part of
+building it — see "Risks and limitations" below before relying on it for anything beyond that.
 
-**Phase 1 (architecture): done.**
+## Why this exists
 
-**Phase 2 (offline installation mechanism): done for all three target OSes**
-(Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation).
-Offline image application → bootable → specialized → real, unattended WinRM
-connectivity, confirmed end-to-end for each OS. See `PHASE2_ENGINEERING_LOG.md`'s
-final "STATUS AND NEXT STEPS ON RESUMPTION" section for the complete trail
-(BCD-SYS/WinPE bootability, offline virtio driver injection via a corrected
-`DriverDatabase` registry path derived from `virt-v2v`'s own source, and the
-offline specialize/unattend pass).
+The original motivation is Datadog Agent testing against realistic Windows environments —
+Windows/Active Directory/IIS/SQL Server monitoring integration, simulating the kind of enterprise
+and regulated-cloud (FedRAMP/GovCloud-style) customer setups those integrations actually run
+against in the wild. That requires real, disposable Windows Server and Windows 11 VMs that can be
+built and torn down repeatedly, not a single hand-maintained golden image — a golden image can't
+be cloned safely here anyway, because Windows evaluation media's activation countdown doesn't
+reset on clone, and the `sysprep`/rearm mechanism that could extend it is capped at a small number
+of uses for the life of one install.
 
-**Phase 3 (Windows role configuration): done, including the production pipeline.**
-The same three roles (IIS, AD DS, SQL Server), reused unchanged from the sibling
-project, are confirmed live against both Windows Server 2025 and Windows Server
-2022 through the real production path (`image-apply/*.sh` + `packer/
-boot-and-provision.pkr.hcl` + `build.sh`). Windows 11 has no Phase 3 roles by
-design (AD DS/IIS/SQL Server are Server-20XX-specific) — see `CLAUDE.md`'s
-"Windows Configuration Goals."
+This project's sibling, [`../windows-server-vm-automation/`](../windows-server-vm-automation/),
+builds the same kind of environment via Packer driving a normal interactive Windows Setup boot
+(`autounattend.xml` over VNC keystroke injection). That works reliably for Windows Server 2022 —
+but the identical mechanism *reliably fails* for Windows Server 2025 and Windows 11 media, tracked
+upstream as an open, unresolved Packer/QEMU/OVMF issue
+([hashicorp/packer#13342](https://github.com/hashicorp/packer/issues/13342),
+[#13514](https://github.com/hashicorp/packer/issues/13514)), not a configuration mistake on either
+project's part. This project exists to install Windows a different way for the OSes where that
+approach doesn't work.
 
-**Windows 11's own build path (Phase 3.4/3.5): done, and production-ready.**
-Windows 11 doesn't use the offline-apply mechanism above at all — after that
-architecture hit a hard, unresolved kernel-level BSOD on Windows 11's real first
-boot (see `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section), it was replaced
-with a Setup.exe-driven install (`image-apply/windows11-setup-install.sh`) using
-a `_noprompt`-patched install ISO and OVMF's own NVRAM boot order for
-disk-vs-CD-ROM selection — no `boot_command`/VNC keystroke racing, no timing-
-sensitive eject step. Confirmed via six independent clean builds total (four
-during Phase 3.4's own mechanism validation, two full Phase 3.5 production-
-readiness runs) with real, authenticated WinRM confirmed each time. See
-`PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries and
-`WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` for the complete design and
-evidentiary trail.
+## Two installation mechanisms, by OS
 
-**Phases 4-5** (Datadog Agent integration, lifecycle automation) are not started,
-same as the sibling project's own Phase 4/5 status.
+- **Windows Server 2022 and 2025**: fully offline image application. `wimlib` applies the Windows
+  image directly onto a partitioned, formatted disk from this Linux host — no boot of any kind
+  during installation. The disk is made bootable afterward (WinPE + a real `bcdboot` run, once),
+  specialized via an offline-dropped `unattend.xml`, and only then booted for the first time, via
+  Packer, straight into a WinRM-reachable, already-configured machine.
+- **Windows 11**: a Setup.exe-driven install using a Microsoft-patched, prompt-free install ISO
+  (the `_noprompt` boot files Microsoft has shipped for over a decade, applied via a hand-built
+  QEMU invocation with explicit UEFI boot-order control) plus an answer-file ISO — one unattended
+  QEMU session, no Packer handoff. The fully-offline approach used for the Server SKUs was tried
+  for Windows 11 first and hit a hard, unresolved kernel-level BSOD on first real boot; the
+  Setup.exe path replaced it after that investigation concluded. See "Summary of prior work" below.
 
-## Resuming work
+Both mechanisms end in the same place: a disposable, bootable, WinRM-reachable Windows VM with no
+manual steps in between. Windows Server 2022/2025 then go on to get role provisioning (Active
+Directory Domain Services, IIS, SQL Server — see "Roles" below); Windows 11 doesn't get those
+roles, by design, but does get VirtIO storage/NIC and SPICE display drivers for a usable
+interactive desktop.
 
-Read, in order:
+## Summary of prior work and prior art
 
-1. `CLAUDE.md` — project goals, architectural principles, tool responsibilities,
-   phased plan, and current per-phase status (checked into the repo as project
-   instructions — read this first, it's the authoritative current state).
-2. `PHASE3_ENGINEERING_LOG.md` — the active engineering log. Its final entries
-   cover Phase 3.4 (Windows 11's Setup.exe-driven build path, and the
-   NVRAM-boot-order design pivot) and Phase 3.5 (production-readiness
-   validation).
-3. `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` — the research plan and phased
-   design behind Windows 11's current build path, for the full evidentiary
-   trail from the original BSOD hard stop through to a working mechanism.
-4. `PHASE2_ENGINEERING_LOG.md` — Phase 2's own engineering log (offline image
-   application, bootability, driver injection) for Server 2022/2025 and
-   Windows 11's now-superseded offline-apply mechanism.
-5. `HANDOFF_FROM_UNATTENDED_INSTALL.md` — original prior-art research and why
-   this project exists; still accurate.
-6. `PREREQUISITES.md` — host tooling this project needs beyond the sibling
-   project. Only relevant again if working from a different machine.
+This project leaned on existing, credible prior art rather than reinventing low-level mechanisms —
+worth knowing both because it explains some of the design and because it's where credit is due
+(see "Acknowledgements" below):
 
-`START_PROMPT.md` is a ready-to-use resumption prompt covering the same ground,
-written for handing to a fresh Claude Code session — but check it against
-`CLAUDE.md`'s own status before trusting it, since it can go stale between
-sessions faster than the files above.
+- **The boot-prompt failure itself** is a known community issue, not something specific to this
+  host — confirmed via the two open Packer issues above and a matching report on HashiCorp's own
+  Discuss forum, all describing the identical symptom (UEFI drops to the EFI shell instead of
+  booting install media).
+- **Making an offline-applied disk bootable** uses Microsoft's own documented mechanism
+  (`DISM /Apply-Image` + `bcdboot`, run from WinPE) — not a novel approach. An alternative,
+  zero-boot-required tool, [BCD-SYS](https://github.com/jpz4085/BCD-SYS), was evaluated and also
+  confirmed to work, but the WinPE + real `bcdboot` path is what shipped in production.
+- **Offline VirtIO driver injection** (so a freshly-applied disk doesn't hit
+  `INACCESSIBLE_BOOT_DEVICE` on its very first boot) follows the same registry-injection pattern
+  used by [`virt-v2v`](https://github.com/libguestfs/libguestfs) (part of the libguestfs project),
+  a much larger, production-proven tool that solves the identical "new virtual hardware's driver
+  isn't registered, and the disk can't boot to register it" problem. The recipe was transcribed
+  directly from `virt-v2v`'s own source, not reconstructed from memory or documentation summaries.
+- **Windows 11's install path** uses Microsoft's own `_noprompt` boot files
+  (`efisys_noprompt.bin`/`cdboot_noprompt.efi`, genuine Microsoft tooling present on the cached
+  install media, not a community hack) to eliminate the "press any key" prompt by construction,
+  combined with a hand-built QEMU invocation that sets UEFI boot order directly — something
+  Packer's own QEMU builder doesn't expose a way to do.
+- **VM screen inspection during development** uses QEMU's own QMP `screendump` command rather than
+  a VNC viewer plus a manual screenshot — see `tools/qmp-screenshot.py`.
 
-## Repository layout
+The full engineering trail — every finding, every dead end, every root cause — lives in
+`PHASE2_ENGINEERING_LOG.md`, `PHASE3_ENGINEERING_LOG.md`,
+`WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`, and `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`. `CLAUDE.md`
+is the current, authoritative summary of project status and design decisions; this README doesn't
+duplicate it.
 
-- `image-apply/` — the real build scripts. For Server 2022/2025: the offline
-  WIM-application pipeline (`partition-disk.sh`, `apply-image.sh`,
-  `make-bootable.sh`, `apply-unattend.sh`). For Windows 11:
-  `build-iso-noprompt.sh` and `windows11-setup-install.sh` (Setup.exe-driven,
-  a completely different mechanism — see `CLAUDE.md`). Build artifacts under
-  `image-apply/output/` are gitignored — regenerated on every real run, never
-  source. `image-apply/historical/` holds retired scripts
-  (`audit-mode-sysprep.sh`, `calibrate-eject-timing.sh`) kept as documented
-  record of closed architectural branches, not live tooling.
-- `tools/` — host-side Linux dev/debug tooling: QMP-based screenshot/keystroke/
-  eject/pixel-sample helpers for inspecting and driving VMs without a VNC viewer
-  (`qmp-screenshot.py`, `qmp-watch.sh`, `qmp-sendkey.py`, `qmp-type.py`,
-  `qmp-click.py`, `qmp-eject.py`, `qmp-pixel.py`), `gen-viostor-ddb-reg.py`
-  (generates the source-verified `.reg` file that offline-registers the
-  virtio-blk boot driver, clearing `INACCESSIBLE_BOOT_DEVICE` — see
-  `PHASE2_ENGINEERING_LOG.md` Finding 29), plus a scoped sudoers file for the
-  disk-prep commands this pipeline needs
-  (`tools/sudoers-windows-auto-build-pipeline`; not installed automatically —
-  see the file's own header for the `visudo`-checked install step).
-  `tools/vendor/` (BCD-SYS, cloned per `PREREQUISITES.md`) is gitignored, not
-  vendored into this repo's history.
-- `scripts/` — reused unchanged from the sibling project's role-provisioning
-  layer (`run-services.ps1`, `install-iis.ps1`, `install-ad.ps1`,
-  `install-sql-server.ps1`, `verify-post-reboot.ps1`); Server 2022/2025 only —
-  Windows 11 has no Phase 3 roles.
+## Prerequisites
 
-Shared Windows/virtio-win install media lives in `../iso_cache/`, one level above
-this repo and the sibling project, not inside this repo's git tree.
+Full detail, exact package names, and a verification script: `PREREQUISITES.md`. Summary:
 
-## Host prerequisites
+- A Linux host with KVM/QEMU/libvirt already working (same baseline the sibling project needs).
+- This project's own additions: `wimlib-imagex` (`wimtools`), `sgdisk`/`parted` (`gdisk`),
+  `ntfs-3g`, `qemu-nbd` (`qemu-utils`), `libhivex-bin` + `libwin-hivex-perl` (offline registry
+  editing), and — for Windows 11's Setup.exe-driven path specifically — `xorriso`, `genisoimage`,
+  and the `pywinrm` Python package (`pip3 install pywinrm`).
+- The `nbd` kernel module loaded with `max_part=8` (`sudo modprobe nbd max_part=8`).
+- [`BCD-SYS`](https://github.com/jpz4085/BCD-SYS) cloned into `tools/vendor/BCD-SYS` (not
+  packaged; a plain `git clone`).
+- A scoped sudoers rule set (`tools/sudoers-windows-auto-build-pipeline`) granting passwordless
+  root for exactly the disk-prep commands this pipeline runs against `/dev/nbd*` devices —
+  `qemu-nbd`, `sgdisk`, `mkfs.vfat`/`mkntfs`, `mount`/`umount`, `ntfsinfo`/`ntfsfix`. Review the
+  file's own header before installing it (`visudo -cf ... && sudo install -m 0440 ...`); it does
+  not grant a shell, package management, or arbitrary command execution.
+- Cached Windows and VirtIO install media in `../iso_cache/` (one level above this repo, shared
+  with the sibling project) — see the next section.
 
-See `PREREQUISITES.md`. Beyond the sibling project's baseline (KVM/QEMU/libvirt),
-this project additionally needs `wimlib-imagex`, `sgdisk`/`parted`, `ntfs-3g`
-(`mkfs.ntfs`), `qemu-nbd`, and — for Windows 11's Setup.exe-driven build path
-specifically — `xorriso`, `mkisofs`/`genisoimage`, and the `pywinrm` Python
-package (`pip3 install pywinrm`).
+## Setting up the media cache
+
+Builds read Windows ISOs and the VirtIO driver ISO from `../iso_cache/` (path configurable via the
+`ISO_CACHE_DIR` environment variable); nothing downloads automatically during a build. Populate it
+with the Windows Server 2022, Windows Server 2025, and Windows 11 Enterprise Evaluation ISOs, plus
+the latest stable `virtio-win.iso`. `ISO_CACHE_INVENTORY.md` records exactly what's cached on this
+project's own development host today, including verified re-download links and checksums — use it
+as a reference for what "populated" looks like, not as a guarantee those exact links or builds are
+still current (see "Risks and limitations" below).
+
+## Running a build
+
+```
+./build.sh <server2022|server2025|windows11> [services_yaml_path] [computer_name]
+```
+
+- `server2022` / `server2025` run the full offline-apply pipeline (partition → apply image → make
+  bootable → specialize → hand off to Packer for first boot + role provisioning). `services_yaml_path`
+  (optional, defaults to `services.yaml`) selects which roles get provisioned — see "Roles" below.
+- `windows11` runs the Setup.exe-driven install, then injects VirtIO storage/NIC and SPICE display
+  drivers (`image-apply/inject-virtio-spice.sh`) — no Packer handoff, no roles.
+- `computer_name` (optional) overrides the default computer name baked into the unattend/answer
+  file for that OS.
+
+Example, a Windows Server 2025 IIS+SQL Server app-server build:
+
+```
+./build.sh server2025 dev/services-app-server.yaml
+```
+
+Rough timings from real logged production runs on this project's own development host (expect
+these to vary with host hardware, not to be portable guarantees): Server 2022 + AD DS, ~7 minutes;
+Server 2025 + IIS/SQL Server, ~51 minutes; Windows 11 (install + driver injection), on a similar
+order. A completed build leaves a `.qcow2` disk image under `image-apply/output/builds/` and, for
+Server 2022/2025, a Packer-provisioned VM confirmed reachable over WinRM.
+
+## Roles (Server 2022/2025 only)
+
+`services.yaml` (or a path passed as `build.sh`'s second argument) is a flat, commented list of
+roles to provision: `iis`, `ad-ds`, `sql-server`. `ad-ds` (domain controller) and `iis`/`sql-server`
+(app server) are mutually exclusive profiles — `dev/services-domain-controller.yaml` and
+`dev/services-app-server.yaml` are ready-made examples of each. Windows 11 gets none of these
+roles; it isn't in scope for AD/IIS/SQL Server monitoring integration testing the way the Server
+SKUs are.
+
+## Inspecting a running build
+
+Every ad hoc QEMU invocation this project drives directly (not Packer-managed builds) exposes a
+QMP control socket, so a VM's screen can be inspected without popping a VNC viewer:
+
+```
+python3 tools/qmp-screenshot.py --socket /tmp/<name>.sock --out /tmp/shot.png
+```
+
+`tools/qmp-watch.sh` loops that at an interval for watching a boot sequence unfold frame by frame;
+`tools/qmp-sendkey.py`, `tools/qmp-click.py`, and `tools/qmp-type.py` send keystrokes, clicks, and
+typed text into a running VM (mouse clicks need a USB tablet device on the guest — already wired
+into this project's own production QEMU invocations). Windows 11 builds also come up with a SPICE
+display (QXL + guest tools), reachable with any SPICE client, for genuine interactive use — not
+just headless automation.
+
+## Risks and limitations
+
+Read this before relying on this pipeline for anything beyond disposable lab use:
+
+- **Only ever tested on a single development host.** Every build described above, and every claim
+  of "confirmed working," was validated on one specific Linux machine. Nothing here has been
+  exercised on a second host, a different Linux distribution, a different QEMU/libvirt version, or
+  different host hardware. Porting this to another machine should be treated as untested until
+  proven otherwise, not assumed to work because it worked once here.
+- **Configuration and version drift.** This pipeline hardcodes several values that are only valid
+  for the exact ISO/driver/QEMU versions they were verified against: WIM image indices (which
+  edition inside the Windows install image to apply), virtio PCI hardware IDs (`CLAUDE.md`'s
+  Engineering Standards document a real, observed case of the *same* virtio controller negotiating
+  a *different* PCI ID depending on QEMU configuration), and Windows 11's Setup.exe
+  OOBE-bypass/`LabConfig` behavior (which Microsoft has changed out from under similar tooling
+  before, in a documented 24H2 regression). None of these are re-verified automatically when the
+  underlying ISO or QEMU version changes — a refreshed Windows ISO, a `virtio-win` update, or a
+  host QEMU upgrade can silently produce a disk that used to build cleanly and no longer does, with
+  no error until it fails. `ISO_CACHE_INVENTORY.md` already documents one live instance of this:
+  the Windows 11 download link has moved on to a newer servicing build than what's cached.
+- **Windows 11's build path is structurally more fragile than Server 2022/2025's.** It drives
+  Setup.exe directly and depends on specific OOBE-bypass behavior continuing to work; Server
+  2022/2025's fully offline path never invokes Setup.exe at all and is immune to that entire class
+  of risk.
+  
+- **No automated environment lifecycle yet.** There's no "destroy" or cleanup workflow — VMs and
+  their disk images are left in place until removed by hand. Build artifacts are large (Windows and
+  VirtIO ISOs alone are roughly 20 GiB cached, and each build's own disk image is tens of GB), so
+  disk space needs active management on whatever host this runs on.
+- **No automated Datadog Agent or general tool installation.** A generalized, YAML-driven post-build
+  tool installer (7-Zip, PuTTY, WinSCP, Chrome, Notepad++, and the Datadog Agent itself) is designed
+  but not implemented — see `CLAUDE.md`'s Phase 4 for the design and its own honestly-stated
+  limitations (in particular, MSI-based silent installs can transiently expose the Datadog API key
+  in the process list — a narrow but real exposure window inherent to that install mechanism).
+- **Lab-only security posture.** Passwords baked into unattend/answer files are intentionally
+  disposable placeholders, not real credentials, and are not treated as secrets. There's no secrets
+  vault integration, no hardening pass, and no assumption this is safe to expose beyond an isolated
+  lab network.
+- **SPICE/QXL driver delivery depends on an unversioned upstream installer.** Windows 11 and Server
+  2022/2025's SPICE guest tools come from `spice-space.org`'s "latest" installer, which has no
+  pinned release and isn't yet covered by this project's normal ETag-based freshness checking — a
+  future download could silently be a different build than what was tested against.
+- **This is a hand-run research tool, not a maintained product.** Scripts assume the specific
+  layout and conventions documented in `CLAUDE.md` and are not defensively hardened against
+  malformed input, unexpected host state, or concurrent invocation (concurrent QEMU build/boot
+  cycles on the same host are explicitly avoided by convention, not prevented by tooling).
+
+## Next steps and ongoing work
+
+- **Phase 4 (Tooling)**: design is complete (`CLAUDE.md`) — a `tools.yaml`-driven post-build
+  installer for 7-Zip, PuTTY, WinSCP, Chrome, Notepad++, and the Datadog Agent, reusing this
+  project's existing pinned-media-cache convention rather than live downloads from inside the
+  guest. Not yet implemented.
+- **Phase 5 (lifecycle automation)**: build/verify/destroy workflow. Not started.
+- **Open engineering question**: whether Server 2022/2025's existing offline-hivex NIC driver
+  mechanism should ever be ported onto the newer live-swap technique used for Windows 11's VirtIO
+  NIC — currently left as-is (offline-hivex) since it's already proven and the swap would be a
+  breaking change to a working mechanism; flagged in `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, not
+  scheduled.
+- A preflight script that checks cached-media WIM edition metadata and virtio driver hardware IDs
+  against what's hardcoded in `image-apply/lib/common.sh`/`tools/gen-viostor-ddb-reg.py`, and fails
+  loudly before a build runs against drifted media, is identified as worthwhile but not yet built
+  (`CLAUDE.md`'s "Version-sensitivity and brittleness" standard).
+
+## Acknowledgements
+
+This project's own engineering is almost entirely the work of adapting existing, credible prior art
+to this specific pipeline shape, not inventing new low-level mechanisms. Real credit belongs to:
+
+- **[BCD-SYS](https://github.com/jpz4085/BCD-SYS)** (jpz4085) — constructing a Windows BCD store
+  and boot files directly from Linux with no boot required.
+- **[libguestfs](https://libguestfs.org/) / `virt-v2v`** — the offline VirtIO driver registration
+  pattern (`DriverDatabase` registry injection) this project's own driver-injection tooling is
+  transcribed from.
+- **Microsoft** — the documented `DISM /Apply-Image` + `bcdboot` offline-install recipe,
+  `\Windows\Panther\unattend.xml` specialize-pass mechanics, and the `_noprompt` boot files used to
+  drive Windows 11's Setup.exe unattended.
+- **Red Hat / the `virtio-win` project** — the VirtIO storage, network, and QXL/SPICE display
+  drivers this pipeline injects.
+- **[spice-space.org](https://www.spice-space.org/)** — the SPICE guest tools installer providing
+  usable interactive desktop access to built VMs.
+- **QEMU / OVMF (TianoCore)** — the virtualization and UEFI firmware this entire pipeline runs on,
+  including the QMP protocol this project's own inspection tooling is a thin wrapper around.
+- **`../windows-server-vm-automation/`**, this project's sibling — the role-provisioning layer
+  (IIS, AD DS, SQL Server scripts) reused here unchanged, and the original research that identified
+  the interactive-installer boot failure this project exists to work around.

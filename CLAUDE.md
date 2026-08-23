@@ -420,7 +420,18 @@ windows-auto-build-pipeline/
 ├── tools/                      # host-side Linux dev/debug tooling (distinct from scripts/,
 │   │                             # which is Windows-side PowerShell reused verbatim)
 │   ├── qmp-screenshot.py       # one-shot QEMU framebuffer capture via QMP, no VNC viewer needed
-│   └── qmp-watch.sh            # loops qmp-screenshot.py for watching a boot sequence unfold
+│   ├── qmp-watch.sh            # loops qmp-screenshot.py for watching a boot sequence unfold
+│   ├── gen-viostor-ddb-reg.py  # generates the source-verified .reg file that offline-registers
+│   │                             # a virtio PCI driver (viostor/netkvm) into a SYSTEM hive's
+│   │                             # DriverDatabase, per virt-v2v's own recipe - see
+│   │                             # PHASE2_ENGINEERING_LOG.md Finding 29
+│   ├── sudoers-windows-auto-build-pipeline  # scoped NOPASSWD sudoers rules for the disk-prep
+│   │                             # commands this pipeline needs (qemu-nbd, sgdisk, mkfs.vfat/
+│   │                             # mkntfs, mount/umount, ntfsinfo/ntfsfix) - pinned to /dev/nbd*
+│   │                             # only, never a real host disk; not installed automatically,
+│   │                             # see the file's own header for the visudo-checked install step
+│   └── vendor/                 # BCD-SYS clone target (PREREQUISITES.md) - gitignored, not
+│                                   # vendored into this repo's own git history
 
 └── tests/
     ├── verify-connectivity.ps1
