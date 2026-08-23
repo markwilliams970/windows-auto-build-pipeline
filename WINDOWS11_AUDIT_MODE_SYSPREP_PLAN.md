@@ -12,6 +12,13 @@ code, environment, and input media as the cause; and multi-angle research found 
 precedent for the exact combination. Next step is a new research question - how Windows 11
 unattended builds are actually done successfully elsewhere - not a third variant of this plan.**
 
+**That research question is now resolved** - see `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` and
+`PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries for the Setup.exe-driven approach that replaced
+both options here. The real script this plan proposed, `audit-mode-sysprep.sh`, now lives at
+`image-apply/historical/audit-mode-sysprep.sh` (moved out of the live `image-apply/` tree to make
+clear it's retired, not active tooling) - the content below is preserved unmodified as the historical
+record of this closed architectural branch.
+
 Preserved below as the historical record of what Option B actually was and what it found - not
 maintained as a live plan going forward.
 

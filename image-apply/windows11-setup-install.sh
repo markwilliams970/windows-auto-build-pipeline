@@ -22,8 +22,9 @@
 # PHASE3_ENGINEERING_LOG.md's Phase 3.4 "design reconsideration" entry for the full
 # evidentiary trail (direct TianoCore boot-log confirmation of Boot0009 "Windows Boot
 # Manager" on both reboots, both attempts). The retired eject-based mechanism and its
-# own calibration convenience script (calibrate-eject-timing.sh) are kept in the repo
-# as historical record, not deleted.
+# own calibration convenience script (image-apply/historical/calibrate-eject-timing.sh)
+# are kept in the repo as historical record, not deleted - moved to image-apply/
+# historical/ (alongside audit-mode-sysprep.sh) to make clear neither is live tooling.
 #
 # Usage: windows11-setup-install.sh <target-qcow2-path> [computer-name]
 set -euo pipefail

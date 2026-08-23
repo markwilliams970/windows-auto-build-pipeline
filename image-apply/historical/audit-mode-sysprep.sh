@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+# RETIRED - kept as historical record only, no longer called by anything in this
+# project. This was Option B's real script (WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md),
+# CLOSED - HARD STOP as of Session 4: both this and the fully-offline Option A
+# terminate at the identical Windows 11 first-boot BSOD, root-caused to neither
+# approach's own code/environment/media. Superseded end to end by the Setup.exe-driven
+# approach (image-apply/windows11-setup-install.sh) - see PHASE3_ENGINEERING_LOG.md's
+# Phase 3.4/3.5 entries. Moved to image-apply/historical/ to make clear it's not live
+# tooling; content below is unmodified from when it was live.
+#
 # Build step 5.5 (windows11 only): boot once into Audit Mode and run Sysprep
 # (/generalize /oobe /shutdown) fully unattended, before the real customer-facing
 # unattend.xml is ever dropped - matching Microsoft's own real OEM manufacturing flow
@@ -30,7 +39,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/lib/common.sh"
+# Moved to image-apply/historical/ (retired script, kept as historical record) - one
+# level deeper than the other image-apply/*.sh scripts, so lib/common.sh is now a
+# parent-relative path, not a sibling.
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 OS="${1:?Usage: audit-mode-sysprep.sh <windows11> <target-qcow2-path>}"
 TARGET_QCOW2="${2:?Usage: audit-mode-sysprep.sh <windows11> <target-qcow2-path>}"

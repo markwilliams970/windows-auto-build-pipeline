@@ -1988,3 +1988,26 @@ than this project's own "1-2 once the bar is met" standard calls for. `windows11
 (current Windows 11 reference).
 
 ---
+
+## Housekeeping: retired scripts moved to `image-apply/historical/`, to make the live/retired
+## boundary structural, not just a header comment someone has to read first.
+
+`audit-mode-sysprep.sh` and `calibrate-eject-timing.sh` moved (`git mv`) from `image-apply/` directly
+into a new `image-apply/historical/` subdirectory. Both scripts compute their own `SCRIPT_DIR` and
+source `lib/common.sh` relative to it - moving them one level deeper broke that (`${SCRIPT_DIR}/lib/
+common.sh` no longer resolved), caught before trusting the move rather than assumed safe: fixed to
+`${SCRIPT_DIR}/../lib/common.sh` in both, then verified for real (not just `bash -n`) - sourced
+`lib/common.sh` from the new location directly and confirmed `REPO_ROOT` resolves correctly and the
+shared `log()` helper works. `lib/common.sh` itself computes `REPO_ROOT` from its own location, not
+the caller's, so it needed no change.
+
+Added a "RETIRED" header to `audit-mode-sysprep.sh` (it never had one, unlike `calibrate-eject-
+timing.sh` which already did) so either file makes its own status clear to a reader who opens it
+directly, not just via the directory it now lives in. Updated the one live cross-reference
+(`windows11-setup-install.sh`'s own header comment) and the two planning docs' status notes
+(`WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`, `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`) to point at the
+new path. Historical narrative elsewhere in this log describing what was run at the time (this
+section included, going forward) is left as-is - it was accurate when written and isn't meant to
+track the files' current location.
+
+---

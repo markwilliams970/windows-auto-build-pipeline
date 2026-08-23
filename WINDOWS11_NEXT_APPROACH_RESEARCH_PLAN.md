@@ -45,9 +45,9 @@ NVRAM boot order decide disk-vs-CD-ROM selection, with no eject at all.** Confir
 independently four times total (two hand-run tests plus two runs of the final production script,
 including direct TianoCore boot-log capture of `Boot0009 "Windows Boot Manager"` on both reboots) -
 this eliminates the entire eject-timing problem area, not just improves it.
-`calibrate-eject-timing.sh` is retired (kept as historical record, same treatment as
-`audit-mode-sysprep.sh` - nothing left to calibrate once there's no eject step). See
-`PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries for the complete trail.
+`calibrate-eject-timing.sh` is retired (moved to `image-apply/historical/`, kept as historical
+record, same treatment as `audit-mode-sysprep.sh` - nothing left to calibrate once there's no eject
+step). See `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4 entries for the complete trail.
 
 **Phase 3.5 is done.** Two independent fresh builds through the finished `windows11-setup-install.sh`
 (default settings, no manual intervention), both clean: `hostname` -> `WIN11P35A`/`WIN11P35B`

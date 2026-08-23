@@ -35,7 +35,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/lib/common.sh"
+# Moved to image-apply/historical/ (retired script, kept as historical record) - one
+# level deeper than the other image-apply/*.sh scripts, so lib/common.sh is now a
+# parent-relative path, not a sibling.
+source "${SCRIPT_DIR}/../lib/common.sh"
 
 POLL_INTERVAL_SEC="${1:-10}"
 CEILING_SEC="${CALIBRATE_CEILING_SEC:-1200}"  # give up and report failure if never observed both T0 and T1
