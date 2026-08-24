@@ -2749,3 +2749,151 @@ just showed is insufficient on its own.
   up, not yet decided.
 
 ---
+
+## Session (continued, 2026-08-24): ROOT CAUSE CONFIRMED - `wimlib-imagex apply` against this project's
+## FUSE-mounted NTFS target silently drops all Windows security descriptors/ACLs, proven directly by
+## wimlib's own `--strict-acls` flag, not just inferred from symptoms
+
+Executed `STARTMENU_DCOM_ROOT_CAUSE_RESEARCH_PLAN.md`'s ranked investigation steps in order, per the
+user's explicit direction to proceed on the newly-found `0xc000027b`/`STATUS_INVALID_VIEW_SIZE` lead.
+Three steps ruled things out; the fourth found and directly confirmed the actual root cause.
+
+### Step 1: system clock accuracy - RULED OUT
+
+Booted `win2022prod` fresh and captured guest time at the very first moment WinRM was reachable, before
+any NTP sync could plausibly have occurred: `2026-08-24T19:14:32.389+00:00` vs. host time
+`2026-08-24T19:14:32Z` at the same instant - accurate to within a second, and correctly configured as
+UTC. The clock/certificate-validity theory from the research plan is closed.
+
+### Step 2: re-confirm both crash signatures fresh - real, useful convergence
+
+On this same fresh boot (a genuinely new AutoLogon session, not a reused locked one - Server Manager
+was still splashing in), pressed the Start button and captured events live rather than relying on
+older records. **`StartMenuExperienceHost.exe` now also throws `Exception code: 0xc000027b`**
+(`Fault offset: 0x0000000000025541`) - a different code than the `0xc0000409` recorded in an earlier
+session, from before today's Windows Update test changed the binary. `SearchApp.exe` continues to
+throw the identical `0xc000027b` at the identical `Fault offset: 0x0000000000147e5a` across six
+consecutive crash-loop attempts in under a minute. **Both apps now converge on the same exception
+class** - real evidence for "one shared environmental/activation-infrastructure gap; the specific
+binary version only changes which internal code path happens to hit it," not "two unrelated per-app
+bugs."
+
+### Step 3: CBS staged/resolved package state - RULED OUT, but surfaced the real lead
+
+`dism /Online /Get-Packages` found 6 packages in `Staged` (not `Installed`) state on `win2022prod` -
+but all six are `Microsoft-OneCore-RasSstp-Api-Package`/`Microsoft-Windows-Networking-RemoteAccess-
+PowerShell-Base-Package` (RAS/VPN components), completely unrelated to the crashing apps. Confirmed
+`win2022-dc` has the **identical** 6 packages Staged too (same identities, same count) - this is
+normal baseline Windows Server 2022 state, not a defect. The classic CBS package-servicing model
+doesn't even track AppX/MSIX packages like `StartMenuExperienceHost` in the first place, so this
+mechanism was never going to explain the crash. Closed.
+
+While pulling this, also captured `Get-Acl` on the two implicated packages' folders as a quick
+supplementary check (the research plan's Step 3) - and this is where the real signal was.
+
+### Step 4: ACL/security-descriptor comparison - CONFIRMED, with a decisive, direct proof, not just a plausible correlation
+
+**The initial signal**: `Get-Acl` on `C:\Windows\SystemApps\Microsoft.Windows.StartMenuExperienceHost_
+cw5n1h2txyewy` showed dramatically different ownership and permissions between the two machines:
+
+| | `win2022-dc` (works) | `win2022prod` (broken) |
+|---|---|---|
+| Owner | `NT SERVICE\TrustedInstaller` | `NT AUTHORITY\SYSTEM` |
+| `TrustedInstaller` ACE | `FullControl` (present) | **absent** |
+| `Everyone` ACE | **absent** | `FullControl` (present) |
+| Overall shape | Full standard Windows-hardened ACL (CREATOR OWNER, SYSTEM/Administrators Modify, Users/AppPackages ReadAndExecute, TrustedInstaller FullControl) | Simplified to almost nothing beyond a blanket `Everyone: FullControl` |
+
+**Confirmed systemic, not folder-specific**: `C:\`, `C:\Windows\System32`, and `C:\Windows\SystemApps`
+(the parent folder) all show the identical broken pattern (`Everyone: FullControl`, missing
+`TrustedInstaller` protection) on `win2022prod` - the same paths are properly TrustedInstaller-
+protected on `win2022-dc`. This is a whole-volume issue, not something specific to the four crashing
+packages.
+
+**The one clean, telling exception, which pointed straight at the mechanism**: `StartMenuExperienceHost.
+exe` **the file itself** (already replaced by today's earlier Windows Update test) now has a fully
+correct ACL - `Owner: NT SERVICE\TrustedInstaller`, proper `TrustedInstaller: FullControl` and
+`ReadAndExecute` entries for SYSTEM/Administrators/Users/AppPackages, **no** `Everyone` grant. Windows
+Update's own TrustedInstaller-driven installer writes through the real Windows kernel NTFS path and
+correctly re-establishes the proper security descriptor for any file it directly replaces - but this
+does nothing for the *surrounding* folder tree, which was broken once, at `wimapply` time, and never
+touched again. **This is the missing piece from "the cheap test" entry above**: it explains precisely
+why patching the file's *content* left the crash unchanged - the file's own ACL was in fact fixed by
+that update, but its parent folder (and the rest of the volume) was not, and evidently that's what
+matters for DCOM/AppX activation.
+
+**Confirmed the actual mechanism directly, not just inferred it from ntfs-3g's own documentation**:
+`image-apply/apply-image.sh` mounts the target NTFS partition via `mount -t ntfs-3g -o uid=$(id -u),
+gid=$(id -g)`. Per `mount.ntfs-3g`'s own documentation (confirmed via direct research, not assumed):
+**"Setting uid/gid silently disables the permissions option"** - the one ntfs-3g option that actually
+enables real Windows ACL/security-descriptor read-write support. Then confirmed this empirically,
+directly, using wimlib's own tooling rather than stopping at documentation: `wimlib-imagex apply`
+has (per its own `--help`) `--no-acls`/`--strict-acls` flags, implying it *does* attempt to apply
+ACLs by default. Built a disposable scratch disk (`partition-disk.sh server2022`, this project's own
+existing tooling, torn down afterward - no real build disk touched), mounted its NTFS partition with
+the exact same `uid=`/`gid=` convention `apply-image.sh` uses, and ran a real `wimlib-imagex apply ...
+--strict-acls` against it:
+
+```
+[ERROR] Extraction backend does not support security descriptors!
+ERROR: Exiting with error code 68:
+       The requested operation is unsupported.
+```
+
+**This is a direct, unambiguous confirmation, not a correlation**: wimlib itself reports it cannot
+write security descriptors against this exact mount configuration. Without `--strict-acls` (this
+project's actual, current invocation, unchanged), wimlib does not surface this as an error at all -
+it silently proceeds, and every single file in the applied image ends up with whatever the FUSE/
+ntfs-3g layer's own fallback permission scheme produces instead of its real, WIM-captured Windows
+security descriptor. That fallback is exactly the "`Everyone: FullControl`, wrong owner, no
+`TrustedInstaller` protection" pattern observed live on every affected path.
+
+**Investigated whether wimlib has a working alternative and found a real, distinct code path, not yet
+confirmed end-to-end**: pointing `wimlib-imagex apply` at the raw partition device directly
+(`/dev/nbd0p3`, not the FUSE-mounted directory) triggers a genuinely different internal code path -
+its own log output changes shape entirely (`"Applying image 2 ... to NTFS volume /dev/nbd0p3"`,
+`"Ignoring extended attributes of 11566 files"` rather than the FUSE-mount run's `FILE_ATTRIBUTE_*`
+warnings) - this is wimlib's own built-in direct-NTFS-volume write capability (linked-in `libntfs-3g`,
+bypassing the kernel FUSE mount and its `uid=`/`gid=` limitation entirely). It failed here only on
+`Permission denied` trying to open the raw block device without root - this project's own
+`tools/sudoers-windows-auto-build-pipeline` **deliberately excludes** `wimlib-imagex` from passwordless
+root, with its own header comment explaining why: wimapply "run[s] as the normal user against
+nbd-mounted partitions created with uid=/gid= mount options, so they never need root at all." That
+was a real, reasonable simplicity/permission-scoping tradeoff at the time - and is now understood to be
+the direct cause of this bug. **Not yet tested**: whether the direct-NTFS-volume apply mode, run as
+root, actually produces correct security descriptors - genuinely the next thing to confirm, requires
+either an interactive sudo password or a deliberate, reviewed sudoers change, neither of which this
+session had standing to do unilaterally.
+
+### What this fully explains, and what it doesn't yet
+
+Explains: why the crash is 100% deterministic (a structural, one-time misconfiguration baked in at
+apply time, not a race); why it's systemic across a small, fixed family of AppX/DCOM-activation-
+sensitive components rather than "everything" (most of Windows tolerates a wrong ACL silently; AppX's
+own packaged-COM activation apparently does not); why `win2022-dc` was never affected (real Setup.exe-
+driven installs write through the Windows kernel's own NTFS driver, never through this project's
+Linux-side FUSE mount); why file-hash/StateRepository/registration-data comparisons all came back
+identical (none of those capture NTFS security descriptors); and why today's earlier Windows Update
+test failed to fix it (it only corrects the ACL of files it directly rewrites, never the surrounding
+tree).
+
+**Does not yet confirm**: that fixing the ACL is *sufficient* to fix the crash - that's still an
+inference from strong circumstantial fit (0xc000027b's own documented association with "misconfigured
+registry or file permissions"), not something directly tested end-to-end yet. The direct-NTFS-volume
+apply mode's actual output ACLs were never observed (the test errored on `Permission denied` before
+writing anything). A real fix-and-retest is the next concrete step, not yet attempted.
+
+### Stopping place
+
+- Both `win2022prod` and `win2022-dc` were shut down cleanly (`Stop-Computer -Force` over WinRM,
+  confirmed `shut off`) during this session; the scratch ACL-test disk was fully torn down (`qemu-nbd
+  -d`, file deleted) - `lsblk` confirms all `/dev/nbd*` at 0B, no mounts remain under
+  `/tmp/win-build-mnt`.
+- `STARTMENU_DCOM_ROOT_CAUSE_RESEARCH_PLAN.md` is being updated alongside this entry to reflect this
+  finding and propose next steps - see that document for the remediation-side discussion (the direct-
+  NTFS-volume apply mode is the leading candidate, but needs the root-permission question resolved
+  first, and needs its actual output ACLs verified before being trusted).
+- Nothing in `image-apply/`'s real scripts was changed - this entire session was diagnostic only,
+  using a disposable scratch disk, per the explicit "write up a plan, review before acting" framing
+  this investigation is operating under.
+
+---

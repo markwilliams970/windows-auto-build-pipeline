@@ -1,6 +1,10 @@
 # Start Menu / DCOM-activation crash: research pass and next-step plan
 
-**Status: research done, nothing implemented. For review before any action is taken.**
+**Status: ROOT CAUSE CONFIRMED as of 2026-08-24 (see "UPDATE" section at the end of this document).
+Remediation not yet implemented — for review before any action is taken.** The investigation steps
+below (originally proposed, not yet run) were executed per direct instruction; three were ruled out
+and the fourth found and directly confirmed the actual cause. Read the update section first — it
+supersedes this document's original "ranked next steps" list.
 
 This document is the direct output of a research-first pass requested after the live Windows Update
 experiment (`PHASE3_ENGINEERING_LOG.md`'s "the cheap test" entry, 2026-08-24) refuted Hypothesis 6.
@@ -247,3 +251,102 @@ appropriate for a single focused session once reviewed.
    check if that's judged more likely than the clock-accuracy check).
 3. Confirm no objection to another live boot cycle (steps 1-2, and possibly 4) before proceeding —
    same "one QEMU boot at a time" discipline as every other session.
+
+---
+
+## UPDATE (2026-08-24): root cause confirmed. This section supersedes the plan above.
+
+The four steps above were executed in order, per direct instruction to proceed on the
+`0xc000027b`/`STATUS_INVALID_VIEW_SIZE` lead. Full evidence trail is in `PHASE3_ENGINEERING_LOG.md`'s
+matching entry ("ROOT CAUSE CONFIRMED..."); this section summarizes the outcome and the actual
+decision now in front of you.
+
+### Results of the four steps
+
+1. **Clock accuracy — ruled out.** Guest clock matched host time to within a second at first
+   reachability, correctly configured as UTC.
+2. **Fresh crash-signature re-check — informative.** `StartMenuExperienceHost.exe` now also throws
+   `0xc000027b` (it threw `0xc0000409` before the Windows Update test changed the binary);
+   `SearchApp.exe` remains consistent at `0xc000027b`. Both apps now converge on the same exception
+   class.
+3. **CBS staged-package state — ruled out.** The only `Staged` packages on either machine are
+   unrelated RAS/VPN components, identical on both — AppX packages aren't even tracked by this
+   mechanism.
+4. **ACL/security-descriptor check — CONFIRMED, directly, not by inference.**
+
+### The confirmed root cause
+
+`image-apply/apply-image.sh` mounts the target Windows partition with
+`mount -t ntfs-3g -o uid=$(id -u),gid=$(id -g)`. Per ntfs-3g's own documentation, `uid=`/`gid=`
+**silently disables** the `permissions` option — the one thing that makes ntfs-3g actually read/write
+real Windows security descriptors (ACLs, ownership) rather than synthesizing a generic POSIX-style
+permission view. `wimlib-imagex apply`, run against this mount without its `--strict-acls` flag (this
+project's current, unmodified invocation), never surfaces this as an error — it silently proceeds, and
+every file in the image ends up with whatever ntfs-3g's fallback scheme produces instead of its real
+WIM-captured security descriptor.
+
+**Proven directly, not just inferred**: re-running `wimlib-imagex apply ... --strict-acls` against a
+disposable scratch disk, mounted with this project's exact `uid=`/`gid=` convention, fails immediately
+with wimlib's own error: `"Extraction backend does not support security descriptors!"` This is
+wimlib self-reporting the exact gap the documentation predicts.
+
+**Live comparison confirms the resulting damage is real, systemic, and matches the crash exactly**:
+`C:\`, `C:\Windows\System32`, `C:\Windows\SystemApps`, and the individual crashing packages' own
+folders all carry a collapsed `Everyone: FullControl` ACL with no `TrustedInstaller` protection on
+every `windows-auto-build-pipeline` build checked, versus proper TrustedInstaller-hardened ACLs on
+`win2022-dc` (built via real Setup.exe, which writes through the Windows kernel's own NTFS driver and
+never hits this gap). And — the detail that closes the loop on "the cheap test" entry's earlier
+mystery — the one file directly rewritten by that Windows Update test (`StartMenuExperienceHost.exe`
+itself) now has a **correct** ACL, because Windows Update's TrustedInstaller-driven installer sets it
+correctly on write; only the surrounding, untouched folder tree stayed broken. That is exactly why
+patching the file's bytes didn't fix the crash.
+
+### What's confirmed vs. what's still open
+
+**Confirmed**: the mechanism (wimlib silently drops security descriptors against this mount), and that
+it's systemic and matches every previously-unexplained fact (deterministic, unaffected by file-hash or
+registration-data fixes, `win2022-dc` immune by construction).
+
+**Not yet confirmed**: that repairing the ACLs actually fixes the crash. That's a strong, well-fitting
+inference (0xc000027b is independently documented as associated with "misconfigured registry or file
+permissions"), not a completed end-to-end test.
+
+**A real alternative fix path exists but is unverified**: pointing `wimlib-imagex apply` at the raw
+partition device directly (`/dev/nbd0p3`, not the FUSE-mounted directory) invokes a genuinely
+different internal code path — wimlib's own built-in direct-NTFS-volume writer, bypassing the kernel
+FUSE mount (and its `uid=`/`gid=` limitation) entirely. This was reached and confirmed to take a
+different route (distinct log output: `"Applying image 2 ... to NTFS volume /dev/nbd0p3"`), but failed
+on `Permission denied` — this mode needs to open the raw block device directly, which needs root, and
+this project's own `tools/sudoers-windows-auto-build-pipeline` deliberately excludes `wimlib-imagex`
+from passwordless root (its own header comment explains the FUSE-mount approach was chosen
+specifically to avoid wimapply ever needing root — a real, reasonable tradeoff at the time, now
+understood to be the actual cause of this bug). **Whether this mode produces correct ACLs when
+actually given root was never observed** — the test errored before writing anything.
+
+### Decision needed: two real remediation paths, neither implemented
+
+1. **Switch `apply-image.sh` to wimlib's native direct-NTFS-volume apply mode** (target the raw
+   partition device, not a FUSE-mounted directory). Architecturally the more correct fix — restores
+   the WIM's own real captured security descriptors rather than approximating them. Requires:
+   - Granting `wimlib-imagex` scoped, reviewed `sudo` access in
+     `tools/sudoers-windows-auto-build-pipeline` (currently deliberately absent) — a real, visible
+     security-posture change for this project, not a trivial edit.
+   - Confirming the resulting ACLs are actually correct once run as root (untested).
+   - Checking whether this mode changes anything else about the apply (timing, the `--wimboot`/
+     `--unix-data` flag interactions, whether `sgdisk`/`mkntfs`'s existing partition layout is
+     compatible with wimlib opening the partition directly while nothing else has it mounted).
+2. **A targeted, scoped post-apply ACL fixup** (e.g. `icacls`, applied via `FirstLogonCommands` or an
+   offline step, to a known-good reference ACL captured from `win2022-dc` — only for the specific
+   paths implicated, not a system-wide reset). Lower architectural purity, but avoids the sudo/root
+   question entirely. **Explicitly not the same as `secedit /configure /cfg defltbase.inf`** — research
+   during this pass found Microsoft's own documentation states that mechanism is unsupported and can
+   destabilize the OS for exactly this "restore the Setup-established security baseline" purpose,
+   because Setup's real baseline is `defltbase.inf` *plus* installation-time state that has "no
+   supported process to replay." A scoped, narrow `icacls` fix on just the implicated paths sidesteps
+   that specific unsupported territory, but is a narrower, more manual fix than path 1 and would need
+   its own reference-ACL capture and verification.
+
+Neither path has been attempted. This is the actual decision point for when you're back — which path
+to pursue (or whether to scope a quick empirical test of path 1 first, given how close this session
+got to actually running it), and whether the sudo/permissions-scope tradeoff in path 1 is worth taking
+now that its cost (this exact bug) is fully understood.
