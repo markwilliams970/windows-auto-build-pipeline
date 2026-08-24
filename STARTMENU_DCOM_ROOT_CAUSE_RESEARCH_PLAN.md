@@ -350,3 +350,39 @@ Neither path has been attempted. This is the actual decision point for when you'
 to pursue (or whether to scope a quick empirical test of path 1 first, given how close this session
 got to actually running it), and whether the sudo/permissions-scope tradeoff in path 1 is worth taking
 now that its cost (this exact bug) is fully understood.
+
+---
+
+## UPDATE 2 (2026-08-24): path 1 attempted - the ACL write itself works, but surfaced a new,
+## unresolved boot regression. Current working theory, not yet confirmed.
+
+Path 1 (native NTFS-volume `wimlib-imagex apply`) was scoped, a sudoers rule installed, and
+`image-apply/apply-image.sh` rewritten to use it — full detail in `PHASE3_ENGINEERING_LOG.md`'s
+matching entry. **The ACL fix itself is confirmed working**: a real test build's apply step completed
+cleanly under `--strict-acls` with no error, where the old FUSE-mounted path failed immediately.
+
+**But the resulting disk does not reliably boot.** Two boot attempts on the identical, untouched disk
+produced two different failures — a clean `INACCESSIBLE_BOOT_DEVICE` BSOD once, an indefinite hang at
+the firmware splash (no BSOD at all) on a retry. Offline diagnosis found nothing wrong with `viostor.
+sys`'s content, the `DriverDatabase` registry entries, the BCD store, or NTFS volume health — the
+actual cause is not yet identified.
+
+**Current working theory, stated for the record, not yet confirmed**:
+
+> `make-bootable.sh` still writes `viostor.sys` and the `SYSTEM` hive edits through the old `ntfs-3g
+> uid=/gid=` FUSE mount, onto a volume `apply-image.sh` just wrote via a completely different
+> mechanism (wimlib's own native NTFS-3G library instance) — a newly-introduced interaction between
+> two different NTFS write paths touching the same volume that's never been exercised together before
+> today.
+
+This is the leading suspicion because it's the one genuinely new variable: `apply-image.sh` changed,
+`make-bootable.sh` did not, and the two now touch the same volume through different NTFS write
+mechanisms in the same build for the first time. **Not yet tested directly** — the concrete next step
+is isolating `make-bootable.sh`'s own driver-copy/hive-merge step and inspecting the volume's state
+(ACLs, `ntfsfix -n`, file hashes) immediately before and after *that specific step*, rather than only
+after the full sequence has already run and failed.
+
+Test disk (`image-apply/output/builds/server2022-20260824-140853.qcow2`) and the `acltest22` libvirt
+domain are both left in place for this next diagnostic pass. `build.sh` was not touched — this
+remediation attempt is not folded into the real pipeline and should not be treated as such until the
+boot regression is understood and resolved.
