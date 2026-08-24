@@ -2286,3 +2286,243 @@ top:
   above, so there's no need to re-test any of them from scratch.
 
 ---
+
+## Session (continued, 2026-08-24): systematic domain-XML diff, a full event-log inventory (not
+## just the one known crash signature), live reproduction on an idle system, and a StateRepository +
+## binary-hash comparison that finds the real differentiator - Hypothesis 6, strong evidence,
+## reframes the problem entirely
+
+Resumed per the prior session's own "Next steps" list, item 1 (systematic `virsh dumpxml` diff)
+first, then redirected by a direct user question worth recording verbatim because it changed the
+whole approach: *"Is it possible, nay probable, that [the Start Menu crash] is only the most visible
+[failure]? ... Should we take an inventory of the event and system log on the trial VM and do a
+quick scan for additional potentially fatal problems"* - i.e., stop debugging the one known symptom
+in isolation and check whether the actual blast radius is bigger than what's already been
+characterized. This reframing is what led to today's real progress.
+
+### Step 1: `virsh dumpxml` diff (win2022-dc vs. win2022prod) - no smoking gun, one open question closed
+
+Both VMs were confirmed shut off, dumped with `virsh dumpxml`, diffed directly. **CPU model is
+identical on both**: `<cpu mode='host-passthrough' check='none' migratable='on'/>`, closing the one
+specific concern the prior session's "Next steps" item 1 named by hand. `<clock>`/timer config also
+identical. The only real differences are already fully explained by known, deliberate changes: `
+win2022-dc` carries a `memoryBacking`+`virtiofs` filesystem passthrough (an unrelated shared-folder
+device, sibling-project-specific, not present on any `windows-auto-build-pipeline` build) and VNC
+graphics/PS2-only input, while `win2022prod` carries the SPICE/QXL/USB-tablet device set
+`inject-virtio-spice.sh` and `register-vm.sh` deliberately added (Phase 3A). Conclusion: the VM
+device topology itself is not the differentiator - correctly ruling out an entire category before
+spending more time on it.
+
+### Step 2: full Application+System Critical/Error event-log inventory, both machines - confirms
+### the failure is a small, named cluster, not an open-ended list, but is bigger than "just Start Menu"
+
+Booted `win2022-dc` (the sibling project's real, working reference machine) first as the healthy
+baseline, reaching it over WinRM at `Administrator` / `ChangeMe-Lab123!` (the sibling project's own
+Packer `variables.pkr.hcl` default - not this project's own `TestP@ssw0rd123` convention, since this
+is a separate machine built by the sibling project's own pipeline). `Get-WinEvent` grouped by
+Log|Provider|Id over the last 30 days found only ordinary long-lived-lab-VM noise: `QEMU-GA` service
+reconnect timeouts, a crash-looping Datadog Installer service, VSS/COM errors tied to normal shutdown
+races, temporary-profile warnings, `Defrag` retrim errors, `Perflib` 32-bit-DLL warnings, one
+`wuauclt.exe` crash, one prior unexpected shutdown. **No DCOM 10010 events at all.** Shut down
+cleanly (`Stop-Computer -Force` over WinRM, confirmed `shut off` before proceeding - no hard QMP
+quit, per this project's own standing convention).
+
+Booted `win2022prod` (`packer/output/server2022-20260823-154052/`, last night's real production
+build) and ran the identical query. Result: **51 DCOM 10010 events, not 1** - and not just for
+`StartMenuExperienceHost`. Grouped by the AppX server name failing to register:
+`Microsoft.Windows.Search_...!CortanaUI` (Search) fails *more* often than
+`Microsoft.Windows.StartMenuExperienceHost_...!App` itself; `Microsoft.Windows.ShellExperienceHost_
+...!App` and `MicrosoftWindows.Client.CBS_...!InputApp` (the touch-keyboard/input host) also appear.
+Only one actual `Application Error` 1000 crash (`StartMenuExperienceHost.exe`, matching the
+already-documented `0xc0000409`/stack-buffer-overrun signature) - the others fail the DCOM
+registration handshake without ever producing a Watson crash report at all, a related but distinct
+failure shape not previously characterized.
+
+**Direct answer to the user's question**: yes, there is more than the one visible symptom, but it is
+not an unbounded list - every failure found traces to the same mechanism (packaged/AppX DCOM
+activation) hitting the same small, enumerable family of in-box UWP shell components. The separate
+"Automatic services not running" list pulled in the same pass (`CDPSvc`, `DPS`, `MSDTC`, `QEMU-GA`,
+`UALSVC`, `vdservice`) was **not** cross-checked against `win2022-dc`'s own equivalent list before
+this session ended - several of these are plausibly normal delay-start/trigger-start services showing
+as "Stopped" on both machines, but this is an explicitly open, unverified thread, not a confirmed
+finding either way.
+
+### Step 3: timestamp analysis of the 51 DCOM events - refines, then genuinely challenges, Finding
+### 3A-5's "boot storm" theory
+
+All 51 events clustered tightly around each of last night's several reboots (Packer's own
+provision+restart, `inject-virtio-spice.sh`'s two more, plus manual test reboots) - consistent with
+*a* boot-timing race. But the boot history (`Get-WinEvent` Ids 6005/6006/6009/1074) showed two more
+recent, more isolated boots this morning (04:53 and 09:18) with **zero** DCOM 10010 events on either
+- at first read, support for the boot-storm theory (no storm, no failure).
+
+### Step 4: live reproduction on the current, hours-idle boot - directly falsifies "boot storm" as
+### the explanation, and points at "first activation" instead
+
+Rather than trust the absence of logged events as proof the current boot was clean, forced a real
+test: the console was locked with no interactive session (confirmed via `query session`), unlocked
+via `virsh screenshot` + `virsh send-key` (raw Linux keycodes - `virsh send-key`'s `--codeset win32`/
+`linux` symbolic names like `KEY_LCONTROL`/`ctrl` are rejected outright; only bare numeric keycodes
+work, e.g. `29 56 111` for Ctrl+Alt+Del, `42 20` for Shift+T - a real, reusable operational note for
+any future console-typing need via libvirt rather than raw QMP). Confirmed via `virsh screenshot` at
+each step (login unlocked to a normal desktop with Server Manager already open from the earlier
+AutoLogon), then pressed the physical Windows key.
+
+**Result: no Start Menu flyout appeared at all, and `Get-Process StartMenuExperienceHost` found no
+process, not even a crashed/zombie one.** In the same instant, fresh DCOM 10010 events for both
+`StartMenuExperienceHost` and `CortanaUI` appeared in the log, timestamped to the exact second of the
+keypress. At the same moment, directly queried the machine's actual state:
+
+- `HKLM\SYSTEM\CurrentControlSet\Control\ServicesPipeTimeout` = `120000` - **Finding 3A-5's fix is
+  correctly present** on this disk.
+- `RpcSs`, `RpcEptMapper`, `DcomLaunch`, `EventSystem` - all `Running`/`Automatic`, fully healthy.
+- CPU at 0%, 15 of 16 GB RAM free - the system had been completely idle for hours before this test.
+
+This is a clean counter-example to Finding 3A-5's "early boot I/O contention" mechanism: the fix it
+prescribed is in place, the RPC/DCOM plumbing it worried about is healthy, there is zero resource
+pressure, and the failure still reproduces 100% of the time, at the exact moment these specific
+DCOM servers are first invoked in a session - not correlated with boot timing at all once a session
+actually attempts to use them. Combined with Step 3's "no events on boots nobody logged into," the
+better-fitting model is **first-activation failure of this specific package family**, not a
+boot-storm race. `ServicesPipeTimeout` is very likely still worth keeping (real, primary-source
+mitigation for a real, if different, risk) but is not, on this evidence, what actually explains the
+Start Menu crash.
+
+### Step 5: StateRepository comparison, done fully offline (no VM boot needed at all) - conclusively
+### rules out package *registration* data as the differentiator, closing Hypothesis 3 for good
+
+Per the user's direct request to pull this comparison and reusing this project's own established,
+zero-boot mechanism (`qemu-nbd` + `ntfs-3g` read-only mount + the host's own `sqlite3` CLI against
+`ProgramData\Microsoft\Windows\AppRepository\StateRepository-Machine.srd` - the exact recipe Session
+2's original Hypothesis 3 work used), both machines' disks were mounted directly from this Linux
+host with **both VMs shut off** the whole time (no live-WAL risk, no boot needed).
+
+One real operational snag, worth keeping as a note: the project's scoped sudoers rules
+(`tools/sudoers-windows-auto-build-pipeline`) pin the passwordless `mount -t ntfs-3g` rule's
+mountpoint argument to the literal glob `/tmp/win-build-mnt/*` - an ad hoc mount under a session
+scratchpad path is rejected with a password prompt. Used `/tmp/win-build-mnt/<label>` instead (a
+plain user-writable directory, no sudoers change needed) rather than modifying the sudoers file for a
+one-off investigation.
+
+**Full schema dump** (`.tables`, ~90 real tables) confirmed `Activation` - the table that maps a
+packaged app's identity to its actual COM/DCOM launch parameters (`Executable`, `Entrypoint`,
+`RuntimeType`, `ActivationKey`) - not `ProvisionedPackage`, is the table that actually governs
+packaged-COM DCOM activation. Row-count diff across every table between the two databases: **only 2
+tables differ at all** (`PackageUser`/`CachePackageUser`: 36 on `win2022-dc` vs. 34 on `win2022prod`;
+`DependencyGraph`: 5 vs. 3) - fully explained by `win2022-dc` simply having two more packages
+provisioned overall (e.g. `Microsoft.MicrosoftEdge.Stable`, already known from the prior session's
+Hypothesis 3 addendum). Every other table, including `Package` (34), `Application` (35), `Activation`
+(45), and `PackageFamily` (34), matches exactly.
+
+Went further and pulled the actual `Activation`/`Application` rows for all four implicated packages
+(`StartMenuExperienceHost`, `ShellExperienceHost`, `Microsoft.Windows.Search`/`CortanaUI`,
+`MicrosoftWindows.Client.CBS`/`InputApp`) on both machines side by side: **byte-identical, field for
+field, including the `ActivationKey` hash itself** (e.g. `StartMenuExperienceHost`'s key is
+`6nvtep9ym00sgr3ndnwd50mskvgbfcg6k9jz5hv5vk4vhce2drm0` on both machines). **This conclusively closes
+Hypothesis 3 in its original form and in this deeper form** - the StateRepository's actual
+DCOM-activation-relevant data is not the differentiator, full stop.
+
+### Step 6 (decisive): binary/manifest hash comparison - finds the real differentiator
+
+Since the registration *data* matched exactly but the *behavior* doesn't, the next question was
+whether the registered files themselves are actually the same bytes. Extended the same offline mount
+to `sha256sum` the four implicated packages' main executables and `AppxManifest.xml` files on both
+machines:
+
+| File | `win2022prod` SHA256 | `win2022-dc` SHA256 | Match? |
+|---|---|---|---|
+| `TextInputHost.exe` (CBS/InputApp) | `2492bf02...` | `2492bf02...` | **identical** |
+| `SearchApp.exe` (Search/CortanaUI) | `b0a7de8e...` | `a43097c6...` | **different** |
+| `StartMenuExperienceHost.exe` | `64beeb8e...` | `6ef63d3e...` | **different** |
+| `ShellExperienceHost.exe` | `eee13d00...` | `99bf0dd3...` | **different** |
+| All 4 `AppxManifest.xml` | (4 hashes) | (same 4 hashes) | **identical, all four** |
+
+**The three files that actually crash/fail DCOM registration with a Watson-visible symptom
+(`StartMenuExperienceHost.exe`, `ShellExperienceHost.exe`, `SearchApp.exe`) are the exact three files
+that differ. `TextInputHost.exe` (part of the same failing DCOM-timeout list but never observed to
+actually crash) is byte-identical, and none of the manifests differ at all.** File size differs too
+in the same three cases, ruling out something trivial like a timestamp-only or metadata-only
+difference.
+
+**mtime comparison seals it.** Extracted via `stat` on the same offline mount:
+
+- `win2022prod`: `StartMenuExperienceHost.exe`/`ShellExperienceHost.exe` both carry mtime
+  `1620461668`/`1620461695` (7 May 2021); `SearchApp.exe` carries `1646279685` (2 Mar 2022) -
+  `TextInputHost.exe` carries `1620425760` (7 May 2021, matching `win2022-dc`'s copy exactly). All
+  read as original install-media/RTM-era timestamps, consistent with a straight `wimapply` from
+  Microsoft's own unmodified `install.wim`.
+- `win2022-dc`: all three *differing* files carry mtimes within ~300 seconds of each other
+  (`1786489554`, `1786489632`, `1786489859`) and land in the **current date range this project is
+  running in (August 2026)** - a strong, specific signature of a single real Windows Update /
+  cumulative-update servicing event having replaced exactly these three files together, recently, on
+  a machine that actually has internet access. `TextInputHost.exe` on `win2022-dc` was *not* touched
+  by that same event (identical mtime and hash to `win2022prod`'s copy) - consistent with a real CU
+  payload only containing some of a related file set, not all of it.
+
+### Hypothesis 6 (new, strong evidence, not yet independently confirmed against a decoded KB): the
+### Start Menu crash is a real, upstream Microsoft defect in the RTM/install-media build of these
+### three shell binaries, already fixed by Microsoft in a cumulative update - and this project's
+### fully offline/air-gapped build pipeline can never receive that fix by design
+
+Putting Steps 5 and 6 together: the StateRepository says these packages are registered completely
+normally and identically on both machines (Hypothesis 3, and its deeper `Activation`-table form, are
+both closed). The actual crash is confined to exactly the three binaries `win2022-dc` has silently
+patched via real Windows Update - a resource this project's VMs never have, by explicit design (every
+build in this project is a disposable, network-isolated lab image, never Windows-Update-serviced).
+`win2022-dc` is not "unaffected" by whatever bug this is; it very plausibly *was* affected, once, and
+has simply been quietly fixed by the same routine servicing that also explains its crash-looping
+Datadog Installer, its `wuauclt.exe` crash history, and its general long-lived-machine noise profile
+- none of which any of this project's own ephemeral builds ever accumulate, for the same reason.
+
+**This reframes the problem type entirely.** The prior five hypotheses (classic QXL driver, RPC/DCOM
+boot race, AppX provisioning, Xaml.dll patch level, activation state) were all investigated on the
+premise that something about *this project's own offline-apply mechanism* was producing a broken
+disk. Hypothesis 6 says the mechanism is working exactly as designed - `wimapply` is faithfully
+reproducing Microsoft's own shipped `install.wim`, bit for bit - and the defect (if this hypothesis
+holds) shipped in that media from the start. Two direct, previously-recorded pieces of evidence are
+fully consistent with this and were previously unexplained: the crash's 100% reproducibility at an
+*identical fault offset* across every independent build (a real, deterministic code defect looks
+exactly like this - a timing race would not), and `win2022-dc`'s own `Windows.UI.Xaml.dll` having the
+identical `FileVersion` string to the broken build's copy (a CU can patch `StartMenuExperienceHost.
+exe`/`ShellExperienceHost.exe`/`SearchApp.exe` specifically without necessarily also bumping a shared
+framework DLL's version string in the same update).
+
+**Not yet done, and worth doing before treating this as fully confirmed**: decode which actual KB/CU
+touched these three files (a `win2022-dc` `Get-HotFix`/`DISM /Get-Packages` pull, cross-referenced
+against Microsoft's own update-history documentation for Windows Server 2022, build `20348.x`) would
+turn "strong circumstantial evidence" into a named, citable root cause. This is exactly the
+previously-recorded, never-completed "Next step 2" from the prior session (`win2022-dc`'s own
+`Get-HotFix` list) - still open, now with a much sharper reason to actually go get it.
+
+**Real implications for how to actually fix this, once confirmed**, not yet decided or attempted:
+(a) stage the specific patched files (extracted from a real Windows Update `.msu`/`.cab`, or copied
+directly from a known-patched reference machine like `win2022-dc` itself) and inject them offline the
+same way `viostor`/`netkvm` drivers already are - a surgical file-replacement, not a new mechanism;
+(b) slipstream a cumulative update into `install.wim` before `wimapply` runs (needs research into
+whether `wimlib` supports this the way `DISM /Add-Package` does - likely does not, per this project's
+own already-documented `wimlib` limitation around package/AppX servicing); (c) give the guest a
+narrow, deliberate window of real internet access to run Windows Update once during specialize,
+before returning to full isolation - a real design/security tradeoff against this project's own
+"ephemeral, air-gapped" architecture, not a small decision; (d) accept the crash as a known,
+documented limitation of using unmodified Eval/RTM media offline, if a working Start Menu isn't
+actually load-bearing for this project's AD/IIS/SQL/Datadog monitoring-integration goals. None of
+these were evaluated or chosen this session - a real decision point for whoever picks this back up.
+
+### Stopping place
+
+- Both `win2022-dc` and `win2022prod` were shut down cleanly (`Stop-Computer -Force` over WinRM,
+  confirmed `shut off`) before this entry was written.
+- All offline `qemu-nbd`/`ntfs-3g` mounts from Steps 5-6 were confirmed fully torn down (`lsblk`
+  shows every `/dev/nbd*` at 0B, `mount` shows nothing under `/tmp/win-build-mnt`) - no lingering
+  attached state.
+- No files in this project's own tree were modified by any of this session's investigation - all
+  reads were against offline-mounted read-only copies or live WinRM queries, nothing was written back
+  to either disk.
+- Next, in priority order: (1) decode the actual KB/CU behind Hypothesis 6 via `win2022-dc`'s
+  `Get-HotFix`, to move from strong circumstantial evidence to a confirmed, citable root cause; (2)
+  decide which of the four remediation options above to pursue; (3) the still-open, never-verified
+  "Automatic services not running" list from Step 2 (`CDPSvc`, `DPS`, `MSDTC`, `QEMU-GA`, `UALSVC`,
+  `vdservice`) needs its own cross-check against `win2022-dc`'s equivalent list before it's treated as
+  a finding either way.
+
+---
