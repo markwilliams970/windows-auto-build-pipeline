@@ -2897,3 +2897,105 @@ writing anything). A real fix-and-retest is the next concrete step, not yet atte
   this investigation is operating under.
 
 ---
+
+## Session (continued, 2026-08-24): remediation attempt - sudoers rule scoped and installed,
+## `apply-image.sh` switched to wimlib's native NTFS-volume writer, and a real test build run.
+## The ACL fix itself works; the resulting disk hit a new, unresolved boot regression
+
+Before this, `win2022prod`'s disk (`packer/output/server2022-20260823-154052/`) was confirmed to have
+given up everything useful for the ACL investigation and was deleted along with its libvirt domain
+(`virsh undefine --nvram`) - ~22GB reclaimed, no further diagnostic value remained once it was
+patched by the Windows Update test (no longer a clean baseline) and the same information was already
+fully captured in the prior entry.
+
+### Sudoers rule scoped and installed
+
+`tools/sudoers-windows-auto-build-pipeline` gained a new rule granting `markw` passwordless root for
+exactly one command shape: `wimlib-imagex apply <this project's wim-cache>/*/install.wim * /dev/nbd
+[0-9]*p3 --strict-acls`. Design choices: the WIM path is pinned to this project's own cache directory
+(never an arbitrary file); the OS subfolder and image index are left as wildcards since
+`validate_os()`/`os_wim_index()` in `common.sh` already constrain them before this ever runs; the
+device is pinned to `/dev/nbd[0-9]*p3` only, matching every other rule in the file. **`--strict-acls`
+is a required literal suffix, not left wildcard-open like most other rules' trailing flags** -
+deliberately, so that if this ever silently stopped working, the build would hard-fail instead of
+quietly reintroducing the exact bug this rule exists to fix. Validated with `visudo -cf` (clean), then
+installed to `/etc/sudoers.d/windows-auto-build-pipeline` by the user directly (this session had no
+standing to run the privileged install itself) and confirmed live via `sudo -n -l`.
+
+### `apply-image.sh` redesigned around the new capability
+
+Net simplification, not just an addition: the `ntfs-3g` FUSE mount (`uid=`/`gid=`) is gone entirely
+from this script, along with `WIN_MNT`/`MNT_ROOT` and the mount/unmount cleanup logic - nothing in this
+script needs them anymore. `wimlib-imagex apply` now runs via `sudo` directly against `${NBD_DEV}p3`
+with `--strict-acls`. Header comment rewritten to explain why, pointing at this log's own "ROOT CAUSE
+CONFIRMED" entry rather than leaving the change unexplained. Confirmed each of the three downstream
+scripts (`apply-unattend.sh`, `make-bootable.sh`) independently does its own full nbd-attach/mount/
+cleanup cycle rather than depending on any state `apply-image.sh` leaves behind, so this change is
+fully isolated - verified by reading each script, not assumed.
+
+### Real test build: the ACL write itself is confirmed working
+
+Ran the full pre-Packer sequence by hand against a fresh disk (`image-apply/output/builds/
+server2022-20260824-140853.qcow2`): `partition-disk.sh` → the updated `apply-image.sh` → `make-
+bootable.sh` → `apply-unattend.sh`. The apply step's own log confirms it took the native-writer code
+path this time, not the old FUSE-mount path (`"Applying image 2 ... to NTFS volume /dev/nbd0p3"`,
+matching yesterday's scratch-disk diagnostic exactly) and **completed with no `--strict-acls` error** -
+"Done applying WIM image." This is a real, positive result on its own: given root access via the new
+sudoers rule, wimlib's native NTFS-volume writer can successfully write real Windows security
+descriptors where the old FUSE-mounted path categorically could not.
+
+### The disk doesn't reliably boot - a new, unresolved regression
+
+Registered the disk (`register-vm.sh`, one real snag: it must be given an *absolute* qcow2 path -
+libvirt's own qemu process doesn't share the invoking shell's cwd, so the tool's default relative-path
+resolution silently produced a domain XML libvirt couldn't open; fixed by re-registering with an
+absolute path) and booted it. **First attempt: a clean `INACCESSIBLE_BOOT_DEVICE` BSOD** - the exact
+failure class the `viostor` DriverDatabase-injection mechanism exists to prevent. Destroyed the domain
+and re-booted the *same, untouched* disk to check reproducibility: **second attempt didn't even reach
+a BSOD - it hung indefinitely at the TianoCore firmware splash**, loading-dots animation stopped, no
+further progress after 90+ seconds. Two different failure modes on one identical, unmodified disk
+across two attempts - a real signal of something non-deterministic, not just "one bad boot" to retry
+past.
+
+**Offline diagnosis found nothing wrong with any of the obvious candidates**, all checked directly
+against the actual broken disk, not assumed:
+- `viostor.sys` content: `sha256sum` matches the cached driver reference exactly.
+- `DriverDatabase` registry entries (`hivexregedit --export` against the `SYSTEM` hive): both
+  `VEN_1AF4&DEV_1001&REV_00` (legacy) and `VEN_1AF4&DEV_1042&REV_01` (modern) present, correctly
+  formatted, `"guestor.inf"` value name confirmed as the intentional virt-v2v-derived synthetic label
+  (not a typo - checked `tools/gen-viostor-ddb-reg.py`'s own source before flagging it as a concern).
+- BCD store on the ESP (`\EFI\Microsoft\Boot\BCD` and the `\Recovery` copy): present, with the full
+  expected `bootmgfw.efi`/localization/font tree alongside it.
+- NTFS volume health (`sudo ntfsfix -n`, this project's own established diagnostic for exactly this
+  class of question): clean - `$MFT`/`$MFTMirr` processed successfully, alternate boot sector OK, no
+  dirty bit.
+
+**Root cause not identified.** The leading (unconfirmed) suspicion: `make-bootable.sh` still writes
+`viostor.sys`/`netkvm.sys` and merges the `SYSTEM` hive edits through the *old* `ntfs-3g uid=/gid=`
+FUSE mount, immediately after `apply-image.sh` wrote the rest of the volume through a completely
+different mechanism (wimlib's own native, linked-in NTFS-3G library instance, not the kernel FUSE
+driver) - a combination of two different NTFS write paths touching the same volume in the same build,
+never exercised together before today. Not yet tested directly (e.g., re-running `make-bootable.sh`'s
+driver-copy step in isolation and checking the file/volume state immediately before and after).
+
+### Stopping place
+
+- The disk (`image-apply/output/builds/server2022-20260824-140853.qcow2`, ~8.7GB) is left in place,
+  not deleted, in case it's useful for further diagnosis - it currently sits in the post-`apply-
+  unattend.sh`, pre-first-real-boot state, having demonstrated the boot failure twice.
+- The `acltest22` libvirt domain was destroyed (stopped) after the second failed boot attempt; still
+  defined, not undefined, again in case it's wanted for another attempt.
+- All `qemu-nbd`/mount state from this session's own offline diagnosis was confirmed torn down
+  (`lsblk` all `/dev/nbd*` at 0B, no mounts under `/tmp/win-build-mnt`).
+- `image-apply/apply-image.sh` and `tools/sudoers-windows-auto-build-pipeline` remain local,
+  uncommitted changes as of this entry - **not yet safe to consider this remediation complete or to
+  fold into the real build pipeline** (`build.sh` was not touched and still uses the unmodified
+  scripts' own call sequence either way). The sudoers rule itself is installed and live on this host
+  regardless of git commit state, since that installation step is independent of the repo.
+- Next step, whenever this is picked back up: isolate whether `make-bootable.sh`'s own FUSE-mounted
+  driver-copy/hive-merge step is the actual interaction point, most directly by re-running just that
+  step against a disk `apply-image.sh` already wrote via the native writer and inspecting the volume's
+  state (ACLs, `ntfsfix -n`, file hashes) immediately before and after, rather than only after the full
+  sequence has already run and failed.
+
+---

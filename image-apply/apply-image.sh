@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 # Build step 4: apply the Windows image (wimlib) to the primary partition. No boot
-# required - wimlib-imagex apply writes files directly onto the offline-mounted NTFS
-# partition, the same "DISM /Apply-Image-equivalent" this project exists to use instead
+# required - wimlib-imagex apply writes files directly onto the offline NTFS partition
+# device, the same "DISM /Apply-Image-equivalent" this project exists to use instead
 # of a booted interactive installer.
 #
 # WIM image index per OS is independently verified in PHASE2_ENGINEERING_LOG.md
 # (Finding 0 for Server 2025, Session 12 Finding 42 for Server 2022, Session 13
 # Finding 43 for Windows 11) - see image-apply/lib/common.sh's os_wim_index().
+#
+# Applies directly to the raw nbd partition device (not an ntfs-3g-mounted directory)
+# with --strict-acls, via the sudo rule in tools/sudoers-windows-auto-build-pipeline.
+# PHASE3_ENGINEERING_LOG.md's "ROOT CAUSE CONFIRMED" entry (2026-08-24) traced the Start
+# Menu/DCOM-activation crash directly to the previous approach: mounting via ntfs-3g
+# with uid=/gid= (specifically so this step could run as the normal user) silently
+# disables ntfs-3g's own Windows ACL/security-descriptor support - confirmed directly by
+# re-running wimlib-imagex apply against that exact mount with --strict-acls, which
+# failed immediately with "Extraction backend does not support security descriptors!"
+# Applying straight to the block device instead invokes wimlib's own built-in
+# direct-NTFS-volume writer, a genuinely different code path (confirmed empirically -
+# distinct log output, "Applying image ... to NTFS volume /dev/nbdXp3" rather than the
+# FUSE-mount run's FILE_ATTRIBUTE_* warnings) that can actually restore real security
+# descriptors. --strict-acls is deliberately not optional here: if this ever silently
+# stopped working, the build should hard-fail rather than quietly reintroduce this bug.
 #
 # Usage: apply-image.sh <server2022|server2025|windows11> <target-qcow2-path>
 set -euo pipefail
@@ -24,7 +39,6 @@ WIN_ISO="$(os_win_iso "$OS")"
 [[ -f "$WIN_ISO" ]] || { echo "ERROR: $WIN_ISO not found in ISO_CACHE_DIR (${ISO_CACHE_DIR})" >&2; exit 1; }
 WIM_INDEX="$(os_wim_index "$OS")"
 
-MNT_ROOT="/tmp/win-build-mnt"
 WIM_CACHE_DIR="${REPO_ROOT}/image-apply/output/wim-cache/${OS}"
 INSTALL_WIM="${WIM_CACHE_DIR}/install.wim"
 
@@ -51,20 +65,15 @@ log "Attached as ${NBD_DEV}"
 sudo partprobe "$NBD_DEV"
 sleep 1
 
-WIN_MNT="${MNT_ROOT}/win"
-
 # Registered immediately after a successful attach, before anything else that could
-# fail - an error in a later command must still detach the nbd device.
+# fail - an error in a later command must still detach the nbd device. Nothing is
+# mounted in this script anymore (see header), so cleanup is just the nbd detach.
 cleanup() {
-  sudo umount "$WIN_MNT" 2>/dev/null || true
   sudo qemu-nbd -d "$NBD_DEV" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-mkdir -p "$WIN_MNT"
-sudo mount -t ntfs-3g -o uid="$(id -u)",gid="$(id -g)" "${NBD_DEV}p3" "$WIN_MNT"
-
-log "Applying ${OS}'s install.wim index ${WIM_INDEX} to ${WIN_MNT} (this takes ~14-15 minutes, per Finding 12/30)"
-wimlib-imagex apply "$INSTALL_WIM" "$WIM_INDEX" "$WIN_MNT"
+log "Applying ${OS}'s install.wim index ${WIM_INDEX} directly to ${NBD_DEV}p3 (this takes ~14-15 minutes, per Finding 12/30 - may differ slightly under wimlib's native NTFS writer, not yet measured)"
+sudo wimlib-imagex apply "$INSTALL_WIM" "$WIM_INDEX" "${NBD_DEV}p3" --strict-acls
 
 log "Image application complete: ${TARGET_QCOW2}"

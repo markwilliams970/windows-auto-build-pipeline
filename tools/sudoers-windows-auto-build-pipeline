@@ -57,6 +57,34 @@
 # ntfsinfo takes no device-modifying flags at all; ntfsfix's options are
 # limited to -b/-d/-n/-h/-V (see its own man page) - none of them can
 # target a path other than the pinned device argument.
+#
+# Update 4 (2026-08-24): reverses the "wimapply...never need[s] root at all"
+# claim in this file's own header - PHASE3_ENGINEERING_LOG.md's "ROOT CAUSE
+# CONFIRMED" entry traced the Start Menu/DCOM-activation crash directly to
+# that exact design choice. `wimlib-imagex apply` against an ntfs-3g mount
+# opened with uid=/gid= (this project's only mount mode, chosen specifically
+# so wimapply could run as the normal user) silently drops every file's real
+# Windows security descriptor - confirmed directly by re-running the same
+# apply with wimlib's own `--strict-acls` flag, which fails immediately with
+# "Extraction backend does not support security descriptors!" wimlib has a
+# separate, working code path for this: pointing `apply` at the raw nbd
+# partition device instead of a FUSE-mounted directory invokes its own
+# built-in direct-NTFS-volume writer (confirmed empirically - distinct log
+# output, "Applying image ... to NTFS volume /dev/nbd0p3" instead of the
+# FUSE-mount run's FILE_ATTRIBUTE_* warnings), which needs to open the block
+# device directly and therefore needs root the same way mkntfs/sgdisk do.
+# `--strict-acls` is pinned as a **required literal suffix**, not left
+# wildcard-open like most other rules' trailing flags - the whole point of
+# this rule is to guarantee any future silent regression back to dropped
+# ACLs fails loudly instead of quietly reintroducing this exact bug. The WIM
+# path is pinned to this project's own wim-cache directory (never an
+# arbitrary file); the OS subfolder and image index are left open since
+# they're expected to vary per build and are validated by validate_os()/
+# os_wim_index() in image-apply/lib/common.sh before this ever runs, not by
+# sudoers itself. Not yet confirmed whether the direct-NTFS-volume apply
+# mode actually produces correct ACLs when run as root - this rule only
+# grants the permission needed to test that; the pipeline scripts themselves
+# (image-apply/apply-image.sh) have not been changed to use it yet.
 
 markw ALL=(root) NOPASSWD: /usr/sbin/sfdisk -o * -l /dev/nbd[0-9]*
 #
@@ -97,3 +125,7 @@ markw ALL=(root) NOPASSWD: /usr/bin/ntfsfix * /dev/nbd[0-9]*
 # rule alongside the flagged one, rather than forcing every caller to
 # always pass a flag just to satisfy the glob.
 markw ALL=(root) NOPASSWD: /usr/bin/ntfsfix /dev/nbd[0-9]*
+
+# See "Update 4" above. --strict-acls is a required literal suffix, not a
+# wildcard-open trailing flag - by design.
+markw ALL=(root) NOPASSWD: /usr/bin/wimlib-imagex apply /home/markw/Documents/Projects/windows-builds/windows-auto-build-pipeline/image-apply/output/wim-cache/*/install.wim * /dev/nbd[0-9]*p3 --strict-acls
