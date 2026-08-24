@@ -2526,3 +2526,117 @@ these were evaluated or chosen this session - a real decision point for whoever 
   a finding either way.
 
 ---
+
+## Session (continued, 2026-08-24): ISO-provenance check for Hypothesis 6 - is the cached Server
+## 2022 media just old? Confirmed old, confirmed not a caching mistake, and confirmed there is no
+## newer official ISO to switch to
+
+Prompted directly by the user, skeptical of the ISO's own currency after a quick informal online
+search of their own: *"Is it possible that `2022-SERVER_EVAL_x64FRE_en-us.iso` in the iso cache is
+just really old? ... Can we find which image the sister project's packer build might have come
+from? And use that as a basis point to search online for the most current ISO?"* Answered with real
+evidence at each step, not assumption, per this project's own "verify before trusting" standard.
+
+### Step 1: confirmed `win2022-dc` was built from the exact same ISO file, not a different/older one
+
+Read the sibling project's own `packer/locals.pkr.hcl`: its pinned Server 2022 `iso_checksum` is
+`sha256:3e4fa6d8507b554856fc9ca6079cc402df11a8b79344871669f0251535255325` - **byte-identical** to
+this project's own `ISO_CACHE_INVENTORY.md` entry for `2022-SERVER_EVAL_x64FRE_en-us.iso`. Cross-
+checked against `win2022-dc`'s own build history: the sibling repo's commit introducing its first
+successful Server 2022 build (`d31ab04`, containing the "`win2022-dc.qcow2` at 5.06GB" build-completion
+log) is dated 2026-07-22 - the same week the shared `../iso_cache/` copy was downloaded
+(`2022-SERVER_EVAL_x64FRE_en-us.iso.sha256` sidecar dated 2026-07-22T07:59, per the currently-cached
+file's own timestamp). **This closes off a real alternative explanation for Hypothesis 6**: the
+difference between `win2022-dc` (working) and `win2022prod`/every other build from this project
+(broken) is not because `win2022-dc` started from newer/different install media - it started from the
+literal same file, confirmed by checksum, not inference.
+
+### Step 2: pinned down exactly what the cached ISO actually is
+
+Extracted `sources/install.wim` from the cached ISO (`7z e`, this project's own established
+technique) and read its real metadata with `wimlib-imagex info` rather than guessing from the
+filename (which carries no build number at all, unlike the Server 2025/Windows 11 fwlinks - noted as
+a real caution back in `ISO_CACHE_INVENTORY.md`'s own "Re-download links" section):
+
+```
+Edition ID:              ServerStandardEval
+Build:                   20348
+Service Pack Build:      587
+Creation Time:           Thu Mar 03 04:02:13 2022 UTC
+```
+
+So the cached ISO is **build 20348.587**, packaged **2 March 2022** - a real, datable "refresh"
+respin of Server 2022's media (RTM itself was 20348.169, August 2021), not literally day-one RTM, but
+frozen at whatever cumulative-update level existed as of that March 2022 snapshot.
+
+Then read each disk's own actual servicing level directly, offline, via `hivexregedit` against each
+disk's `SOFTWARE` hive (`\Microsoft\Windows NT\CurrentVersion`, no boot needed - same
+zero-boot-required mechanism as Steps 5-6 in the prior entry):
+
+| Disk | `CurrentBuild` | `UBR` (decimal) | Effective build |
+|---|---|---|---|
+| `win2022prod` (this project's own build) | 20348 | 587 | **20348.587** - matches the cached ISO exactly, zero servicing since install, exactly as expected for an air-gapped build |
+| `win2022-dc` (sibling project's reference machine) | 20348 | 5499 | **20348.5499** - ~4,900 cumulative-update revisions ahead, accumulated via years of real Windows Update |
+
+This directly confirms the mechanism behind Hypothesis 6 with hard numbers, not just file-hash/mtime
+circumstantial evidence: `win2022prod` is provably running the unmodified, as-shipped March 2022
+media; `win2022-dc` is provably running a heavily-serviced build of the identical starting point.
+
+### Step 3: checked live whether Microsoft is serving something newer today - confirmed they are not
+
+Ran a real `curl -I` against the exact fwlink this project's own `image-apply/lib/common.sh` uses
+(`https://go.microsoft.com/fwlink/p/?LinkID=2195280&...`), right now, not just re-reading the cached
+`.meta` sidecar:
+
+```
+Content-Length: 5044094976
+ETag: "0xC5A0AE6FD398BA773151588CD215E1CFF7FD1C6109783EFA84680CA07C72E2EF"
+Last-Modified: Wed, 16 Mar 2022 13:16:34 GMT
+```
+
+Both `Content-Length` and `ETag` match the cached file **exactly** - Microsoft's Evaluation Center is
+still serving the identical March 2022 file today, over four years later. This is not a stale cache;
+it is the current, live, official download. Confirmed further by fetching the Evaluation Center's own
+download page directly: it names no build number or refresh date, and explicitly instructs users to
+"install the latest servicing package" from the Microsoft Update Catalog *after* installing, rather
+than claiming the media itself is kept current - Microsoft's own documentation already assumes and
+expects the gap this session quantified, rather than promising a pre-patched image.
+
+**Conclusion: there is no newer official Server 2022 evaluation ISO to switch to. The cached file is
+correct, current, and exactly what the sibling project's own working reference machine started from
+too.** The ISO was never the mistake; a fresh install from *any* copy of this media, patched or not,
+would start at 20348.587 and need the same servicing gap closed by some other mechanism.
+
+### A concrete, well-precedented remediation path this surfaced, not yet attempted
+
+Since Microsoft's own guidance is "apply the latest servicing package after install," the natural
+next step is `DISM /Image:<offline-mounted volume> /Add-Package /PackagePath:<cumulative-update
+.msu>` - a standard, Microsoft-documented offline-servicing mechanism (conceptually identical in kind
+to this project's own established "adopt the existing documented recipe" pattern, e.g. `bcdboot`,
+`hivex` driver registration). **A real integration point already exists for this with no new boot
+cycle required**: this project already boots a minimal, self-built WinPE session once, per build,
+solely to run `bcdboot` (`image-apply/make-bootable.sh`) - WinPE ships `Dism.exe` in-box, so the
+latest applicable Server 2022 cumulative-update `.msu` (downloaded once, host-side, and cached the
+same way every other binary in this project is) could very plausibly be applied in that exact same
+already-existing WinPE session, immediately after `bcdboot` and before the disk's first real boot -
+no live guest internet, no new boot cycle, no architecture change. **Untested and unimplemented as of
+this entry** - a real design question (which specific CU to pin, where to cache it, whether `DISM`
+inside WinPE actually accepts an `/Image:` target that isn't the WinPE environment's own C: drive)
+that needs its own scoping pass before being attempted, per this project's own "explain design,
+identify assumptions, identify risks, ask questions before implementing" standard.
+
+### Stopping place
+
+- All investigation this step was either a live, read-only HTTP request or an offline read (extracted
+  ISO contents in `/tmp`, `hivexregedit` reads against mounted disk copies) - no files in either
+  project's own tree were modified, no VM was booted, all `qemu-nbd`/mount state was confirmed torn
+  down afterward (`lsblk` all `/dev/nbd*` at 0B, no `mount` entries under `/tmp/win-build-mnt`).
+- Next, in priority order, unchanged from the prior entry except for the new remediation lead above:
+  (1) decode the actual KB/CU behind Hypothesis 6 via `win2022-dc`'s own `Get-HotFix` (still not done -
+  now cross-referenceable against the exact `20348.587 → 20348.5499` gap quantified here, which
+  should make identifying the specific fixing KB more tractable than an open-ended search); (2) scope
+  and, if it checks out, prototype the offline-DISM-in-WinPE remediation path sketched above as a
+  fourth (and now best-evidenced) option alongside the three from the prior entry; (3) the
+  still-open, never-verified "Automatic services not running" list from the prior entry's Step 2.
+
+---
