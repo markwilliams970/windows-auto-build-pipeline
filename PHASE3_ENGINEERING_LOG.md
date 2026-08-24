@@ -2640,3 +2640,112 @@ identify assumptions, identify risks, ask questions before implementing" standar
   still-open, never-verified "Automatic services not running" list from the prior entry's Step 2.
 
 ---
+
+## Session (continued, 2026-08-24): the cheap test - run real Windows Update live against a broken
+## build. Hypothesis 6 in its strong form is REFUTED - the patched binary alone is not sufficient,
+## and the crash is not really about file content at all
+
+Proposed directly by the user as an obviously cheap, decisive test: `win2022prod` was sitting right
+there, confirmed broken, trivially rebuildable if consumed - so rather than scope the offline-
+DISM-in-WinPE remediation sketched at the end of the prior entry, just let the guest reach real
+Windows Update over its existing (already-working) NAT internet path and see directly whether the
+fix "comes for free."
+
+**Before running it, the user raised a critical caution that reframed the experiment**: `win2022-dc`
+never exhibited this crash, from its very first boot, before it had ever received a single Windows
+Update. If Hypothesis 6's strong form were correct (the RTM-era binaries themselves are defective,
+fixed only by later servicing), `win2022-dc`'s *original*, unpatched copies of these same three files
+should have crashed too, at least once, before any update ever ran. They did not. This means a
+positive result from this test (crash goes away post-update) would **not**, on its own, actually
+confirm "the binaries were defective" - it could equally mean the update *process* itself repairs
+some other missing first-boot state, unrelated to file content. Recorded here up front because it
+correctly predicted the actual result below.
+
+### The test, run for real
+
+Confirmed the guest had genuine outbound internet before attempting anything (`Resolve-DnsName`,
+`Test-NetConnection -Port 443` to `www.microsoft.com` both succeeded; `wuauserv` already `Running`) -
+libvirt's `default` NAT network provides real internet egress by default, nothing in this project's
+own network config actually blocks it; "air-gapped" has so far been a design intent/convention for
+build *content*, not an enforced network boundary.
+
+Triggered a real search→download→install cycle via the built-in `Microsoft.Update.Session` COM API
+(no `PSWindowsUpdate` module, no extra dependency - the same interface `wuauclt`/Settings-app Windows
+Update ultimately drives), run as a detached SYSTEM-context scheduled task (`schtasks /ru SYSTEM`)
+writing progress to `C:\wu-log.txt`, specifically to avoid the whole run being bound by WinRM's own
+per-call timeout. Polled the log every 30s from the host, only surfacing a status line every ~5
+minutes per the user's own request, via a backgrounded poll script watched with `Monitor` rather than
+blocking the session.
+
+Found **5 applicable updates**, most relevantly `KB5120242` ("2026-08 Cumulative Update for Microsoft
+server operating system version 21H2 for x64-based Systems"). Download succeeded immediately
+(`ResultCode: 2`); install then ran for a real ~30 minutes (15:45:03 → 16:14:46 UTC) before reporting
+`Install ResultCode: 2` (succeeded), `RebootRequired: True` - a plausible, unremarkable duration for a
+VM catching up roughly 4.5 years of cumulative servicing in one pass, not evidence of anything hung.
+
+### Confirmed the patch genuinely landed, precisely
+
+Rebooted (`Restart-Computer -Force`), waited past the post-reboot "Working on updates" finalization
+screen (WinRM answered before the desktop was actually ready - had to screenshot-confirm the real
+lock screen before trusting the machine was settled, a real, reusable operational note for next time).
+Then checked, offline-equivalent evidence but live this time since the disk was already booted:
+
+- `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\UBR` is now **5499** - the *exact* same build
+  revision as `win2022-dc` (20348.5499), not just "a newer build."
+- `Get-FileHash` on `StartMenuExperienceHost.exe` now returns `6EF63D3E...` - **byte-identical to
+  `win2022-dc`'s own copy**, confirmed against the exact hash recorded in the prior entry's Step 6
+  table. The update did not just bump a version string; it genuinely replaced the file with the
+  identical bytes the reference machine has been running the whole time.
+
+### The actual result: the crash still happens, on the literal patched binary
+
+Pressed the Start button live (`virsh send-key`, same method as the prior entry's Step 4) and checked
+both the screen and the event log directly rather than trusting silence. **No Start Menu flyout
+appeared, and the crash reproduced immediately** - not just `StartMenuExperienceHost.exe` once, but
+`SearchApp.exe` crash-looping repeatedly (six times in under a minute), each at the **identical fault
+offset** (`0x0000000000147e5a`, `Exception code: 0xc000027b`) - the same "100% reproducible at an
+identical instruction address" signature already on record for `StartMenuExperienceHost.exe`'s own
+crash, now confirmed for `SearchApp.exe` too, and now confirmed *on the update-supplied, byte-
+identical-to-`win2022-dc` binary itself*.
+
+**This refutes Hypothesis 6 in the strong form the prior entry proposed it in.** Having the literal
+same file bytes as a known-working machine is not sufficient to fix the crash on this project's own
+build. The file-hash/mtime correlation found in the prior entry was real (not a measurement error -
+today's test re-confirms the hash match precisely), but it was never actually causal. The user's
+caution going into this test was exactly right, and is now evidence-backed rather than just a
+reasonable prior: whatever actually differs between `win2022-dc` and every build this project
+produces, it is present regardless of which build of these three files is on disk - something about
+the *environment* those files run in, not the files themselves.
+
+### Where this leaves the investigation
+
+Six real hypotheses now closed (QXL driver, RPC/DCOM boot race, AppX provisioning/StateRepository in
+both its shallow and deep forms, Xaml.dll patch level, activation state, and now RTM-binary-defect/
+servicing-drift). Two structural facts remain undisputed and still need explaining: the crash is
+**100% deterministic at a fixed instruction offset** (ruling out any remaining timing-race framing),
+and it is **specific to this project's offline-`wimapply` builds vs. the sibling project's real
+Setup.exe-driven install** (every StateRepository/registration-data comparison has come back
+identical, and file content is now also ruled out). The gap must be something Setup.exe's own
+first-boot handling does that offline `wimapply` + this project's own specialize/unattend pass does
+not - structurally the same territory Hypothesis 3 originally proposed, but now narrowed: not
+registration data (closed), not file content (closed today), so something in *runtime* first-boot
+state - a permissions/ACL/security-descriptor difference, a code-integrity/catalog state, a
+container/capability token setup step, or some other live initialization Setup.exe performs that a
+raw file-level apply does not. None of these specific angles have been directly tested yet.
+
+**The offline-DISM-in-WinPE remediation path sketched at the end of the prior entry is now known to
+be a dead end and should not be pursued** - it would deliver exactly the file-content fix this test
+just showed is insufficient on its own.
+
+### Stopping place
+
+- `win2022prod` was shut down cleanly (`Stop-Computer -Force` over WinRM, confirmed `shut off`)
+  before this entry was written. It is now running build 20348.5499 (previously 20348.587) - worth
+  remembering if it's reused for anything else, since it's no longer a clean "as-shipped" baseline.
+- No new next-step list is written here beyond narrowing the search space above (permissions/ACL,
+  code integrity, container/capability setup, other live first-boot state) - the concrete next
+  experiment (which of those to test first, and how, without a full live-A/B-versus-`win2022-dc`
+  comparison being straightforward to run) is a real open design question for whoever picks this back
+  up, not yet decided.
+
+---
