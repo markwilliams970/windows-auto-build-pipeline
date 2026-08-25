@@ -121,7 +121,35 @@ cp /usr/share/OVMF/OVMF_VARS_4M.fd "$OVMF_VARS_RUN"
 
 # --- WinRM/QMP helpers, matching this project's own established patterns (windows11-setup-install.sh) --
 
+# pywinrm's run_ps() (called by both functions below) base64-encodes the script as UTF-16LE and
+# sends it as a single WinRS command line: `powershell -encodedcommand <base64>`. WinRS has a
+# real, hard ceiling on that command line's length - confirmed the hard way (2026-08-25): a
+# ~3050-char PS script (well under PowerShell's own 32KB script-size sanity, and under
+# CreateProcess's separate 32767-char limit) failed outright with "The command line is too
+# long" at an encoded length of ~8170 chars. The exact documented WinRS ceiling isn't confirmed
+# (plausibly the classic 8191-char cmd.exe command-line limit, given how close the failure was
+# to it, but not verified against a primary source) - so this guard uses 7800 as a conservative,
+# deterministic budget with real margin below the observed failure point, checked BEFORE ever
+# contacting the guest (a qemu boot cycle is 10+ minutes; this check is instant), rather than
+# letting an oversized payload fail late and cryptically after a full boot. If this guard ever
+# fires: don't raise the budget - shrink the payload. The actual fix both times this has come up
+# is removing PS-side comments (which cost real wire bytes for zero functional value - move the
+# explanation to a bash comment above the winrm_ps call instead, which costs nothing over the
+# wire) or splitting one call into two smaller ones.
+assert_winrm_ps_budget() {
+  local ps_script="$1"
+  local char_count=${#ps_script}
+  local b64_len=$(( ((char_count * 2) + 2) / 3 * 4 ))
+  local total_len=$(( b64_len + 28 ))  # 28 = strlen("powershell -encodedcommand ")
+  local safe_limit=7800
+  if (( total_len > safe_limit )); then
+    echo "ERROR: winrm_ps payload too large (${char_count} PS chars -> ~${total_len} encoded WinRS command chars, safe budget ${safe_limit}) - shrink the payload (move PS-side comments to bash comments above the call, or split into two calls) rather than raising this limit; see this function's own header comment for the full story." >&2
+    exit 1
+  fi
+}
+
 winrm_ps() {
+  assert_winrm_ps_budget "$1"
   python3 - "$WINRM_PORT" "$ADMIN_PASSWORD" "$1" <<'PYEOF'
 import sys, winrm
 port, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -137,6 +165,7 @@ PYEOF
 
 winrm_ps_out() {
   # Same as winrm_ps but only echoes stdout to the caller (for capturing a value), still fails loud.
+  assert_winrm_ps_budget "$1"
   python3 - "$WINRM_PORT" "$ADMIN_PASSWORD" "$1" <<'PYEOF'
 import sys, winrm
 port, password, cmd = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -177,7 +206,12 @@ wait_for_winrm() {
 
 qmp_graceful_shutdown() {
   local sock="$1" pid="$2"
-  python3 - "$sock" <<'PYEOF'
+  # `|| true` below: if the QMP connection itself fails (socket gone, protocol error), don't let
+  # that abort this function via set -e - fall through to the same wait-loop/timeout instead, so
+  # a failed ACPI request is handled identically to a successful-but-ignored one (both correctly
+  # end in this function's own return 1, not an uncontrolled early exit that could skip a
+  # caller's own hard-kill fallback and leave the process orphaned with no cleanup at all).
+  python3 - "$sock" <<'PYEOF' || true
 import json, socket, sys
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
 sock.settimeout(10)
@@ -300,8 +334,18 @@ log "Stage 1 qemu pid ${QEMU_PID1}, log ${WORK_DIR}/stage1-qemu.log"
 
 cleanup_stage1() {
   if kill -0 "$QEMU_PID1" 2>/dev/null; then
-    echo "Cleanup: Stage 1 qemu (pid ${QEMU_PID1}) still running - forcing it down" >&2
-    kill -9 "$QEMU_PID1" 2>/dev/null || true
+    # An error here (e.g. a winrm_ps failure) means this trap is the FIRST shutdown attempt for
+    # this qemu process - unlike the intentional success-path call to qmp_graceful_shutdown
+    # further down, which this trap never reaches on an error exit. Try graceful first, exactly
+    # like the success path does - confirmed the hard way (2026-08-25) that skipping straight to
+    # a hard kill here, while Windows was live and healthy mid-verification, produced a disk with
+    # an unexplained OOBE regression on its next boot (this project's own standing rule: a hard
+    # quit fakes corruption symptoms on a disk that will be reused).
+    echo "Cleanup: Stage 1 qemu (pid ${QEMU_PID1}) still running after an error - attempting graceful shutdown before considering a hard kill" >&2
+    if ! qmp_graceful_shutdown "$QMP_SOCK1" "$QEMU_PID1"; then
+      echo "Cleanup: graceful shutdown did not complete - forcing qemu (pid ${QEMU_PID1}) down as a last resort; treat this disk's state as suspect, don't reuse it without checking" >&2
+      kill -9 "$QEMU_PID1" 2>/dev/null || true
+    fi
   fi
 }
 trap cleanup_stage1 EXIT
@@ -328,6 +372,12 @@ Write-Output \"NIC already virtio and Up (\$(\$netUp[0].Name)) - no swap needed\
 "
 fi
 
+# Below: matches vioscsi/netkvm PnP status on ANY device, not a scalar comparison - a disk
+# that's been through this script's Stage 1 more than once (e.g. a retried run) accumulates
+# stale/ghost PnP entries for devices no longer present in the current boot's exact PCI
+# topology (Status: Unknown), so Get-PnpDevice can legitimately return more than one match.
+# Comparing an array to a scalar with -ne does element-wise comparison in PowerShell, not what's
+# intended - a real bug caught on this script's own second real run, not a hypothetical.
 winrm_ps "
 \$ErrorActionPreference = 'Stop'
 \$virtioLetter = (Get-Volume | Where-Object { \$_.FileSystemLabel -like 'virtio-win*' }).DriveLetter
@@ -339,12 +389,6 @@ pnputil /add-driver \"\${virtioLetter}:\\vioscsi\\${DRIVER_SUBFOLDER}\\amd64\\vi
 if (\$LASTEXITCODE -ne 0) { throw \"pnputil /add-driver vioscsi failed with exit \$LASTEXITCODE\" }
 
 Start-Sleep -Seconds 5
-# Match on ANY device with Status OK, not a scalar comparison - a disk that has been through
-# this script's Stage 1 more than once (e.g. a retried run) accumulates stale/ghost PnP entries
-# for devices no longer present in the current boot's exact PCI topology (Status: Unknown), so
-# Get-PnpDevice can legitimately return more than one match. Comparing an array to a scalar with
-# -ne does element-wise comparison in PowerShell, not what's intended here - this was a real bug
-# caught on this script's own second real run, not a hypothetical.
 \$scsiOk = @(Get-PnpDevice -Class SCSIAdapter | Where-Object { \$_.FriendlyName -like 'Red Hat VirtIO*' -and \$_.Status -eq 'OK' })
 if (\$scsiOk.Count -eq 0) { throw 'vioscsi did not reach a live Status:OK PnP install on any matching device - see Finding 3A-1, this means the device was not actually present/bound, only staged' }
 Write-Output 'vioscsi live-verified: Status OK'
@@ -437,8 +481,16 @@ log "Stage 2 qemu pid ${QEMU_PID2}, log ${WORK_DIR}/stage2-qemu.log, SPICE on 12
 
 cleanup_stage2() {
   if kill -0 "$QEMU_PID2" 2>/dev/null; then
-    echo "Cleanup: Stage 2 qemu (pid ${QEMU_PID2}) still running - forcing it down" >&2
-    kill -9 "$QEMU_PID2" 2>/dev/null || true
+    # Same reasoning as cleanup_stage1 above - try graceful first, only hard-kill as a last
+    # resort. This is the exact trap that hard-killed a live, healthy, WinRM-reachable Windows
+    # session on 2026-08-25 (the winrm_ps command-length bug fired mid-verification), producing
+    # a disk with an unexplained OOBE regression on its next boot - a graceful attempt here would
+    # very likely have succeeded, since WinRM was confirmed live moments before.
+    echo "Cleanup: Stage 2 qemu (pid ${QEMU_PID2}) still running after an error - attempting graceful shutdown before considering a hard kill" >&2
+    if ! qmp_graceful_shutdown "$QMP_SOCK2" "$QEMU_PID2"; then
+      echo "Cleanup: graceful shutdown did not complete - forcing qemu (pid ${QEMU_PID2}) down as a last resort; treat this disk's state as suspect, don't reuse it without checking" >&2
+      kill -9 "$QEMU_PID2" 2>/dev/null || true
+    fi
   fi
 }
 trap cleanup_stage2 EXIT
@@ -446,6 +498,15 @@ trap cleanup_stage2 EXIT
 wait_for_winrm "$QEMU_PID2" "${WORK_DIR}/stage2-qemu.log"
 
 log "Verifying NIC and display; storage too if it was swapped"
+# The final line below writes C:\virtio-spice-injected.marker, only reached once every check
+# in this block already succeeded - register-vm.sh checks for it offline before it will ever
+# define a domain for this disk. Documented HERE, not as an inline PS comment inside the
+# winrm_ps payload below: this whole block is transmitted as `powershell -encodedcommand
+# <base64>` over WinRS, which has a real, hard command-line ceiling (~8191 chars) - confirmed
+# the hard way (2026-08-25) when adding a 3-line PS comment for this exact marker pushed an
+# already-comment-heavy version of this block over that ceiling ("The command line is too
+# long", the qemu process force-killed by this script's own cleanup trap). Keep new
+# documentation here in bash, not inside the PS string - it costs nothing over the wire.
 winrm_ps "
 \$ErrorActionPreference = 'Stop'
 
@@ -487,9 +548,6 @@ if (-not \$vd -or \$vd.Status -ne 'Running') { throw \"SPICE VDAgent service not
 
 Write-Output \"NIC Up (\$(\$netUp[0].Name)), QXL OK, vdservice Running - all confirmed\"
 
-# Completion marker, checked offline by register-vm.sh before it will ever define a domain
-# for this disk (its virtio-scsi-pci/QXL/SPICE device model only matches a disk that's been
-# through this script) - only reached once every check above has already succeeded.
 Set-Content -Path C:\virtio-spice-injected.marker -Value (Get-Date -Format o)
 "
 

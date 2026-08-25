@@ -3386,3 +3386,113 @@ fully clean after (`ps`/`lsblk`/`mount` all checked): no qemu processes, no nbd 
 mounts, no leftover NVRAM files.
 
 ---
+
+## Session (continued, 2026-08-25): a real E2E Server 2022 + IIS build surfaced two more real
+## bugs - the command-length bug recurred for real, and a second, more consequential bug (hard
+## kill on a live, healthy disk) was found underneath it. Both fixed and verified; the actual
+## E2E confirmation run itself was not completed this session
+
+### Finding: `inject-virtio-spice.sh` Stage 2 hit "The command line is too long" for real, on a genuine E2E run
+
+Launched a full `build.sh server2022` (root `services.yaml`'s default `iis`-only profile - "the
+IIS app profile," distinct from `dev/services-app-server.yaml`'s `iis`+`sql-server` bundle) as the
+actual evidentiary E2E run this multi-day investigation has been building toward: a completely
+fresh disk through the *current*, already-fixed `apply-image.sh`, not disk B. Partition, apply,
+make-bootable, apply-unattend, and the full Packer handoff all worked cleanly (13m12s - IIS
+installed and verified, `W3SVC` running, default site HTTP 200) - a second, independent, real
+confirmation of tonight's earlier fix, on a completely fresh disk this time, not a hand-patched one.
+
+Then `inject-virtio-spice.sh` Stage 1 completed cleanly too (vioscsi staged+live-verified, netkvm
+already Up, spice-guest-tools installed, qxldod staged) - but **Stage 2's final verification failed
+outright**: `"The command line is too long."`, immediately followed by `cleanup_stage2`'s own hard
+kill of the still-running qemu process. Root cause, measured precisely rather than guessed: pywinrm's
+`run_ps()` sends a PowerShell script as a single WinRS command line
+(`powershell -encodedcommand <base64-of-utf16le>`), and this specific block - already carrying
+several real, hard-won inline PS comments (Finding 3A-3, 3A-4, the vdservice race note) - was already
+close to WinRS's real (undocumented, but empirically real) command-line ceiling *before* tonight's
+earlier `virtio-spice-injected.marker` addition. That addition's own 3-line PS comment (268 of its
+346 added characters were comment, not functional code) pushed the encoded command from ~7250 chars
+to ~8172 - over whatever the real ceiling is (plausibly the classic 8191-char `cmd.exe` limit, given
+how close the failure landed to it, though this wasn't confirmed against a primary source).
+
+**Fix, "once and for all" per explicit direction** (not just trimming the one comment that broke
+tonight):
+1. Removed the marker's own in-payload PS comment (moved to a bash-side comment above the
+   `winrm_ps` call instead, which costs zero wire bytes - functional line alone is 78 chars, the
+   comment was 268).
+2. Moved Stage 1's one remaining significant in-payload comment (the "match on ANY device"
+   explanation) the same way, for consistency and extra margin on both blocks, not just the one that
+   broke.
+3. **The structural fix**: a new `assert_winrm_ps_budget()` helper, called at the top of both
+   `winrm_ps()` and `winrm_ps_out()`, that computes the exact same UTF-16LE+base64+prefix encoding
+   pywinrm performs and fails loud - instantly, before ever contacting the guest - if a payload
+   exceeds a 7800-char conservative budget (real margin below the ~8172 observed failure point).
+   Verified three ways: both real production payloads now measure 2112 (Stage 1) and 2787 (Stage 2)
+   chars, comfortably under budget; a synthetic 3200-char payload correctly triggers the guard with a
+   clear, actionable message (naming the fix: shrink the payload, don't raise the limit). This turns
+   a failure class that previously wasted a 10-15 minute two-stage boot cycle before failing
+   cryptically into an instant, clear failure - and protects every future edit to these blocks, not
+   just tonight's.
+
+### Finding: the real, more consequential bug was underneath the command-length one - `cleanup_stageN`'s hard `kill -9` fired on a live, healthy, WinRM-reachable Windows session
+
+Re-running `inject-virtio-spice.sh` standalone against the already-provisioned disk (Stage 1 had
+already fully succeeded; no need to redo the ~28-minute apply+Packer+IIS sequence) hit a *different*
+failure on retry: Stage 1 itself timed out waiting for WinRM (600s), unlike its first, clean run
+minutes earlier on the identical disk under the identical device model. Investigated live via a
+hand-built `qemu-system-x86_64` invocation matching Stage 1's exact device model plus a real VNC
+listener (`-vnc 127.0.0.1:5905`, none of Stage 1's own invocations have one) so the user could watch
+directly - and found the disk sitting at an interactive **"Choose your keyboard layout" OOBE screen**,
+confirmed via `tools/qmp-screenshot.py` to genuinely be the target disk booting (not the driver ISOs -
+`Boot0003` from the virtio-blk-pci device, the two DVD-ROM boot entries correctly reported `Not
+Found`). This exact symptom (Finding 7, `PHASE3_ENGINEERING_LOG.md` Session 3) was previously
+Windows-11-specific in this project's entire history - never once observed on Server 2022/2025,
+including this exact disk's own first, clean Stage 1 boot minutes earlier.
+
+**Root cause, reasoned from the timeline, not guessed**: the only thing that happened to the disk
+between its clean first Stage 1 boot and this regression was Stage 2's own hard kill - WinRM had
+already been confirmed live (Windows fully booted, running normally on the newly-swapped virtio-scsi
+storage) when the command-length bug fired mid-verification, and `cleanup_stage2`'s trap immediately
+`kill -9`'d the still-running qemu process. This is precisely the scenario this project's own
+standing rule exists to prevent (saved to memory: "always graceful QMP shutdown, never hard quit, on
+a QEMU/Windows disk that will be reused; a hard quit fakes corruption symptoms") - and the trap was
+violating it. Not a hypothetical risk: a real, live, healthy Windows session got hard-killed, and its
+next boot showed a genuine, previously-unseen regression.
+
+**Fix**: both `cleanup_stage1` and `cleanup_stage2` now attempt `qmp_graceful_shutdown` (the same
+function already used correctly on the *intentional* success path, with its own 200s bounded wait and
+its own existing refusal to hard-kill on timeout) before ever falling back to `kill -9` - closing the
+actual gap, which was that any error occurring *before* the script reached its own intentional
+graceful-shutdown call (exactly what happened here) skipped straight to the trap's unconditional hard
+kill. Also hardened `qmp_graceful_shutdown` itself: its QMP-connection python call now has `|| true`
+so a failed connection (not just an ignored ACPI request) falls through to the same wait-loop/timeout
+instead of depending on `set -e` propagation semantics inside a trap handler, which are genuinely
+ambiguous in bash and not worth relying on.
+
+**Verified functionally, not just by inspection**: a standalone test harness mocked
+`qmp_graceful_shutdown` to return success/failure and confirmed the real trap logic (extracted
+verbatim from the fixed file) - graceful-succeeds never triggers `kill -9`; graceful-fails correctly
+falls through to it. Both `image-apply/inject-virtio-spice.sh` edits pass `bash -n`.
+
+### Disposition of tonight's tainted disk and cleanup
+
+The regressed disk (`server2022-20260825-145838` and all its associated artifacts across
+`packer/output/`, `image-apply/output/builds/`, `image-apply/output/virtio-spice-work/`) was
+discarded entirely, per explicit direction - its state is unexplained beyond the hard-kill theory
+above and not worth trying to salvage or further diagnose now that both real bugs behind it are
+fixed. The manually-launched diagnostic VM was hard-killed too (acceptable here specifically because
+the disk was already being discarded - not a violation of the graceful-shutdown rule, which exists to
+protect disks that will be reused). Host confirmed fully clean after: no qemu processes (other than
+the user's own unrelated `winlab-` VM), no nbd attachments, no stray mounts, ~11GB reclaimed.
+
+### Status: both fixes are real and verified in isolation; the actual E2E evidentiary run is still open
+
+Tonight's actual goal - a fresh, from-scratch `build.sh server2022` with the IIS profile, run
+uninterrupted through to a registered, bootable, evidentiary VM - was not completed. What *is* now
+independently confirmed: the apply-image.sh fix generalizes to a fresh disk (not just disk B), and
+both bugs this session found are fixed and verified in isolation (guard logic tested directly; trap
+logic tested via a mocked harness). Neither fix has yet been exercised by a real, complete
+`inject-virtio-spice.sh` run end-to-end. **Immediate next step**: retry the full E2E build from
+scratch now that both fixes are in place.
+
+---
