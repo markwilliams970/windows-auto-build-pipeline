@@ -3320,4 +3320,52 @@ own header states the contract explicitly (which disk class it's for, and to use
 instead once a disk has been through Stage 1/2) so this precondition mismatch can't get silently
 rediscovered the same way again.
 
+### Follow-up 2: enforcing the precondition directly in `register-vm.sh`, not just documenting it
+
+Explicit direction (2026-08-25): rather than rely on a human remembering which script to use for
+which disk class, `register-vm.sh` should refuse outright to register a disk that hasn't actually
+been through `inject-virtio-spice.sh`, instead of silently assuming it has.
+
+`inject-virtio-spice.sh` previously left no on-disk signal at all (it's entirely live/WinRM-driven,
+confirmed by inspection - no marker file, no log written to the guest). Two small, targeted changes:
+
+1. **`inject-virtio-spice.sh`**: one more line inside its existing Stage 2 final-verification
+   `winrm_ps` block (after NIC/QXL/vdservice are all already confirmed, before graceful shutdown) -
+   `Set-Content -Path C:\virtio-spice-injected.marker -Value (Get-Date -Format o)`. Only reached if
+   every prior check in that block succeeded (`$ErrorActionPreference = 'Stop'` throws and aborts
+   otherwise), so the marker's mere presence is itself a positive signal, not just "the script ran."
+2. **`register-vm.sh`**: before touching any domain/NVRAM state, offline-attaches the target qcow2
+   via the same `qemu-nbd`/`ntfs-3g` pattern every `image-apply/*.sh` script already uses (reusing
+   its exact `/tmp/win-build-mnt/` mount-point prefix specifically so no sudoers change was needed -
+   confirmed against `tools/sudoers-windows-auto-build-pipeline`'s existing rules before writing this,
+   not assumed), locates the Windows partition by filesystem type (`lsblk` `FSTYPE=ntfs`) rather than
+   assuming a fixed partition number (`p3` is correct for `partition-disk.sh`'s own GPT layout, but
+   Windows 11's Setup.exe-driven partitioning was never independently confirmed to match, so this
+   doesn't assume it does), and `fail`s loud with a clear message (naming both the missing step and
+   `tools/boot-adhoc-target.sh` as the right tool instead) if the marker isn't there.
+
+**Verified both directions with real disks, not just written and assumed correct:**
+- Negative: ran the new `register-vm.sh` against `server2022-20260823-145809.qcow2` (a real,
+  never-spice-injected disk) - failed loud with the expected message, before touching any domain/NVRAM
+  state. Confirmed clean teardown after (`lsblk`/`mount` both checked - no leftover nbd attachment or
+  mount).
+- Also tried `packer/output/server2025/server2025.qcow2` (an older Packer artifact, from before this
+  session's marker even existed as a concept) - also correctly failed, for the same reason: no disk
+  in the repo has been through the new marker-writing code yet.
+- Positive: since no real disk yet carries a genuine marker (would require a full live
+  `inject-virtio-spice.sh` run, ~tens of minutes, not needed just to validate the check logic itself),
+  manually offline-mounted a disposable scratch disk (`server2022-20260823-154052.qcow2` - not disk A
+  or disk B, neither of which was touched) and hand-wrote a test marker via the identical
+  `qemu-nbd`/`ntfs-3g` mount path, to isolate testing the check's *logic* from testing a live
+  `inject-virtio-spice.sh` run. Re-ran `register-vm.sh` against it - **proceeded past the check
+  correctly and defined a real libvirt domain** (`test-positive-marker`), confirming the "found" path
+  works, not just the "missing" path. Cleaned up immediately after (`virsh undefine --nvram`) - domain
+  was never started, just defined, so this VM never actually got the wrong device model applied to it.
+- Disk B's own QEMU process (still running from earlier this session) was deliberately left untouched
+  throughout this testing - never attached to `qemu-nbd`, to avoid corrupting a live-mounted qcow2.
+
+Host confirmed fully clean at the end of this follow-up (`virsh list --all`, `lsblk`, `mount` all
+checked): no stray nbd attachments, no stray mounts, no leftover test domains - only the five
+pre-existing shut-off domains from before this session remain.
+
 ---

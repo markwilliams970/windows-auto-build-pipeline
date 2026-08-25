@@ -76,6 +76,58 @@ fi
 QCOW2_PATH="${2:-$DEFAULT_QCOW2}"
 [[ -n "$QCOW2_PATH" && -f "$QCOW2_PATH" ]] || fail "no disk found at '${QCOW2_PATH:-<none>}' - run build.sh first, or pass the right qcow2_path explicitly"
 
+# Precondition: this script's device model (virtio-scsi-pci disk, qxl-vga/SPICE) only
+# matches a disk that has already been through inject-virtio-spice.sh - every real build.sh
+# run guarantees this before register-vm.sh would ever be invoked, but a disk built by
+# hand-running image-apply/*.sh stages directly (e.g. while iterating on apply-image.sh/
+# make-bootable.sh changes) never reaches that step. Pointing this script at such a disk
+# silently produces the INACCESSIBLE_BOOT_DEVICE/indefinite-hang failure class documented in
+# PHASE3_ENGINEERING_LOG.md's 2026-08-24/2026-08-25 sessions - fail loud instead of guessing.
+# Checked via inject-virtio-spice.sh's own completion marker
+# (C:\virtio-spice-injected.marker, written only after its Stage 2 verification fully
+# succeeds), read offline via the same qemu-nbd/ntfs-3g mount pattern every image-apply/*.sh
+# script already uses - reusing its exact /tmp/win-build-mnt/ prefix so no sudoers change is
+# needed. Locates the Windows partition by filesystem type (lsblk FSTYPE=ntfs) rather than
+# assuming a fixed partition number: server2022/server2025's own partition-disk.sh layout
+# puts it at p3, but windows11's Setup.exe-driven partitioning has never been independently
+# confirmed to match, so this doesn't assume it does.
+echo "==> Checking ${QCOW2_PATH} for inject-virtio-spice.sh's completion marker" >&2
+CHECK_MNT="/tmp/win-build-mnt/register-check"
+sudo modprobe nbd max_part=8
+CHECK_NBD=""
+for cand in /dev/nbd{0,1,2,3,4,5,6,7}; do
+  if ! sudo qemu-nbd -c "$cand" "$QCOW2_PATH" 2>/dev/null; then
+    continue
+  fi
+  CHECK_NBD="$cand"
+  break
+done
+[[ -n "$CHECK_NBD" ]] || fail "could not attach $QCOW2_PATH to any /dev/nbd* device to check for inject-virtio-spice.sh's completion marker"
+sudo partprobe "$CHECK_NBD"
+sleep 1
+
+NTFS_PART="$(lsblk -no PATH,FSTYPE "$CHECK_NBD" | awk '$2 == "ntfs" { print $1; exit }')"
+if [[ -z "$NTFS_PART" ]]; then
+  sudo qemu-nbd -d "$CHECK_NBD" >/dev/null 2>&1 || true
+  fail "no NTFS partition found on $QCOW2_PATH (via $CHECK_NBD) - is this a valid, fully-applied Windows disk?"
+fi
+
+mkdir -p "$CHECK_MNT"
+cleanup_check() {
+  sudo umount "$CHECK_MNT" 2>/dev/null || true
+  sudo qemu-nbd -d "$CHECK_NBD" >/dev/null 2>&1 || true
+}
+trap cleanup_check EXIT
+sudo mount -t ntfs-3g -o ro "$NTFS_PART" "$CHECK_MNT"
+MARKER_FOUND=0
+[[ -f "${CHECK_MNT}/virtio-spice-injected.marker" ]] && MARKER_FOUND=1
+sudo umount "$CHECK_MNT"
+sudo qemu-nbd -d "$CHECK_NBD" >/dev/null 2>&1 || true
+trap - EXIT
+
+[[ "$MARKER_FOUND" == "1" ]] \
+  || fail "${QCOW2_PATH} has not been through inject-virtio-spice.sh (no C:\\virtio-spice-injected.marker found on its Windows volume) - this script's virtio-scsi-pci/QXL/SPICE device model requires it. Run image-apply/inject-virtio-spice.sh against this disk first, or use tools/boot-adhoc-target.sh to boot it directly for testing instead."
+
 VM_NAME="${3:-$(os_computer_name "$OS" | tr '[:upper:]' '[:lower:]')}"
 
 CPUS="${CPUS:-4}"

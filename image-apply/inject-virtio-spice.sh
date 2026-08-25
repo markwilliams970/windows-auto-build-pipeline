@@ -486,6 +486,11 @@ if (\$vd -and \$vd.Status -ne 'Running') {
 if (-not \$vd -or \$vd.Status -ne 'Running') { throw \"SPICE VDAgent service not Running after nudge (got: \$(\$vd.Status))\" }
 
 Write-Output \"NIC Up (\$(\$netUp[0].Name)), QXL OK, vdservice Running - all confirmed\"
+
+# Completion marker, checked offline by register-vm.sh before it will ever define a domain
+# for this disk (its virtio-scsi-pci/QXL/SPICE device model only matches a disk that's been
+# through this script) - only reached once every check above has already succeeded.
+Set-Content -Path C:\virtio-spice-injected.marker -Value (Get-Date -Format o)
 "
 
 log "Stage 2 complete - graceful shutdown, disk left ready for real use"
