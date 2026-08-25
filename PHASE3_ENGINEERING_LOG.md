@@ -3117,3 +3117,115 @@ natural next step, not yet run as of this entry.
   picking up separately from the main boot-failure investigation.
 
 ---
+
+## Session (continued, 2026-08-24 evening): the A/B test found the real culprit - not
+## `apply-image.sh`, not `make-bootable.sh`, but this session's own testing methodology. A disk built
+## with the fix boots and reaches a real interactive desktop for the first time. Genuine, real hope -
+## not yet fully confirmed, stopped for the night before finishing the Start Menu check
+
+### The A/B test, as planned
+
+Built "disk A" specifically to isolate `apply-image.sh`'s own write mechanism as the one remaining
+variable: pulled the pre-remediation `apply-image.sh` from git history (`094dac4`, the commit before
+today's "Attempt ACL remediation" commit), ran it standalone (temporarily placed at `image-apply/
+apply-image-OLD.sh` - untracked, kept in place intentionally, see "Stopping place" below) against a
+brand-new `partition-disk.sh` output, then ran the **current** `make-bootable.sh` (with the `ntfscp`
+fix) and `apply-unattend.sh` unchanged - identical downstream steps to "disk B"
+(`server2022-20260824-161111.qcow2`, built with the *new* `apply-image.sh`, from the prior entry),
+varying only the one thing under test.
+
+**Disk A also failed to boot** - `INACCESSIBLE_BOOT_DEVICE` initially, then an indefinite hang at the
+TianoCore splash on the same disk, matching disk B's own inconsistent failure pattern exactly. At
+first read this looked like a real, surprising result: the *old*, historically-reliable mechanism
+failing too would mean neither `apply-image.sh` variant was actually the cause, and something else
+entirely (host environment, a QEMU/OVMF-level issue) was responsible.
+
+### The actual finding: a device-topology mismatch in this session's own test harness, not a pipeline bug
+
+Checked host load/memory while disk A sat at the splash screen (nothing abnormal: load 1.65, 22GB/46GB
+RAM used, no unusual `qemu-system-x86_64` behavior) - and while doing so, read the actual generated
+QEMU command line for the domain in question. **It attaches the disk via `virtio-scsi-pci` + `scsi-hd`,
+not `virtio-blk-pci`.** `register-vm.sh` - the tool this session used to boot every disk today,
+including all of the prior entry's own tests - is explicitly documented, in its own header comments,
+to assume the disk has **already** been through `inject-virtio-spice.sh`'s `vioscsi` driver injection;
+it has no `virtio-blk` mode at all. None of today's test disks (disk A, disk B, or the earlier
+`acltest22`/`acltest2` disks in the prior entries) were ever run through `inject-virtio-spice.sh` -
+they only ever had `viostor` (the **virtio-blk** driver) registered, via `make-bootable.sh`'s own
+`DriverDatabase` merge. Checked `packer/boot-and-provision.pkr.hcl` - the real production path - and
+found its own pre-existing comment confirms this directly: `disk_interface = "virtio"` is set
+"specifically because 'virtio-scsi' would break this," matching `make-bootable.sh`'s own `virtio-blk-
+pci` WinPE/`bcdboot` target-disk attachment exactly.
+
+**This means every boot failure logged across both of today's sessions - disk A, disk B, and the
+earlier `acltest22`/`acltest2` attempts - was very plausibly this session's own test-harness bug, not
+a real defect in either `apply-image.sh` mechanism or in `make-bootable.sh`'s `ntfscp` fix.** Booting
+a disk that only has `viostor` registered via a controller (`virtio-scsi-pci`) that needs the separate,
+never-injected `vioscsi` driver would produce exactly this failure class - and its inconsistent timing
+(sometimes a fast BSOD, sometimes an indefinite hang) is also consistent with an unrecognized/
+mismatched storage controller rather than a deterministic on-disk corruption.
+
+### Direct confirmation: a hand-built `virtio-blk-pci` boot succeeds
+
+Rather than trust the theory alone, constructed a raw `qemu-system-x86_64` invocation matching
+Packer's own `disk_interface = "virtio"` convention and `make-bootable.sh`'s own WinPE-session device
+model (`virtio-blk-pci` for the target disk, OVMF UEFI, USB tablet, QMP socket, this time also a
+user-mode NIC with `hostfwd` for direct WinRM access without needing libvirt's own network) - no
+`register-vm.sh`, no libvirt domain XML at all, bypassing the mismatched-topology tool entirely.
+Booted disk A against this. **It reached a real, live, interactive Windows desktop** - Server Manager
+splash, desktop icons, a live taskbar clock, an active `Administrator` console session (`query
+session` confirmed `Active`, not locked) - captured via `tools/qmp-screenshot.py` at each step, this
+project's own established zero-VNC-viewer convention. Confirmed WinRM reachable and authenticating
+correctly shortly after (`hostname` returned `ABTESTOLD`, the computer name this test's own
+`apply-unattend.sh` call set) - a real, live, working machine, not just a firmware-level "it didn't
+crash" result.
+
+**This is disk A - the *old*, pre-remediation `apply-image.sh` mechanism.** It was always expected to
+still exhibit the original Start Menu/DCOM-activation crash (that's the whole bug this multi-day
+investigation exists to fix) - confirming that specific crash *still* reproduces on disk A, and then
+running the identical live-desktop test against disk B (the new, ACL-fixed mechanism) to confirm Start
+Menu now works, was the natural, immediate next step. **That check was not completed** - the user
+asked to pause for the night right as the Start Menu test on disk A was about to run (a `qmp-sendkey.py`
+Windows-key press had been prepared but not yet sent). Genuinely open, first thing to pick back up.
+
+### Where this leaves things - real, substantive hope, not yet fully confirmed
+
+If disk B (new `apply-image.sh`, the actual fix under test) boots the same way *and* Start Menu works
+there, that would be the first real end-to-end confirmation of the entire ACL remediation this session
+and the prior two have been pursuing - the original bug, finally fixed, with nothing left
+unexplained. That has **not** been directly observed yet. What's confirmed as of this entry:
+
+- The device-topology mismatch is a real, well-evidenced explanation for every boot failure logged in
+  both of today's sessions, including the ones that led to now-disproven theories about `make-
+  bootable.sh` and about `apply-image.sh`'s own native writer being unsound.
+- A disk *can* boot to a real, live, interactive desktop through this pipeline, using the correct
+  device model - this alone is new information; every previous attempt this session used the wrong one.
+- The specific question this whole investigation exists to answer - does disk B's Start Menu actually
+  work now - is still open, one boot-and-keypress away from an answer.
+
+### Stopping place
+
+- Disk A's VM was shut down cleanly (`Stop-Computer -Force` over WinRM, confirmed the QEMU process
+  exited on its own rather than being killed) - not a hard `qemu` kill, per this project's own standing
+  convention for a disk that will be reused.
+- **Per explicit instruction, nothing was deleted.** Both `server2022-ab-old-20260824-194437.qcow2`
+  (disk A) and `server2022-20260824-161111.qcow2` (disk B) are left in place at `image-apply/output/
+  builds/` for the next session to pick up directly - do not delete either without checking first,
+  they are now the two most evidentially important disks in this entire investigation.
+- `image-apply/apply-image-OLD.sh` (the pre-remediation script, extracted from commit `094dac4`) is
+  left in place too, untracked and intentionally kept - it's what actually built disk A and may be
+  useful for a repeat test; it must never be committed (it's a deliberate, temporary duplicate of a
+  file that already exists in git history, not a real addition to the pipeline).
+- The `abtestold` and `acltest2` libvirt domains (both defined via `register-vm.sh`, both using the
+  **wrong**, `virtio-scsi-pci` device topology for these specific disks) are left defined but shut off
+  - **do not `virsh start` either one for the next boot test**; use a hand-built `virtio-blk-pci`
+  `qemu-system-x86_64` invocation instead, matching the one that worked tonight (Packer's own
+  `boot-and-provision.pkr.hcl` is the authoritative reference for the exact device model, or reuse
+  tonight's own working invocation, not preserved as a script yet - worth turning into one).
+- All `qemu-nbd`/mount state confirmed torn down (`lsblk` all `/dev/nbd*` at 0B, no mounts under
+  `/tmp/win-build-mnt`).
+- **Immediate next step**: boot disk B the same way (hand-built `virtio-blk-pci` invocation, not
+  `register-vm.sh`), confirm WinRM, and run the live Start Menu test (unlock if needed, press the
+  Windows key, check for the DCOM 10010 event / crashed process) - the single remaining check this
+  entire multi-day, multi-session investigation has been building toward.
+
+---
