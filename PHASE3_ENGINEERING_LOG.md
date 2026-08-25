@@ -3296,4 +3296,28 @@ production-confirmed), a fresh from-scratch build using the real, current `apply
 B, which predates today) through the full pipeline, and Server 2025 alongside Server 2022, would be
 the next real confirmation step. VM left running for further checks; not yet shut down.
 
+### Follow-up: the real precondition mismatch, and a permanent fix
+
+On review, tonight's/last night's device-topology confusion wasn't a bug in `register-vm.sh` -
+that script is correctly built for its own documented contract (a disk that has already been through
+`inject-virtio-spice.sh`, which every real `build.sh` run guarantees before `register-vm.sh` would
+ever be pointed at it). The actual gap was that disks A and B were both built by running
+`image-apply/*.sh` stages standalone for testing, stopping right after `make-bootable.sh`/
+`apply-unattend.sh` - never reaching `inject-virtio-spice.sh` - so they only ever had `viostor`
+(virtio-blk) registered, and `register-vm.sh`'s hardcoded `virtio-scsi-pci` assumption silently
+didn't hold for them. Deliberately not "fixed" by adding topology-detection logic to `register-vm.sh`
+(would be exactly the kind of hidden-assumption complexity this project's standards warn against, and
+`register-vm.sh` isn't wrong for what it's actually contracted to do).
+
+Instead, added `tools/boot-adhoc-target.sh <qcow2-path> [hostfwd-port] [short-name]` - a small,
+reusable wrapper turning tonight's hand-built invocation into a real, committed script, for exactly
+the disk class `register-vm.sh` doesn't cover: anything that's only been through
+`make-bootable.sh`/`apply-unattend.sh` and not yet `inject-virtio-spice.sh`. Same `virtio-blk-pci`/
+`q35`/OVMF/USB-tablet/QMP device model as `make-bootable.sh`'s own WinPE-session boot and
+`packer/boot-and-provision.pkr.hcl`'s `disk_interface = "virtio"`; fresh `OVMF_VARS_4M.fd` copy per
+run, matching the project-wide NVRAM convention `register-vm.sh`'s own header already documents. Its
+own header states the contract explicitly (which disk class it's for, and to use `register-vm.sh`
+instead once a disk has been through Stage 1/2) so this precondition mismatch can't get silently
+rediscovered the same way again.
+
 ---
