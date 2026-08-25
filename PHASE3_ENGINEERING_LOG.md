@@ -3229,3 +3229,71 @@ unexplained. That has **not** been directly observed yet. What's confirmed as of
   entire multi-day, multi-session investigation has been building toward.
 
 ---
+
+## Session (2026-08-25): disk B confirmed - Start Menu works, the ACL remediation is verified fixed
+
+Picked up exactly where the prior session left off: boot disk B
+(`server2022-20260824-161111.qcow2`, the new ACL-fixed `apply-image.sh` mechanism) via a hand-built
+`qemu-system-x86_64` invocation matching Packer's own `virtio-blk-pci` device model - not
+`register-vm.sh`, per the prior session's own explicit warning. Command used (worth turning into a
+real script - not yet done):
+
+```
+qemu-system-x86_64 -machine type=q35,accel=kvm -cpu host -m 4096 -smp 4 \
+  -netdev user,id=user.0,hostfwd=tcp::15985-:5985 -device virtio-net-pci,netdev=user.0 \
+  -drive file=<disk>,if=none,id=target,format=qcow2 \
+  -device virtio-blk-pci,drive=target,bootindex=1 \
+  -drive file=/usr/share/OVMF/OVMF_CODE_4M.fd,if=pflash,unit=0,format=raw,readonly=on \
+  -drive file=<fresh-copy-of-OVMF_VARS_4M.fd>,if=pflash,unit=1,format=raw \
+  -device qemu-xhci,id=usbbus -device usb-tablet,bus=usbbus.0 \
+  -qmp unix:/tmp/diskB.sock,server,nowait -display none
+```
+
+A fresh `OVMF_VARS_4M.fd` copy (no persisted NVRAM boot entries) was sufficient - OVMF's own fallback
+boot-device enumeration found the Windows Boot Manager on the target disk's ESP without needing any
+prior `Boot####` NVRAM variable, consistent with last session's own "the disk boots without
+`register-vm.sh`'s libvirt-managed nvram file" observation.
+
+**Boot progression, watched via `tools/qmp-screenshot.py`, not guessed at**: TianoCore splash held
+for ~45-75s (matching last session's slow-but-not-hung pattern, not the indefinite hang the wrong
+`virtio-scsi-pci` topology produced), then a black transitional screen, then - within the next
+~60s - a live, already-logged-in desktop (auto-logon, `FirstLogonCommands`' own PowerShell window
+still open, a "Networks - allow discoverable?" prompt from the newly-appeared virtio NIC). CPU usage
+stayed high (150-240%) throughout, confirming the firmware/kernel was actively working, not hung -
+worth checking this way rather than assuming a stuck splash means failure.
+
+**WinRM confirmed live** - a bare GET to `/wsman` returned the expected `405`/`Allow: POST` signature
+immediately. `pywinrm` needed `transport='basic'` explicit (default negotiate got a `401`) - this
+disk's own `FirstLogonCommands` enables only `Basic`/`AllowUnencrypted` over HTTP, per
+`unattend-server2022.xml`'s existing WinRM-enablement step; not a new finding, just a reminder for
+next time this is scripted. `hostname` returned `ACLTEST2`, matching this build's own
+`apply-unattend.sh`-substituted `ComputerName` - confirms this genuinely was disk B, not a mixup.
+
+**The actual test**: before touching anything, confirmed `StartMenuExperienceHost` was already
+running (PID 5856, started 8:32:04 PM, i.e. during the disk's own first-boot Start Menu prelaunch) and
+that the Application log had no Event 1000 crash and the System log had no
+`Microsoft-Windows-DistributedCOM` Event 10010. Sent a single `meta_l` (Windows key) via
+`tools/qmp-sendkey.py`, waited 3s, screenshotted. **The Start Menu opened fully and cleanly** - full
+Windows Server tile grid (Server Manager, PowerShell/ISE, Task Manager, Control Panel, Remote Desktop,
+Event Viewer, File Explorer), the full alphabetized app list on the left, no black or empty pane, no
+crash dialog. Re-checked immediately after: `StartMenuExperienceHost` still PID 5856 with the
+identical start time (did not crash/respawn), still zero Event 1000 or DCOM 10010 events logged.
+
+**This is the fix, confirmed - not inferred.** The original bug this entire multi-day, multi-session
+investigation exists to fix (`StartMenuExperienceHost.exe` faulting in `Windows.UI.Xaml.dll`, root-
+caused in Finding 3A-5 to a `ServicesPipeTimeout`-related DCOM boot-race that the wimlib ACL-drop
+bug's remediation was meant to fix as a downstream side effect) does not reproduce on a disk built
+with the new, ACL-fixed `apply-image.sh`. Disk A (old, pre-remediation mechanism) was not re-tested
+for contrast in this session - last night's session already confirmed disk A boots (to rule out the
+device-topology red herring) but did not reach the Start Menu keypress test before stopping; doing so
+would be the natural completing step if a clean A-vs-B contrast is wanted, but is not strictly
+necessary to call this fix confirmed, since the failure mode (Event 10010 / crash) is well-documented
+from many prior sessions on unremediated disks.
+
+**Not yet done**: this success has not yet been generalized past this one disk/session - per this
+project's own reproducibility standard (2-3 independent successes before calling something
+production-confirmed), a fresh from-scratch build using the real, current `apply-image.sh` (not disk
+B, which predates today) through the full pipeline, and Server 2025 alongside Server 2022, would be
+the next real confirmation step. VM left running for further checks; not yet shut down.
+
+---
