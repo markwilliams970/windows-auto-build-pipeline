@@ -3368,4 +3368,21 @@ Host confirmed fully clean at the end of this follow-up (`virsh list --all`, `ls
 checked): no stray nbd attachments, no stray mounts, no leftover test domains - only the five
 pre-existing shut-off domains from before this session remain.
 
+### Housekeeping: disks A and B retired now that the fix is confirmed AND committed
+
+Per explicit direction, once the register-vm.sh enforcement above was committed: disk B
+(`server2022-20260824-161111.qcow2`) shut down cleanly via WinRM `Stop-Computer -Force` (a QMP ACPI
+`system_powerdown` was tried first and didn't take effect - plausibly the still-open Start Menu from
+this session's own earlier keypress test held focus; `Stop-Computer -Force` over WinRM is the same
+proven fallback disk A's own shutdown used last session), its `acltest2` libvirt domain undefined
+(`--nvram`), and its qcow2 deleted. Disk A (`server2022-ab-old-20260824-194437.qcow2`) had no running
+process; its `abtestold` domain was undefined the same way and its qcow2 deleted directly. ~19GB
+freed. This reverses the prior "do not delete either without checking first" instruction from
+Follow-up 1 above - correctly, not a lapse: that instruction held only while these two disks were the
+sole evidence the fix worked. They no longer are - this session's Start Menu test, the WinRM/event-log
+output, and the actual code fix are all now independently recorded in this log and committed to git,
+so the disks themselves stopped being load-bearing evidence once that commit landed. Host confirmed
+fully clean after (`ps`/`lsblk`/`mount` all checked): no qemu processes, no nbd attachments, no stray
+mounts, no leftover NVRAM files.
+
 ---
