@@ -127,6 +127,23 @@ if [[ ! -f "${DRIVER_CACHE_DIR}/netkvm/netkvmp.exe" ]]; then
   7z e -y -o"${DRIVER_CACHE_DIR}/netkvm" "$VIRTIO_WIN_ISO" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvm.inf" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvm.sys" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvm.cat" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvmp.exe" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvmco.exe"
 fi
 
+# Unmounted before the driver-file overwrite, deliberately - see PHASE3_ENGINEERING_LOG.md's
+# "Update 5" finding (2026-08-24). Writing viostor.sys/netkvm.sys through this ntfs-3g uid=/gid=
+# mount (as a plain `cp`, the original approach) silently resets the file's real NTFS security
+# descriptor to the mount's own generic default, re-breaking the exact bug apply-image.sh's own
+# switch to a native NTFS-volume writer (--strict-acls) fixed for the rest of the disk - confirmed
+# directly via ntfsinfo's per-file Security ID (the boot-critical viostor.sys ended up with a
+# different, generic ID than every other untouched driver file shares). ntfscp operates directly
+# on the block device, like wimlib's own native apply mode, and was confirmed to leave a file's
+# pre-existing security descriptor untouched when overwriting its content - but it needs exclusive
+# access to the device, so the FUSE mount used for the bcdboot-log check above and the registry
+# edits below must not be active at the same time.
+log "Copying OS-correct viostor.sys/netkvm.sys into System32/drivers via ntfscp (overwrites WinPE's own generic viostor.sys copy), not through the ntfs-3g mount"
+sudo umount "$WIN_MNT"
+sudo ntfscp "${NBD_DEV}p3" "${DRIVER_CACHE_DIR}/viostor/viostor.sys" /Windows/System32/drivers/viostor.sys
+sudo ntfscp "${NBD_DEV}p3" "${DRIVER_CACHE_DIR}/netkvm/netkvm.sys" /Windows/System32/drivers/netkvm.sys
+sudo mount -t ntfs-3g -o uid="$(id -u)",gid="$(id -g)" "${NBD_DEV}p3" "$WIN_MNT"
+
 log "Generating and merging DriverDatabase registrations (viostor, netkvm) into the SYSTEM hive"
 SYSTEM_HIVE="${WIN_MNT}/Windows/System32/config/SYSTEM"
 TMP_REG_DIR="$(mktemp -d)"
@@ -163,10 +180,6 @@ REGEOF
 hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SYSTEM' "$SYSTEM_HIVE" "${TMP_REG_DIR}/services-pipe-timeout.reg"
 
 rm -rf "$TMP_REG_DIR"
-
-log "Copying OS-correct viostor.sys/netkvm.sys into System32/drivers (overwrites WinPE's own generic viostor.sys copy)"
-cp "${DRIVER_CACHE_DIR}/viostor/viostor.sys" "${WIN_MNT}/Windows/System32/drivers/viostor.sys"
-cp "${DRIVER_CACHE_DIR}/netkvm/netkvm.sys" "${WIN_MNT}/Windows/System32/drivers/netkvm.sys"
 
 log "Staging NetKVM's full driver package at C:\\Drivers\\NetKVM\\${DRIVER_SUBFOLDER}\\amd64\\ for the live pnputil FirstLogonCommands step"
 DEST="${WIN_MNT}/Drivers/NetKVM/${DRIVER_SUBFOLDER}/amd64"

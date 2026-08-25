@@ -129,3 +129,31 @@ markw ALL=(root) NOPASSWD: /usr/bin/ntfsfix /dev/nbd[0-9]*
 # See "Update 4" above. --strict-acls is a required literal suffix, not a
 # wildcard-open trailing flag - by design.
 markw ALL=(root) NOPASSWD: /usr/bin/wimlib-imagex apply /home/markw/Documents/Projects/windows-builds/windows-auto-build-pipeline/image-apply/output/wim-cache/*/install.wim * /dev/nbd[0-9]*p3 --strict-acls
+
+# Update 5 (2026-08-24): the "Update 4" fix wasn't the whole story. make-bootable.sh
+# still overwrites the boot-critical viostor.sys/netkvm.sys drivers via a plain `cp`
+# through the old ntfs-3g uid=/gid= FUSE mount, immediately after apply-image.sh wrote
+# the rest of the volume with correct security descriptors - re-breaking the ACL on
+# exactly the one file that matters most for booting at all. Confirmed directly, not
+# just inferred: ntfsinfo -F's per-file "Security ID" (NTFS's shared $Secure-table
+# reference - files with an identical ID share an identical security descriptor) shows
+# 6 of 7 checked System32\drivers\ files sharing one common ID (318, presumably the
+# correct one the native writer applied consistently), while viostor.sys - the one file
+# make-bootable.sh's `cp` touches - has a different ID (487), an outlier. `ntfscp`
+# (ntfs-3g's own single-file copy-into-volume tool, operating directly on the block
+# device like wimlib's native apply mode, not through the FUSE translation) is the
+# candidate fix - not yet confirmed to preserve the correct descriptor, this rule exists
+# to test that. Source paths pinned to this project's own virtio-drivers cache
+# (image-apply/output/virtio-drivers/, populated by make-bootable.sh itself from the
+# cached virtio-win ISO); the OS-driver-subfolder wildcard mirrors the equivalent
+# wimlib-imagex rule above for the same reason (already validated by
+# os_driver_subfolder() in image-apply/lib/common.sh before this would ever run).
+markw ALL=(root) NOPASSWD: /usr/sbin/ntfscp * /dev/nbd[0-9]*p3 /home/markw/Documents/Projects/windows-builds/windows-auto-build-pipeline/image-apply/output/virtio-drivers/*/viostor/viostor.sys /Windows/System32/drivers/viostor.sys
+markw ALL=(root) NOPASSWD: /usr/sbin/ntfscp * /dev/nbd[0-9]*p3 /home/markw/Documents/Projects/windows-builds/windows-auto-build-pipeline/image-apply/output/virtio-drivers/*/netkvm/netkvm.sys /Windows/System32/drivers/netkvm.sys
+# Same "bare invocation, no flags" gotcha as ntfsfix above (`ntfscp device src dest`, no
+# flags, is a single space between binary and device - the two rules above require a
+# flag token before the device to satisfy their leading `*`). make-bootable.sh's own
+# real invocation passes no flags, so it needs these bare-form rules too, discovered by
+# the script actually failing "sudo: a password is required" on its first real run.
+markw ALL=(root) NOPASSWD: /usr/sbin/ntfscp /dev/nbd[0-9]*p3 /home/markw/Documents/Projects/windows-builds/windows-auto-build-pipeline/image-apply/output/virtio-drivers/*/viostor/viostor.sys /Windows/System32/drivers/viostor.sys
+markw ALL=(root) NOPASSWD: /usr/sbin/ntfscp /dev/nbd[0-9]*p3 /home/markw/Documents/Projects/windows-builds/windows-auto-build-pipeline/image-apply/output/virtio-drivers/*/netkvm/netkvm.sys /Windows/System32/drivers/netkvm.sys

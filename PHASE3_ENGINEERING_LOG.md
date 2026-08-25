@@ -2999,3 +2999,121 @@ driver-copy step in isolation and checking the file/volume state immediately bef
   sequence has already run and failed.
 
 ---
+
+## Session (continued, 2026-08-24): the make-bootable.sh theory was pursued to a real, direct test -
+## and disproven. `ntfscp` works as designed; the boot regression is unrelated to it. The actual cause
+## remains open, now narrowed specifically to `apply-image.sh`'s own native-writer output
+
+Followed the prior entry's own recommended next step exactly: isolate `make-bootable.sh`'s
+driver-copy step, fix it, and test directly rather than continuing to theorize from static analysis.
+The fix itself is sound and confirmed working; it did not, however, fix the actual boot failure - a
+real, honest negative result that reframes where the remaining problem must live.
+
+### Diagnosis, confirmed directly: `make-bootable.sh`'s plain `cp` was resetting `viostor.sys`'s
+### security descriptor
+
+Reused the already-contaminated test disk from the prior entry (`server2022-20260824-140853.qcow2`)
+for a cheap, no-rebuild-needed check: compared per-file NTFS `Security ID` (via `ntfsinfo -F -v` -
+NTFS's own shared-`$Secure`-table reference; files with an identical ID share an identical security
+descriptor) across `System32\drivers\`. Six of seven checked files shared one common ID (318) -
+the consistent, correctly-applied descriptor from `apply-image.sh`'s native writer. `viostor.sys` -
+the one file `make-bootable.sh`'s `cp` overwrites - was the outlier, at a different ID (487).
+
+### Fix: `ntfscp` instead of `cp`, confirmed to behave correctly
+
+`ntfscp` (ntfs-3g's own single-file copy-into-volume tool, operating directly on the block device
+like `wimlib`'s native apply mode) was scoped via two more sudoers rules, installed, and swapped in
+for `make-bootable.sh`'s two driver-file overwrites. **One real gotcha, the identical class already
+documented for `ntfsfix` in this same sudoers file**: the first version of the rules required a flag
+token before the device argument (`ntfscp * /dev/nbd...`), but `make-bootable.sh`'s own real
+invocation passes no flags at all - a single space, not the two the glob expected - so the rule
+silently didn't match and the real run failed with "a password is required." Fixed by adding explicit
+bare-form rules alongside the flagged ones, same fix as the ntfsfix precedent.
+
+Confirmed directly, in isolation, that `ntfscp` does what it's supposed to: overwrote `viostor.sys`'s
+content (`Old file size: 65176` → `New file size: 65176`, genuinely rewritten) and its Security ID was
+**unchanged** afterward - `ntfscp` preserves whatever descriptor already exists rather than resetting
+it to a generic default, unlike the old `cp`-through-FUSE-mount path. This part of the fix is real and
+working as designed.
+
+### Re-run on the contaminated disk: no change - and a reasoning correction
+
+Re-ran the fixed `make-bootable.sh` against the same (already-touched) test disk. `viostor.sys` still
+showed ID 487. At first read this looked like a validation failure, but it's actually the expected
+result once you account for `ntfscp`'s own preserve-don't-reset behavior: this disk's `viostor.sys`
+was already corrupted to 487 by earlier manual diagnostic pokes (including an earlier ad hoc `ntfscp`
+test) *before* the script fix was ever applied - and since nothing in this pipeline (not `ntfscp`, and
+apparently not WinPE's own overwrite either) actually resets an already-set descriptor, the disk could
+never validate the fix no matter how many times the now-correct script ran against it. The old,
+contaminated disk and its libvirt domain were deleted - no further diagnostic value once this was
+understood.
+
+### A genuinely fresh, uncontaminated build - and a second, more important reasoning correction
+
+Ran the complete sequence from scratch on a brand-new disk (`server2022-20260824-161111.qcow2`):
+`partition-disk.sh` → `apply-image.sh` (native writer) → the fixed `make-bootable.sh` (`ntfscp`) →
+`apply-unattend.sh`. **`viostor.sys` still showed ID 487** - on a disk that had never been touched by
+the old broken `cp` path at any point in its history. Since `ntfscp` is confirmed to only preserve an
+existing descriptor, this means 487 was never coming from *our* write step at all in the first place.
+The likely real explanation: `viostor.sys` doesn't exist in Microsoft's own `install.wim` (it's a
+third-party VirtIO driver) - its first-ever write on any build is WinPE's own `startnet.cmd`
+unconditionally copying its own baked-in copy during the `bcdboot` pass, from within WinPE's own
+distinct security context. A deterministic, reproducible, but very plausibly **benign** artifact of
+that context - not evidence of corruption by anything this project's own scripts do.
+
+Checked while here: `netkvm.sys` showed a structurally different (older, legacy-format,
+no-Security-ID) `$STANDARD_INFORMATION` attribute than every other file - a real, separate anomaly,
+most likely because `netkvm.sys` (also absent from the base WIM) is being *created* fresh by `ntfscp`
+rather than overwritten, and `ntfscp`'s own file-creation code path apparently defaults to an older
+attribute format. Not yet investigated further - flagged as a real, if likely non-boot-blocking (NIC
+driver, not needed until Windows is already running), correctness gap worth a closer look later.
+
+### The direct test: booted the fresh disk anyway - still `INACCESSIBLE_BOOT_DEVICE`
+
+Registered (`register-vm.sh`) and booted the fresh, fixed disk to get a real answer rather than keep
+reasoning from static analysis. **Identical failure**: `INACCESSIBLE_BOOT_DEVICE`, this time after a
+longer, but ultimately unsuccessful, loading period at the TianoCore splash (still progressing/
+animating, unlike the earlier indefinite hang - a third distinct timing profile across three boot
+attempts now, on what should be functionally the "most fixed" disk yet).
+
+**This directly disproves the session's own working theory.** The `make-bootable.sh`/`viostor.sys`
+ACL angle was real, well-evidenced, and worth pursuing - but fixing it made no difference to the
+actual boot outcome. It was very likely a genuine but incidental artifact (WinPE's own security
+context), not the cause.
+
+### Where this leaves the investigation
+
+The old `apply-image.sh` (FUSE-mounted wimapply) + old `make-bootable.sh` (`cp`-based) combination is
+confirmed, by this project's own extensive Phase 3 production history, to have booted reliably across
+many real builds. The only variable that has changed since is `apply-image.sh`'s own switch to
+wimlib's native NTFS-volume writer for the bulk of the OS filesystem - `make-bootable.sh`'s own
+contribution is now directly ruled out as the differentiator. The actual cause must be something
+about how the native writer lays out the volume itself - not an ACL/security-descriptor question at
+all (that mechanism is confirmed working correctly), but something more structural: NTFS attribute
+residency, MFT layout, compression, or some other on-disk difference between wimlib's own internal
+NTFS-3G library writes and the kernel FUSE driver's writes, that OVMF/Windows' own early-boot code
+path is sensitive to in a way `ntfsfix -n`'s own consistency check (clean on every disk checked so
+far) doesn't catch.
+
+**Not yet attempted**: a clean, isolated A/B test - identical disk/OS, only `apply-image.sh`'s own
+write mechanism (old FUSE-mounted vs. new native) varying - to directly confirm the native writer
+itself is the actual differentiator before investigating its own internals further. This is the
+natural next step, not yet run as of this entry.
+
+### Stopping place
+
+- `acltest2` (the fresh test's libvirt domain) was destroyed (stopped) after the failed boot, not
+  undefined - disk (`server2022-20260824-161111.qcow2`) and domain both left in place in case useful
+  for the next diagnostic pass.
+- All `qemu-nbd`/mount state confirmed torn down (`lsblk` all `/dev/nbd*` at 0B, no mounts under
+  `/tmp/win-build-mnt`).
+- `image-apply/make-bootable.sh` and `tools/sudoers-windows-auto-build-pipeline` (now with four
+  `ntfscp` rules - two flagged, two bare-form) are local, uncommitted changes as of this entry, same
+  status as `apply-image.sh`/the wimlib rule from the prior entry - **none of this is safe to fold
+  into the real build pipeline yet**. The `ntfscp` mechanism itself is a real, confirmed-correct fix
+  worth keeping regardless of whether it turns out to matter for this specific bug - it corrects a
+  real (if apparently non-fatal) ACL discrepancy on `viostor.sys` either way.
+- `netkvm.sys`'s own legacy-attribute-format anomaly (found, not investigated) is a loose thread worth
+  picking up separately from the main boot-failure investigation.
+
+---
