@@ -198,8 +198,13 @@ virsh -c qemu:///system start <vm_name>
 virt-viewer --connect qemu:///system <vm_name>
 ```
 
-As of this writing this script's device model has not yet been confirmed by a real `virsh start`
-boot end-to-end — see "Risks and limitations" below.
+This script's device model is confirmed by a real `virsh start` boot, live-verified over WinRM, for
+Server 2022 and Server 2025 (2026-08-26) — Windows 11's own device model (its NIC also swaps, unlike
+Server 2022/2025) remains unconfirmed by a real boot; see "Risks and limitations" below.
+
+`register-vm.sh` also refuses to register a disk that hasn't actually been through
+`inject-virtio-spice.sh` yet (checked via an on-disk completion marker) rather than silently applying
+the wrong device model to it.
 
 ## Risks and limitations
 
@@ -264,13 +269,19 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   against what's hardcoded in `image-apply/lib/common.sh`/`tools/gen-viostor-ddb-reg.py`, and fails
   loudly before a build runs against drifted media, is identified as worthwhile but not yet built
   (`CLAUDE.md`'s "Version-sensitivity and brittleness" standard).
-- `register-vm.sh`'s device model (virtio-scsi + QXL/SPICE) needs a real `virsh start` boot confirmed
-  end-to-end for both build paths (Windows 11 and Server 2022/2025) — written from the already-proven
-  QEMU-invocation device topology, not yet independently re-verified under libvirt's own PCI address
-  allocation.
-- `dev/role-test.pkr.hcl` (the fast-iteration harness, separate from the production `build.sh` path)
-  has the same fixed-per-OS Packer output-directory pattern that caused the collision bug fixed above
-  in the production path — not yet addressed there.
+- `register-vm.sh`'s device model (virtio-scsi + QXL/SPICE) is confirmed by a real `virsh start` boot
+  for Server 2022 and Server 2025 (2026-08-26) — live-verified over WinRM, not just a screenshot.
+  **Windows 11's own device model (its NIC also swaps, unlike Server 2022/2025) remains unconfirmed
+  by a real boot** — flagged as an Open Item in `CLAUDE.md`.
+- `register-vm.sh` now enforces its own precondition instead of assuming it: it refuses to register a
+  disk that hasn't actually been through `inject-virtio-spice.sh` (checked via an on-disk completion
+  marker), closing a real device-topology-mismatch bug that cost real debugging time before it was
+  caught.
+- ~~`dev/role-test.pkr.hcl` (the fast-iteration harness, separate from the production `build.sh`
+  path) has the same fixed-per-OS Packer output-directory pattern that caused the collision bug fixed
+  above in the production path~~ — **fixed 2026-08-26**, same `run_id`-threading approach as
+  `build.sh`'s own fix. Not yet exercised by a real end-to-end Packer build, since this harness's own
+  Phase 2 reference disks no longer exist on disk (a separate, pre-existing gap).
 
 ## Acknowledgements
 
