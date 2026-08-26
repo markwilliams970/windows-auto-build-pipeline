@@ -3541,4 +3541,53 @@ whole investigation exists to fix was already directly confirmed via disk B's ow
 test two sessions ago; this run's job was confirming the *pipeline*, not re-litigating the Start Menu
 fix itself). VM left running, per explicit request, for direct inspection.
 
+Session closed out with explicit disk hygiene: `win2022prod` shut down gracefully (`virsh shutdown`,
+honored the ACPI request from a real desktop this time - no OOBE-screen complication), domain
+undefined (`--nvram`), and all artifacts deleted (~20.7GB reclaimed: the 12GB final qcow2, the 8.7GB
+stale pre-Packer copy, and the `virtio-spice-work` scratch directory) - this disk's evidentiary value
+is now fully captured in this log entry, so keeping the qcow2 itself around added nothing further.
+
+---
+
+## Session (2026-08-26, continued): Server 2025 + IIS E2E - the third and final OS variant, same
+## clean result, closing out full three-OS confirmation of this pipeline with both fixes in place
+
+Same `build.sh server2025` run, same `iis`-only profile, same fully-detached/polled approach as the
+Server 2022 run above. **Result: identically clean, no errors, no workarounds** - partition through
+Packer handoff (IIS installed and verified, `W3SVC` running, HTTP 200), `inject-virtio-spice.sh`
+Stage 1 (vioscsi staged+live-verified, netkvm already Up, spice-guest-tools installed, qxldod staged)
+and Stage 2 (WinRM confirmed, verification passed cleanly - `qxldod confirmed bound`, `NIC Up, QXL OK,
+vdservice Running - all confirmed`) both graceful, both exited on their own. One real, worth-noting
+timing difference from Server 2022: the Packer/IIS phase took noticeably longer this run (IIS install
+itself ran ~20+ minutes before completing, vs. Server 2022's few minutes) - watched directly via `ps`
+CPU% during the wait to confirm the qemu process was genuinely still working (300%+ CPU throughout,
+not stalled) rather than assume a hang from elapsed time alone. This matches this project's own
+established history of Server 2025 running heavier first-boot/servicing work than Server 2022 (Session
+1's `cpu_model` finding, Phase 2's own Server 2025-specific WinRM timeout investigation) - not a new
+concern, just reconfirmed under a different workload (IIS role install rather than first-boot
+servicing).
+
+Final artifact: `packer/output/server2025-20260826-113119/server2025-20260826-113119.qcow2`.
+`register-vm.sh`'s precondition check passed again against a genuine marker. Defined and started
+`win2025prod`; `virsh screenshot` showed a live Server Manager Dashboard - though its own "Roles: 0"
+counter looked wrong at first glance (a stale/unrefreshed dashboard widget right after boot, not a
+real absence - Server Manager's role inventory doesn't always refresh live). Rather than trust the
+dashboard, verified directly over WinRM against the guest's real libvirt-network IP
+(`192.168.122.160`, no hostfwd tunnel needed since this is a real `virsh`-started VM, not an ad hoc
+qemu invocation): `W3SVC` `Running`, `Invoke-WebRequest http://localhost` returned `200`, `hostname`
+returned `WIN2025PROD` - genuine, live confirmation, not inferred from a UI widget that turned out to
+be misleading.
+
+**All three target OSes are now confirmed, end-to-end, through the current production pipeline with
+both of last session's fixes in place**: Server 2022 (this session, above), Server 2025 (this entry),
+and Windows 11 (already production-ready as of Phase 3.4/3.5). Windows 11 does run the same
+`inject-virtio-spice.sh` script (including Stage 2's verification block, identical to Server
+2022/2025's) - checked directly rather than assumed: its own NIC-swap `NIC_VERIFY_PS` branch (`DO_NIC_SWAP=true`,
+only exercised on Windows 11) measures 2267 chars through the real `assert_winrm_ps_budget` guard,
+comfortably under the 7800 budget, same margin as the other two OSes' branch. Windows 11 itself was
+not rebuilt this session - this is a static check of the payload it would send, not a fresh live run -
+but it closes the "did the fix generalize to the one untested code path" gap the guard's own design
+should already cover for any OS. VM left running for inspection, matching the Server 2022 session's
+own pattern - not yet cleaned up as of this entry.
+
 ---
