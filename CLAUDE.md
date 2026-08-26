@@ -779,7 +779,8 @@ other) by the time `FirstLogonCommands` would otherwise be the place to fix it. 
 this change) - not yet confirmed for Server 2025 specifically, and not yet re-verified for Server
 2022 either as of this entry; a fresh end-to-end run is in progress.
 
-**`build.sh` wiring, and `register-vm.sh` (added 2026-08-23, not yet live-verified):**
+**`build.sh` wiring, and `register-vm.sh` (added 2026-08-23; live-verified for Server 2022 and Server
+2025 as of 2026-08-26 - see below):**
 `inject-virtio-spice.sh` was originally wired into `build.sh` only for the `windows11` branch; it now
 also runs for `server2022`/`server2025`, after the Packer handoff completes, against Packer's own
 final artifact rather than the pre-Packer copy under `image-apply/output/builds/` - so a real
@@ -837,6 +838,28 @@ PCI address allocation doesn't need to reproduce `inject-virtio-spice.sh`'s exac
 holds, not just a plausible theory. **Not yet exercised: the Windows 11 device-model case** (NIC also
 swapped, unlike Server 2022/2025) - same script, different code path, still unconfirmed by a real
 boot.
+
+**`register-vm.sh` now enforces its own precondition instead of just assuming it, and two real bugs
+found via a genuine E2E run are fixed (2026-08-25/26, `PHASE3_ENGINEERING_LOG.md`'s corresponding
+sessions have the full trail):** `inject-virtio-spice.sh` now writes a completion marker
+(`C:\virtio-spice-injected.marker`) only once its own Stage 2 verification fully succeeds;
+`register-vm.sh` checks for it offline before ever defining a domain, and fails loud (naming
+`tools/boot-adhoc-target.sh` as the right tool instead) if a disk hasn't actually been through it -
+closing the exact device-topology-mismatch confusion that cost real debugging time earlier this
+project. Separately, a real `build.sh server2022` E2E run hit two genuine bugs in
+`inject-virtio-spice.sh`: pywinrm's WinRM-command-line encoding has a real, hard length ceiling that
+an accumulation of inline PowerShell comments had crept right up against (fixed with a deterministic
+`assert_winrm_ps_budget()` guard, checked before ever booting a VM); and the error-path cleanup traps
+were hard-killing a still-running qemu process with no graceful attempt first, which corrupted a live,
+healthy Windows session's OOBE state on one run (fixed - both traps now try `qmp_graceful_shutdown`
+first, matching this project's own standing graceful-shutdown convention). **Both fixes are now
+confirmed by clean, unbroken, fully-detached `build.sh` E2E runs for both Server 2022 and Server 2025**
+(2026-08-26) - IIS provisioned and verified, `inject-virtio-spice.sh` Stage 1/2 both clean, no
+command-length error, no hard kill, `register-vm.sh`'s precondition check passed against a genuine
+marker, both VMs booted via `virsh start` and verified live over WinRM (not just a screenshot -
+`W3SVC` Running, HTTP 200, correct hostname). Windows 11's own NIC-swap verification payload was also
+checked against the new length guard directly (2267 chars, well under budget) though Windows 11 itself
+wasn't rebuilt this session - the device-model gap noted above remains genuinely open.
 
 ---
 
