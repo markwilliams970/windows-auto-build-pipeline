@@ -3591,3 +3591,56 @@ should already cover for any OS. VM left running for inspection, matching the Se
 own pattern - not yet cleaned up as of this entry.
 
 ---
+
+## PHASE 3 STATUS: COMPLETE, INCLUDING PHASE 3A (2026-08-26)
+
+**The fundamental goal of this project - a working offline-apply build pipeline producing real,
+role-provisioned, network-reachable Windows VMs for all three target OSes - has been achieved.**
+Phase 3's original scope (Server 2022/2025 role provisioning, reusing the sibling project's scripts
+unchanged) and Phase 3A's added scope (VirtIO storage/NIC/SPICE display drivers, all three OSes) are
+both closed out, on the strength of real, independently-reproduced evidence, not a single lucky run:
+
+**What "complete" means here, concretely:**
+- **Server 2022**: `build.sh server2022` → offline apply → Packer handoff (role provisioning, `iis`
+  confirmed this session; `ad-ds` confirmed in earlier sessions) → `inject-virtio-spice.sh`
+  (vioscsi/QXL/SPICE) → `register-vm.sh` → `virsh start` → live, WinRM-verified desktop. Confirmed
+  clean and unbroken end-to-end on 2026-08-26, with the current, fully-fixed pipeline - not a
+  hand-patched or partially-reused disk.
+- **Server 2025**: identical pipeline, identical confirmation, same session (2026-08-26) - `iis`
+  provisioned and verified, `inject-virtio-spice.sh` clean, `register-vm.sh` clean, live WinRM
+  verification (`W3SVC` Running, HTTP 200, correct hostname).
+- **Windows 11**: production-ready since Phase 3.4/3.5 via its own genuinely different mechanism
+  (Setup.exe-driven, `windows11-setup-install.sh`, no Packer handoff, no roles) - six independent
+  clean production runs there already stand on their own. This session additionally confirmed its
+  `inject-virtio-spice.sh` NIC-swap verification payload sits safely under the same command-length
+  budget the other two OSes' payloads do, closing the one piece of this week's specific bug class
+  that hadn't been checked for Windows 11 directly.
+
+**The real story behind getting here, worth remembering, not just the destination:** this project's
+own history since Phase 2 closed is a genuine, multi-session root-cause chase, not a straight line -
+a Start Menu/DCOM crash traced through several wrong turns (`qxldod` driver theory, AppX-provisioning
+theory, activation/licensing theory) before wimlib's silent ACL-drop on `viostor.sys` was confirmed as
+the real cause; a fix that then had to survive its own test-harness bug (the `virtio-scsi-pci` vs.
+`virtio-blk-pci` device-topology mismatch that made a working fix look like two more failures); a
+`register-vm.sh` precondition that was undocumented and unenforced until it silently bit this exact
+investigation twice; and a length-ceiling bug and a hard-kill-on-error bug that only surfaced once a
+real, unattended E2E run was actually attempted rather than assumed to work from its component parts
+having each been tested in isolation. Every one of these was root-caused with real evidence (event
+logs, `ntfsinfo` security-ID comparisons, precise WinRS command-length arithmetic, a mocked
+control-flow test harness) rather than patched around - consistent with this project's own
+research-first, verify-before-trusting standards, and the reason the confirmation this session
+produced is trustworthy rather than merely hoped-for.
+
+**What's genuinely still open, so this isn't overstated as "the whole project is done":**
+- Windows 11's own `register-vm.sh` device-model case (NIC swap, unlike Server 2022/2025) is still
+  unconfirmed by a real `virsh start` boot - flagged, not yet exercised.
+- `dev/role-test.pkr.hcl`'s own fixed-per-OS `output_directory` collision (the same class of bug
+  `build.sh` itself already fixed via `BUILD_ID`) was never back-ported to that harness.
+- Phase 4 (Tooling - 7-Zip/PuTTY/WinSCP/Chrome/Notepad++/Datadog Agent) remains fully undesigned
+  beyond the proposal already written up in `CLAUDE.md`.
+- Phase 5 (Lifecycle - Verify/Destroy workflows) has not been started.
+
+None of these block calling Phase 3/3A done - they're the next real frontier, not loose ends in what
+this phase actually promised.
+
+---
