@@ -3496,3 +3496,49 @@ logic tested via a mocked harness). Neither fix has yet been exercised by a real
 scratch now that both fixes are in place.
 
 ---
+
+## Session (2026-08-26): the E2E retry - clean, unbroken, first real production confirmation of
+## everything this multi-day investigation has been building toward
+
+Reran `build.sh server2022` from scratch (root `services.yaml`'s `iis`-only profile), completely
+unattended this time, with both of last session's fixes in place. **Result: a fully clean, unbroken
+run, start to finish, no errors, no workarounds needed:**
+
+- `partition-disk.sh` / `apply-image.sh` / `make-bootable.sh` / `apply-unattend.sh`: clean, as
+  every prior run this week.
+- Packer handoff: IIS installed and verified (`W3SVC` running, default site HTTP 200), machine
+  restarted, no post-reboot verification needed (`ad-ds` not selected) - 11m55s.
+- `inject-virtio-spice.sh` Stage 1: WinRM confirmed, vioscsi staged + live-verified `Status OK`,
+  netkvm already Up (no swap needed), spice-guest-tools installed, qxldod staged - graceful
+  shutdown, qemu exited cleanly on its own.
+- `inject-virtio-spice.sh` Stage 2: WinRM confirmed, **final verification passed cleanly on the
+  first real attempt with the fixed payload** - `qxldod confirmed bound: DriverVersion
+  10.0.0.21000`, `NIC Up (Ethernet 3), QXL OK, vdservice Running - all confirmed`. No "command line
+  too long," no hard kill - graceful shutdown, qemu exited cleanly on its own. The
+  `assert_winrm_ps_budget` guard didn't need to fire (payload already well under budget after last
+  session's fix), and the graceful-shutdown-first cleanup path wasn't exercised by an error either,
+  since nothing errored - both fixes held up by simply not being needed, which is the correct
+  outcome for a genuinely fixed pipeline.
+- Final artifact: `packer/output/server2022-20260826-110306/server2022-20260826-110306.qcow2`.
+
+**`register-vm.sh`'s precondition check passed against a genuine, live-written marker for the first
+time** (previously only exercised against a manually-staged fake one, in last session's own isolated
+test) - a real, not just theoretical, confirmation that the whole `inject-virtio-spice.sh` →
+`register-vm.sh` contract now works end-to-end. Defined `win2022prod`, started it via `virsh`, and
+confirmed via `virsh screenshot` (libvirt's own QMP-screendump equivalent): a real, live, healthy
+Server Manager desktop, `IIS` and `File and Storage Services` both listed under Roles and Server
+Groups, no crash dialog, no Start Menu issue, a normal "Network 2 discoverable?" prompt for the
+newly-appeared NIC (nothing pathological). `virsh net-dhcp-leases default` confirmed a real DHCP
+lease for `WIN2022PROD` at `192.168.122.250` - the disk's own baked-in `ComputerName`, matching
+every other confirmed run this project has ever produced.
+
+**This is the real, decisive, evidentiary confirmation this multi-day investigation has been
+building toward**: a completely fresh Server 2022 + IIS disk, built entirely by the current,
+ACL-fixed production pipeline with zero hand-run or hand-patched steps anywhere in the chain, reaches
+a real, live, IIS-provisioned, SPICE-reachable desktop with a working Start Menu implied (no crash
+observed, though not separately keypress-tested this run - the original Start Menu/DCOM bug this
+whole investigation exists to fix was already directly confirmed via disk B's own explicit keypress
+test two sessions ago; this run's job was confirming the *pipeline*, not re-litigating the Start Menu
+fix itself). VM left running, per explicit request, for direct inspection.
+
+---
