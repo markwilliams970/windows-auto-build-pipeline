@@ -3644,3 +3644,58 @@ None of these block calling Phase 3/3A done - they're the next real frontier, no
 this phase actually promised.
 
 ---
+
+## Session (2026-08-26, continued): `dev/role-test.pkr.hcl`'s own fixed-per-OS output_directory
+## collision bug - fixed, matching `build.sh`'s own already-fixed pattern exactly
+
+Closed out the one open item from `CLAUDE.md`'s Phase 3A section flagging this as not yet addressed.
+`dev/role-test.pkr.hcl` had the identical root cause `build.sh` itself hit and fixed: `output_directory`
+(and `vm_name`) fixed per OS (`output/vm-${target_os}`), not per-run-unique - Packer's qemu builder
+refuses to run if `output_directory` already exists.
+
+**Not quite the identical failure mode, worth being precise about**: `run-phase3-test.sh` already did
+an `rm -rf` of the fixed directory before every run, so a plain sequential second run against the same
+OS didn't actually hit "Packer refuses to start" the way `build.sh` did. The real, live risk was
+narrower but arguably worse: a fixed, non-unique path meant two overlapping invocations for the same
+OS (an accidental concurrent run, or a stale still-running process) could have the second run's blind
+`rm -rf` delete the first run's own live output out from under it - silent data loss, not a loud,
+recoverable "already exists" error. Fixed the same underlying design gap `build.sh` closed with its
+own `BUILD_ID`, adapted for this harness's own genuinely different requirement (rapid, repeated
+iteration - unlike a real build, accumulating a fresh directory per run forever isn't acceptable disk
+hygiene here either):
+
+- `role-test.pkr.hcl` gained a `run_id` variable, threaded into `vm_name`/`output_directory`
+  (`packer validate` confirms the HCL is structurally sound).
+- `run-phase3-test.sh` now computes `RUN_ID="${TARGET_OS}-$(date +%Y%m%d-%H%M%S)"` (matching
+  `build.sh`'s own convention exactly) and passes it through to both `packer validate`/`packer build`.
+- The old unconditional `rm -rf` of a fixed path was replaced with a targeted cleanup of *stale*
+  prior runs for the same OS (`find ... -name "vm-${TARGET_OS}-*" -not -name "vm-${RUN_ID}"`) -
+  preserves the harness's own no-accumulation convenience without ever touching a path a live run
+  might still own, since today's own `RUN_ID` is guaranteed fresh before the cleanup step even looks
+  for anything to remove.
+- Added the same belt-and-suspenders fail-loud check `build.sh` already has (`[[ -e "$VM_OUTPUT_DIR" ]]
+  && exit 1` instead of silently overwriting).
+
+**Verified, not just written**: `packer validate` against the updated HCL passed cleanly ("The
+configuration is valid"). The new bash cleanup/collision logic was extracted into an isolated sandbox
+and exercised directly - simulated two stale prior runs for `server2022` and one for `server2025`;
+confirmed both `server2022` entries were removed, the unrelated `server2025` entry was correctly left
+untouched, and the fresh `RUN_ID` never collided.
+
+**Not run end-to-end against a real Packer build this session** - a real discovery made while
+checking: this harness's own Phase 2 reference disks (`image-apply/output/win2022-session12.qcow2`,
+`win2025-session11.qcow2`) no longer exist on disk (very likely pruned in an earlier disk-hygiene
+pass) - the harness is currently non-functional for an actual role-test run regardless of this fix,
+a separate, pre-existing gap, not something this session's fix was asked to address or attempted to
+fix. Flagged for awareness, not treated as blocking - the collision-bug fix itself is verified at the
+level available (HCL validation + isolated logic test), matching how `build.sh`'s own equivalent fix
+was reasoned about before its own first real end-to-end run confirmed it further.
+
+**Also found and left alone, pending a decision**: `dev/output/vm-server2022/`, `dev/output/vm-server2025/`,
+`dev/output/efivars-server2022.fd`, `dev/output/efivars-server2025.fd` are leftover artifacts from
+before this fix (the old fixed-naming convention, dated 2026-08-20) - ~17.3GB total. They don't
+collide with anything going forward (new runs use the timestamped naming), so nothing forces their
+removal, but they're genuinely orphaned. Not deleted without asking, per this project's own disk
+hygiene standard.
+
+---

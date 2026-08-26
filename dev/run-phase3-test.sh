@@ -46,24 +46,44 @@ fi
 echo "==> Target OS: ${TARGET_OS} (baseline: $(basename "${BASELINE_QCOW2}"))"
 echo "==> Using services.yaml: ${SERVICES_YAML} (roles: $(echo "$roles" | tr '\n' ' '))"
 
-VM_OUTPUT_DIR="${DEV_DIR}/output/vm-${TARGET_OS}"
-EFIVARS_SCRATCH="${DEV_DIR}/output/efivars-${TARGET_OS}.fd"
+# Unique per invocation, matching build.sh's own BUILD_ID convention - fixes the same class of
+# collision bug build.sh itself hit (CLAUDE.md's Phase 3A section): a fixed-per-OS
+# output_directory meant a second run against the same OS could fail outright (Packer refuses to
+# run if output_directory already exists) if a prior run's directory was ever left behind. This
+# harness still has a real, distinct need older sequential builds don't: it's meant for rapid,
+# repeated iteration, so accumulating a fresh directory per run forever isn't acceptable disk
+# hygiene either - handled below by proactively clearing STALE prior runs for this same OS
+# (anything already on disk, since RUN_ID guarantees today's own path can't collide with them),
+# not by blindly wiping a fixed path that might still be an actively-running build's own output.
+RUN_ID="${TARGET_OS}-$(date +%Y%m%d-%H%M%S)"
+VM_OUTPUT_DIR="${DEV_DIR}/output/vm-${RUN_ID}"
+EFIVARS_SCRATCH="${DEV_DIR}/output/efivars-${RUN_ID}.fd"
 
-echo "==> Resetting ${VM_OUTPUT_DIR}"
-rm -rf "${VM_OUTPUT_DIR}"
 mkdir -p "${DEV_DIR}/output"
+
+echo "==> Clearing stale prior runs for ${TARGET_OS} (today's own run, ${RUN_ID}, is already unique and untouched by this)"
+find "${DEV_DIR}/output" -maxdepth 1 -name "vm-${TARGET_OS}-*" -not -name "vm-${RUN_ID}" -exec rm -rf {} +
+find "${DEV_DIR}/output" -maxdepth 1 -name "efivars-${TARGET_OS}-*.fd" -not -name "efivars-${RUN_ID}.fd" -exec rm -f {} +
+
+# Belt-and-suspenders (matches build.sh's own identical check) - practically unreachable under
+# this project's serial-builds-only convention, but fails loud instead of silently colliding if
+# it's ever wrong.
+[[ -e "$VM_OUTPUT_DIR" ]] && { echo "ERROR: ${VM_OUTPUT_DIR} already exists - refusing to overwrite; wait a second and retry, or investigate why a run with this exact id already exists" >&2; exit 1; }
+
 cp /usr/share/OVMF/OVMF_VARS_4M.fd "${EFIVARS_SCRATCH}"
 
 packer init "${DEV_DIR}/role-test.pkr.hcl"
 
 packer validate \
   -var "target_os=${TARGET_OS}" \
+  -var "run_id=${RUN_ID}" \
   -var "services_yaml_path=${SERVICES_YAML}" \
   -var "efivars_scratch=${EFIVARS_SCRATCH}" \
   "${DEV_DIR}"
 
 packer build \
   -var "target_os=${TARGET_OS}" \
+  -var "run_id=${RUN_ID}" \
   -var "services_yaml_path=${SERVICES_YAML}" \
   -var "efivars_scratch=${EFIVARS_SCRATCH}" \
   "${DEV_DIR}"

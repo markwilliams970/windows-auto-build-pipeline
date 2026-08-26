@@ -29,6 +29,16 @@ variable "target_os" {
   }
 }
 
+# Unique per invocation (run-phase3-test.sh's own "<os>-<timestamp>", matching build.sh's
+# BUILD_ID convention) so two runs against the same OS never collide on output_directory - the
+# same class of bug build.sh itself hit and fixed (CLAUDE.md's Phase 3A section, "Real bug found
+# and fixed while first testing this wiring") before this harness's own equivalent was addressed.
+# Always passed by run-phase3-test.sh - do not rely on this default.
+variable "run_id" {
+  type    = string
+  default = ""
+}
+
 # Always passed as an absolute path by run-phase3-test.sh.
 variable "services_yaml_path" {
   type        = string
@@ -90,8 +100,8 @@ locals {
 }
 
 source "qemu" "role_test" {
-  vm_name          = "phase3-${var.target_os}.qcow2"
-  output_directory = "${path.root}/output/vm-${var.target_os}"
+  vm_name          = "phase3-${var.target_os}-${var.run_id}.qcow2"
+  output_directory = "${path.root}/output/vm-${var.target_os}-${var.run_id}"
 
   disk_image       = true
   use_backing_file = true

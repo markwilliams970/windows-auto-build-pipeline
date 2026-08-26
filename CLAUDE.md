@@ -820,10 +820,14 @@ gained a `build_id` variable driving `vm_name`/`output_directory`/`efi_firmware_
 Packer's final artifact is now at `packer/output/<build_id>/<build_id>.qcow2` (build-unique), not a
 fixed per-OS path - `register-vm.sh`'s own default disk resolution for Server 2022/2025 was updated to
 match (picks the most recently modified build, same convention already used for Windows 11's own
-timestamped builds). **`dev/role-test.pkr.hcl` (the separate fast-iteration harness, not the
-production path) has the identical fixed-per-OS `output_directory` pattern and was not touched by this
-fix** - flagged, not yet addressed; lower stakes there since that harness is explicitly a
-repeated-iteration tool, but the same collision would reproduce if run twice for the same OS.
+timestamped builds). **`dev/role-test.pkr.hcl` (the separate fast-iteration harness) had the identical
+fixed-per-OS `output_directory` pattern - fixed 2026-08-26** with its own `run_id` variable, adapted
+for the harness's genuinely different requirement (rapid repeated iteration, so a stale-prior-run
+cleanup replaces the old unconditional `rm -rf` rather than accumulating a directory per run forever).
+See `PHASE3_ENGINEERING_LOG.md`'s corresponding entry for the fix and how it was verified (`packer
+validate` plus an isolated sandbox test of the cleanup logic - not yet exercised by a real end-to-end
+Packer build, since this harness's own Phase 2 reference disks no longer exist on disk, a separate,
+pre-existing gap).
 
 A new `register-vm.sh` (repo root, adapted from
 `../windows-server-vm-automation/register-vm.sh`'s own proven `virsh define` pattern) defines a
