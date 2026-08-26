@@ -40,6 +40,24 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 ---
 
+# Open Items
+
+Standing list of concrete, not-yet-done work called out explicitly so it doesn't get lost in phase
+narrative below. Each item still has its full context/evidentiary trail in the relevant phase section
+and the matching `PHASE*_ENGINEERING_LOG.md` - this list exists purely for discoverability. Remove an
+item (and update the phase section it points at) once it's actually resolved, don't just leave it
+stale here.
+
+- **Windows 11's `register-vm.sh` device-model case is unconfirmed.** `register-vm.sh`'s
+  virtio-scsi + virtio-net + QXL/SPICE device model has been proven by a real `virsh start` boot for
+  Server 2022 and Server 2025 (2026-08-26), but never for Windows 11 specifically - its NIC-swap
+  branch (Windows 11 swaps NIC too, unlike Server 2022/2025, which leave it untouched) has only been
+  checked for its WinRM-command-length budget, not exercised by an actual boot. See Phase 3A's own
+  section below and `PHASE3_ENGINEERING_LOG.md`'s "PHASE 3 STATUS: COMPLETE" entry (2026-08-26) for
+  full context.
+
+---
+
 # Relationship to `../windows-server-vm-automation/`
 
 This is a genuinely separate project (different install mechanism, different tooling, different
