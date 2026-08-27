@@ -2,6 +2,7 @@ services:
   - iis          # IIS Web Server role + default site
   # - ad-ds      # Active Directory Domain Services + DNS, new forest/domain
   # - sql-server # SQL Server 2022 Developer Edition, Mixed Mode auth
+  # - dotnet-core # .NET SDK 10 (LTS), official installer, /quiet /norestart
 
 # Server-only (Windows 11 gets none of these - see CLAUDE.md's "Windows
 # Configuration Goals"). Two profiles, mutually exclusive, enforced by
@@ -10,3 +11,8 @@ services:
 #   app-server:        iis, sql-server (either or both together)
 # See dev/services-domain-controller.yaml and dev/services-app-server.yaml
 # for ready-made examples of each profile.
+#
+# dotnet-core is NOT part of either profile above and isn't Server-only -
+# it's a plain, independent role (scripts/install-dotnet-core.ps1) that
+# works unchanged on Server 2022/2025 and Windows 11 alike, unlike the three
+# Server-only roles.
