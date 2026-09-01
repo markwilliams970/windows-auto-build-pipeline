@@ -48,13 +48,9 @@ and the matching `PHASE*_ENGINEERING_LOG.md` - this list exists purely for disco
 item (and update the phase section it points at) once it's actually resolved, don't just leave it
 stale here.
 
-- **Windows 11's `register-vm.sh` device-model case is unconfirmed.** `register-vm.sh`'s
-  virtio-scsi + virtio-net + QXL/SPICE device model has been proven by a real `virsh start` boot for
-  Server 2022 and Server 2025 (2026-08-26), but never for Windows 11 specifically - its NIC-swap
-  branch (Windows 11 swaps NIC too, unlike Server 2022/2025, which leave it untouched) has only been
-  checked for its WinRM-command-length budget, not exercised by an actual boot. See Phase 3A's own
-  section below and `PHASE3_ENGINEERING_LOG.md`'s "PHASE 3 STATUS: COMPLETE" entry (2026-08-26) for
-  full context.
+**None currently open.** The last standing item (Windows 11's `register-vm.sh` device-model case,
+NIC-swap branch unconfirmed by a real boot) was resolved 2026-09-01 - see Phase 3A's own section
+below and `PHASE3_ENGINEERING_LOG.md`'s corresponding session entry for the full evidentiary trail.
 
 ---
 
@@ -857,9 +853,24 @@ with a "Networks" discoverability prompt for the newly-appeared NIC, and `virsh 
 default` showing a real DHCP lease for hostname `WIN2022PROD` (matching the disk's own baked-in
 ComputerName) at `192.168.122.214`. This is real evidence the Finding 3A-3 inference (libvirt's own
 PCI address allocation doesn't need to reproduce `inject-virtio-spice.sh`'s exact raw `addr=` values)
-holds, not just a plausible theory. **Not yet exercised: the Windows 11 device-model case** (NIC also
-swapped, unlike Server 2022/2025) - same script, different code path, still unconfirmed by a real
-boot.
+holds, not just a plausible theory.
+
+**Windows 11's own device-model case (NIC also swapped, unlike Server 2022/2025) - RESOLVED
+2026-09-01.** Ran `inject-virtio-spice.sh windows11` against the existing Phase 3.4/3.5 build
+(`windows11-phase35-build2.qcow2`, predates Phase 3A so it had no completion marker yet) - both
+stages completed cleanly (vioscsi/netkvm/qxldod all live-verified, storage and NIC swapped, graceful
+shutdown both stages). `register-vm.sh windows11` then defined `win11prod` cleanly (marker check
+passed), and `virsh start` booted it straight to a live desktop - confirmed via `virsh screenshot`
+(the "Windows 11 Enterprise Evaluation" watermark visible) and real WinRM verification: `hostname`
+returned `WIN11P35B` (matching the disk's own baked-in ComputerName), `Get-NetAdapter` showed `Red
+Hat VirtIO Ethernet Adapter #2` `Up`/`10 Gbps` with a real DHCP lease (`192.168.122.186`) - the
+swapped NIC negotiating correctly under libvirt's own auto-assigned PCI address, not just
+`inject-virtio-spice.sh`'s own raw QEMU flags - `Get-Disk` showed the virtio-scsi disk `Online`/GPT,
+and `Get-PnpDevice -Class Display` showed the Red Hat QXL controller `OK`. This is the same Finding
+3A-3 inference (libvirt's PCI address allocation doesn't need to reproduce
+`inject-virtio-spice.sh`'s exact `addr=` values) now confirmed for the NIC-swap path too, not just
+the storage-only path Server 2022/2025 already proved. All three target OSes' `register-vm.sh`
+device models are now confirmed by a real `virsh start` boot - no open item remains here.
 
 **`register-vm.sh` now enforces its own precondition instead of just assuming it, and two real bugs
 found via a genuine E2E run are fixed (2026-08-25/26, `PHASE3_ENGINEERING_LOG.md`'s corresponding
@@ -881,7 +892,8 @@ command-length error, no hard kill, `register-vm.sh`'s precondition check passed
 marker, both VMs booted via `virsh start` and verified live over WinRM (not just a screenshot -
 `W3SVC` Running, HTTP 200, correct hostname). Windows 11's own NIC-swap verification payload was also
 checked against the new length guard directly (2267 chars, well under budget) though Windows 11 itself
-wasn't rebuilt this session - the device-model gap noted above remains genuinely open.
+wasn't rebuilt this session - the device-model gap noted above was closed in a later session
+(2026-09-01, see above).
 
 ---
 

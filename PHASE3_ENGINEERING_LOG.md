@@ -3787,3 +3787,65 @@ Implementation plan is TBD** - no `server2019` case exists anywhere in `image-ap
 been empirically resolved.
 
 ---
+
+## Session (2026-09-01): Windows 11's `register-vm.sh` device-model case - closed by a real
+## `virsh start` boot, the last remaining item from CLAUDE.md's Open Items list
+
+Closed out the one standing Open Item: Windows 11's NIC-swap branch of `register-vm.sh`'s device
+model had only ever been checked statically (its WinRM verification payload measured under the
+`assert_winrm_ps_budget` guard, 2267 chars, 2026-08-26) - never exercised by an actual boot, unlike
+Server 2022/2025's storage-only case, which a real `virsh start` boot already confirmed the same
+session.
+
+**Host precondition, handled before anything else**: `win2025app`, a libvirt domain from an earlier
+session, was already running (up ~35 min, not started this session). Per this project's own standing
+"serial QEMU builds, avoid I/O contention" rule, a second concurrent QEMU boot cycle wasn't started
+without addressing it first - confirmed with the user, then shut it down gracefully. `virsh shutdown`
+(ACPI) sat for 3+ minutes with no effect (the guest showed a clean, idle desktop via `virsh
+screenshot` - not stuck on a blocking dialog, the ACPI signal simply wasn't being acted on, cause not
+investigated further since a working alternative was available) - a genuine WinRM-driven `shutdown /s
+/t 0` (via `pywinrm`, `transport='basic'`, matching `inject-virtio-spice.sh`'s own established
+convention) succeeded immediately and the domain reached `shut off` cleanly shortly after. **New,
+worth-noting operational gotcha**: this host's Python/OpenSSL build has MD4 disabled
+(`_hashlib.UnsupportedDigestmodError: unsupported hash type md4`), which breaks `pywinrm`'s NTLM
+transport outright - `transport='basic'` (what this project's own scripts already use throughout) is
+required on this host regardless of target, not just a style preference.
+
+**The actual test**: the only existing Windows 11 build (`windows11-phase35-build2.qcow2`, from
+Phase 3.4/3.5, dated 2026-08-22 - predates Phase 3A's introduction of the completion marker) had
+never been through `inject-virtio-spice.sh`, confirmed directly by first running `register-vm.sh
+windows11` and getting the expected loud failure (no marker found). Ran `inject-virtio-spice.sh
+windows11 image-apply/output/builds/windows11-phase35-build2.qcow2` against it - both stages
+completed cleanly and unattended (vioscsi/netkvm/qxldod all live-verified `Status: OK`, SPICE tools
+installed, storage and NIC both swapped, graceful shutdown both stages, no length-ceiling or hard-kill
+issues - the two bugs fixed 2026-08-25/26 stayed fixed). `register-vm.sh windows11` then defined
+`win11prod` cleanly, marker check passing this time.
+
+`virsh start win11prod` booted **directly to a live desktop** - confirmed via `virsh screenshot`
+(the "Windows 11 Enterprise Evaluation" watermark visible, matching every prior Windows 11
+confirmation in this project) - and real WinRM verification, not just a screenshot:
+
+- `hostname` -> `WIN11P35B` (matches the disk's own baked-in ComputerName from its original Phase
+  3.4/3.5 build - not reset or altered by this session's work)
+- `Get-NetAdapter` -> `Ethernet 3`, `Red Hat VirtIO Ethernet Adapter #2`, `Up`, `10 Gbps` - a real
+  DHCP lease followed (`192.168.122.186`, confirmed via `virsh net-dhcp-leases default`). The
+  interface renamed itself from `inject-virtio-spice.sh`'s own Stage 2 naming (`Ethernet 2`) to
+  `Ethernet 3` under libvirt's different PCI placement - expected Windows device-instance behavior
+  when a PCI location changes, not a problem; the adapter still bound, still came up, still passed
+  traffic.
+- `Get-Disk` -> `QEMU QEMU HARDDISK`, `Online`, GPT (virtio-scsi storage also confirmed, same as the
+  NIC).
+- `Get-PnpDevice -Class Display` -> `Red Hat QXL controller`, `OK`.
+- `(Get-CimInstance Win32_OperatingSystem).Caption` -> `Microsoft Windows 11 Enterprise Evaluation`.
+
+**This is real evidence, not an extrapolation**, that Finding 3A-3's inference (libvirt's own PCI
+address allocation for virtio devices doesn't need to reproduce `inject-virtio-spice.sh`'s exact raw
+`addr=` values for Windows to still bind the already-registered driver) holds for the NIC-swap case
+too, exactly as it already did for the storage-only case Server 2022/2025 proved on 2026-08-23/26.
+**All three target OSes' `register-vm.sh` device models are now confirmed by a real `virsh start`
+boot - CLAUDE.md's Open Items list is empty as of this entry.**
+
+`win11prod` was left running for inspection after this confirmation, matching this project's own
+established pattern from the Server 2022/2025 confirmation sessions. `win2025app` was not
+restarted this session - that's the user's own domain from an earlier session, left for them to
+restart when they want it back.
