@@ -3699,3 +3699,91 @@ removal, but they're genuinely orphaned. Not deleted without asking, per this pr
 hygiene standard.
 
 ---
+
+## Session (2026-09-01): Windows Server 2019 scoping research - findings recorded, full
+## implementation plan TBD
+
+Not implementation work - a research/feasibility pass, prompted by the question of whether Server
+2019 is worth adding as a fourth target OS alongside the already-production-ready Server 2022,
+Server 2025, and Windows 11. Followed this project's own "search multiple angles, not one query"
+standard (Microsoft Evaluation Center, MS Learn/community deployment guides, the `virtio-win`
+GitHub project, and a direct re-fetch of the exact Microsoft Q&A thread Finding 3A-5 already cites
+for the Server 2022 DCOM race, checked specifically for whether it implicates 2019 too). Full
+writeup, sourcing, and the complete comparison table live in `WINDOWS_SERVER_2019_RESEARCH_PLAN.md`
+(repo root, not yet committed) - this entry is the durable engineering-log summary of that document,
+not a duplicate of it.
+
+**No pipeline code was touched.** No changes to `services.yaml`, `image-apply/lib/common.sh`,
+`image-apply/*.sh`, or `tools/gen-viostor-ddb-reg.py`. **A full implementation plan for Server 2019
+is TBD** - this session answered the scoping question (is it worth doing, and roughly how hard),
+not the "how exactly do we build it" question.
+
+**Verdict: low-to-moderate risk, most likely a "should just work, same as Server 2022" addition -
+not zero-question, but architecturally Server 2019 sits closer to the already-proven Server 2022
+baseline than Server 2025 did, and Server 2022 itself generalized from Server 2025's recipe with
+zero tooling changes (Session 12).** Every layer this project already ranks "least brittle"
+(`wimlib` WIM apply, `bcdboot`, offline `hivex` driver registration, the offline unattend/specialize
+pass) is confirmed by public documentation and community precedent to behave identically on Server
+2019 - no source found suggests any of these steps is harder or different there. Setup.exe
+involvement is correctly a non-issue (structurally irrelevant, same as 2022/2025 - this project's
+Server SKU track never invokes it).
+
+**Confirmed findings:**
+- Server 2019 Evaluation media (Standard + Datacenter, ISO/VHD, 180-day eval) is still live at the
+  Microsoft Evaluation Center - directly fetched, not assumed from the release's age. No retirement
+  notice.
+- The offline `DISM /Apply-Image` + `bcdboot` mechanism is documented as version-agnostic across
+  Server 2016-2025 by multiple independent sources (Dell KB, a VIOware DISM/driver-injection guide,
+  Deployment Research's Server 2019 reference-image walkthrough) - no Server-2019-specific quirk
+  found in either direction.
+- The `virtio-win` driver package's `2k19` subfolder convention (`vioscsi\2k19\amd64`,
+  `NetKVM\2k19\amd64`) is confirmed to exist as a general package convention (Snel.com, Proxmox
+  community guides, a Fedora People directory listing for an older `virtio-win` release) - but **not
+  yet confirmed present in this project's specific already-cached `virtio-win-0.1.285.iso`** (a
+  direct fetch of that ISO's own directory listing hit an Access-Denied bot wall; a local `7z l`
+  check closes this in minutes, not treated as a real research gap).
+
+**Inferred-only, explicitly not yet verified - the two real open items before any code gets
+written:**
+1. **WIM edition index.** This project's own non-negotiable standard (`7z x` + `strings -el ... |
+   grep EDITIONID` against the real cached ISO) cannot run yet - Server 2019 media isn't cached
+   (confirmed against `ISO_CACHE_INVENTORY.md` and a direct `../iso_cache/` listing). One community
+   `Dism /Get-WimInfo` listing confirms index 4 = Datacenter Desktop Experience for one real Server
+   2019 image but didn't surface the full index table, so **the Standard Desktop Experience index
+   this project would actually want is not confirmed** - "probably index 2, matching 2022/2025" is
+   pattern-matching against this project's own prior results, not a citation, and must not go into
+   `lib/common.sh` without the direct check.
+2. **DCOM/RPC "boot storm" race applicability - the single most load-bearing open question in this
+   research pass.** Finding 3A-5's own cited primary source
+   (learn.microsoft.com/.../5836440) was re-fetched directly for this session: every diagnostic
+   statement in that thread is scoped explicitly to "Windows Server 2022" by name; Server 2019 is
+   never mentioned, in either direction. Server 2019 (build 17763, 1809-based) does already ship the
+   same `StartMenuExperienceHost.exe` XAML shell architecture the race depends on, so it's
+   structurally plausible there too - but no primary source reports the symptom triad
+   (Start Menu/Search/IIS failing post-restart) on 2019 specifically, despite far longer production
+   deployment history than Server 2022 has. Genuinely inconclusive either way.
+
+**Recommendation for that open item, not yet decided**: apply the same `ServicesPipeTimeout=120000`
+offline registry merge to Server 2019 preemptively in `make-bootable.sh` (cheap, already proven safe
+on two other Server SKUs, and this project's own multi-boot-cycle build pattern is the actual
+trigger condition per Finding 3A-5, independent of which Server SKU is involved) rather than wait to
+see if the symptom reproduces and re-spend the same debugging session already spent once on 2022.
+Flagged as a recommendation, not a decision, since it would preemptively change a registry value
+based on inference rather than confirmed 2019-specific evidence.
+
+**Rough effort estimate, if this project proceeds**: comparable to or slightly less than Server
+2022's own Session 12 bring-up (ISO download/verification, WIM index confirmation, full end-to-end
+build/WinRM confirmation cycle, all in one session, with zero tooling changes needed) - one focused
+session for the offline-apply track, plus a second short session to confirm the three provisioning
+roles against 2019 specifically if not already exercised there. See
+`WINDOWS_SERVER_2019_RESEARCH_PLAN.md`'s own "Technical recommendations" section for the full
+seven-step dependency chain (cache ISO → verify WIM index → verify `2k19` driver subfolder → wire
+`lib/common.sh` → decide `ServicesPipeTimeout` → run `build.sh server2019` → confirm role profiles)
+once a decision is made to actually build this.
+
+**Status: research complete, recorded here and in `WINDOWS_SERVER_2019_RESEARCH_PLAN.md`.
+Implementation plan is TBD** - no `server2019` case exists anywhere in `image-apply/lib/common.sh`,
+`tools/gen-viostor-ddb-reg.py`, or `build.sh` as of this entry, and none of the open items above have
+been empirically resolved.
+
+---
