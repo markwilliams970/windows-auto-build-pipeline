@@ -8,13 +8,13 @@
 # project's current state; see CLAUDE.md's Build step 1-2 for what a future addition
 # would need to cover.
 #
-# Usage: build.sh <server2022|server2025|windows11> [services_yaml_path] [computer_name]
+# Usage: build.sh <server2019|server2022|server2025|windows11> [services_yaml_path] [computer_name]
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${REPO_ROOT}/image-apply/lib/common.sh"
 
-OS="${1:?Usage: build.sh <server2022|server2025|windows11> [services_yaml_path] [computer_name]}"
+OS="${1:?Usage: build.sh <server2019|server2022|server2025|windows11> [services_yaml_path] [computer_name]}"
 SERVICES_YAML="${2:-}"
 COMPUTER_NAME_ARG="${3:-}"
 validate_os "$OS"

@@ -19,14 +19,14 @@
 #      C:\Drivers\NetKVM\<subfolder>\amd64\ for the live pnputil step FirstLogonCommands
 #      runs later (apply-unattend.sh's unattend.xml).
 #
-# Usage: make-bootable.sh <server2022|server2025|windows11> <target-qcow2-path>
+# Usage: make-bootable.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
-OS="${1:?Usage: make-bootable.sh <server2022|server2025|windows11> <target-qcow2-path>}"
-TARGET_QCOW2="${2:?Usage: make-bootable.sh <server2022|server2025|windows11> <target-qcow2-path>}"
+OS="${1:?Usage: make-bootable.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>}"
+TARGET_QCOW2="${2:?Usage: make-bootable.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>}"
 validate_os "$OS"
 
 [[ -f "$TARGET_QCOW2" ]] || { echo "ERROR: $TARGET_QCOW2 not found - run apply-image.sh first" >&2; exit 1; }

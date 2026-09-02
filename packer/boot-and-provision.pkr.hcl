@@ -26,8 +26,8 @@ variable "target_os" {
   type        = string
   description = "Which OS this build is for - informational/validation only; the disk itself is already fully built by image-apply/*.sh by the time this runs."
   validation {
-    condition     = contains(["server2022", "server2025", "windows11"], var.target_os)
-    error_message = "The target_os variable must be \"server2022\", \"server2025\", or \"windows11\"."
+    condition     = contains(["server2019", "server2022", "server2025", "windows11"], var.target_os)
+    error_message = "The target_os variable must be \"server2019\", \"server2022\", \"server2025\", or \"windows11\"."
   }
 }
 

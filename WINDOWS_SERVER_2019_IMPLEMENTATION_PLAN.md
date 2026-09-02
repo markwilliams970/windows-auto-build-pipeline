@@ -318,23 +318,16 @@ that narrative after proof, not ahead of it.
 
 ---
 
-## Open questions for Phase C (design review)
+## Phase C: design review — CLOSED 2026-09-02, no changes to the plan as written
 
-1. **Computer name**: this plan proposes `WIN2019PROD` (matching the `WIN<year>PROD` convention
-   `os_computer_name` already uses for the other two Server SKUs). Confirm this is wanted, not e.g.
-   something that avoids implying "production" for what's still lab/eval infrastructure — though
-   the other two OSes already use this exact pattern, so consistency argues for keeping it.
-2. **Datacenter edition**: this plan (like Phase A's own recommendations) assumes Standard edition
-   only, matching Server 2022/2025's existing convention — Datacenter is not proposed. Confirm no
-   interest in also wiring a `server2019-dc` variant or similar; not scoped here if so.
-3. **`dev/` fast-iteration harness**: this plan deliberately does not extend `dev/role-test.pkr.hcl`/
-   `dev/run-phase3-test.sh` to cover Server 2019 — that harness is for rapid *provisioning-script*
-   iteration against an already-proven reference disk, and per `PHASE3_ENGINEERING_LOG.md`'s own
-   2026-08-26 entry, its Server 2022/2025 reference disks no longer exist on disk anyway (a separate,
-   pre-existing gap). Confirm this is correctly out of scope for the Server 2019 addition specifically,
-   not something Phase D should also fix while it's in the area.
-4. **Sequencing of the two Phase E builds**: this plan proposes `ad-ds` first (mirroring the order
-   Server 2022 was actually validated in), then `iis`/`sql-server`. No strong reason to prefer the
-   other order — flagging only because Phase E, once started, commits real build time (Server 2025's
-   own `iis`/`sql-server` build took ~51 minutes) and it's worth confirming the order doesn't matter
-   before starting rather than after.
+All five decision points reviewed and confirmed by the user, no changes requested:
+
+1. **Computer name**: `WIN2019PROD`, matching the existing `WIN<year>PROD` convention — confirmed.
+2. **Datacenter edition**: out of scope, Standard edition only — confirmed.
+3. **`dev/` fast-iteration harness**: left out of scope for this addition. User's own framing, worth
+   keeping verbatim: revisit *if* a real diagnostic need for a rapid-iteration harness comes up during
+   Phase D/E, not proactively extended now.
+4. **Phase E build order**: `ad-ds` first, then `iis`/`sql-server` — confirmed as proposed.
+5. **`CLAUDE.md` documentation timing**: deferred until after both Phase E builds succeed — confirmed.
+
+**Phase D (implementation) starts next**, following the D1-D5 sequence above unchanged.

@@ -12,14 +12,14 @@
 # (WIN2025-S11 etc.) which were fine for one-off verification but not a real build
 # convention.
 #
-# Usage: apply-unattend.sh <server2022|server2025|windows11> <target-qcow2-path> [computer-name]
+# Usage: apply-unattend.sh <server2019|server2022|server2025|windows11> <target-qcow2-path> [computer-name]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
-OS="${1:?Usage: apply-unattend.sh <server2022|server2025|windows11> <target-qcow2-path> [computer-name]}"
-TARGET_QCOW2="${2:?Usage: apply-unattend.sh <server2022|server2025|windows11> <target-qcow2-path> [computer-name]}"
+OS="${1:?Usage: apply-unattend.sh <server2019|server2022|server2025|windows11> <target-qcow2-path> [computer-name]}"
+TARGET_QCOW2="${2:?Usage: apply-unattend.sh <server2019|server2022|server2025|windows11> <target-qcow2-path> [computer-name]}"
 COMPUTER_NAME="${3:-$(os_computer_name "$OS")}"
 validate_os "$OS"
 
@@ -27,6 +27,7 @@ validate_os "$OS"
 
 TEMPLATE=""
 case "$OS" in
+  server2019) TEMPLATE="${REPO_ROOT}/image-apply/unattend-server2019.xml" ;;
   server2022) TEMPLATE="${REPO_ROOT}/image-apply/unattend-server2022.xml" ;;
   server2025) TEMPLATE="${REPO_ROOT}/image-apply/unattend-server2025.xml" ;;
   windows11)  TEMPLATE="${REPO_ROOT}/image-apply/unattend-windows11.xml" ;;

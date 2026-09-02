@@ -3910,3 +3910,70 @@ either confirmed by direct verification or resolved by architecture. `WINDOWS_SE
 PLAN.md` was updated in place to reflect this throughout (Finding 3, the comparison table, the
 Feasibility assessment, and the Open Questions section all updated rather than left stale).
 **Next: Phase B (design + implementation plan with phase gates), not yet started as of this entry.**
+
+---
+
+## Session (2026-09-02, continued): Server 2019 Phase B (design plan), Phase C (design review),
+## and Phase D (implementation) - all three closed same day
+
+**Phase B**: wrote `WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`, grounded in a direct file-by-file
+audit of the real pipeline (every `image-apply/*.sh` script, `build.sh`, `apply-unattend.sh`,
+`boot-and-provision.pkr.hcl`, `register-vm.sh`, `inject-virtio-spice.sh`,
+`tools/gen-viostor-ddb-reg.py`, `services.yaml`/`run-services.ps1` all actually read, not inferred
+from the research doc's own recommendations). Headline finding: this pipeline is almost entirely
+table-driven off `image-apply/lib/common.sh` - `partition-disk.sh`/`apply-image.sh`/
+`make-bootable.sh` contain no `case "$OS"` of their own at all, `gen-viostor-ddb-reg.py` isn't
+OS-keyed to begin with, `inject-virtio-spice.sh`'s only OS-conditional logic is Windows-11-specific
+(and its `QXLDOD_SUBFOLDER` is already hardcoded to `"2k19"` for every Server SKU - Server 2019
+becomes the first OS where that name and the actual guest OS coincide, a nice existing-correctness
+confirmation rather than a new risk), and `services.yaml`/`run-services.ps1` have zero OS-version
+references. Real implementation footprint: five one-line table additions in `common.sh`, one
+case-statement line plus a new template file in `apply-unattend.sh`, one validation-list line in the
+Packer template.
+
+**Phase C**: the plan's five open decision points (computer name convention, Datacenter edition
+scope, `dev/` harness scope, Phase E build order, `CLAUDE.md` documentation timing) were presented to
+the user as a consolidated list and confirmed with zero changes to the plan as written - see the plan
+doc's own "Phase C: design review - CLOSED" section for the record of each.
+
+**Phase D**: implemented the D1-D5 sequence exactly as planned, each step independently verified
+before moving to the next (not just written and assumed correct):
+
+- **D1** (`image-apply/lib/common.sh`): added `server2019` to all five table functions plus
+  `validate_os`. Verified via `bash -n` (syntax) and a direct call of every function
+  (`os_win_iso server2019` etc.) confirming each resolved value, including confirming the resolved
+  ISO path actually points to the real cached file from the ISO-acquisition session.
+- **D2** (`image-apply/unattend-server2019.xml` + `apply-unattend.sh`'s case line): created the new
+  template as a copy of `unattend-server2022.xml`. Verified via `diff` against the source template
+  (showed exactly the header comment, `ComputerName` placeholder, driver path `2k22`->`2k19`, and
+  log-filename-prefix lines changed, nothing else) and `xmllint --noout` (well-formed). Log filenames
+  use a `server2019-` prefix rather than a fabricated `sessionNN` number, since this file (unlike the
+  other three OSes' templates) was produced during Phase B design work, not a live numbered bring-up
+  session - called out explicitly in the file's own header comment.
+- **D3** (`packer/boot-and-provision.pkr.hcl`): added `server2019` to the `target_os` variable's
+  `contains([...])` validation list. Verified via a real `packer validate -var target_os=server2019
+  ...` run against the actual template - "The configuration is valid," confirming the one change that
+  would otherwise cause an immediate, loud Packer failure is correctly in place.
+- **D4** (usage-string/comment updates): batch-updated all six remaining scripts' `Usage: ...
+  <server2022|server2025|windows11>` strings, plus a few OS-enumeration comments in
+  `inject-virtio-spice.sh` and `register-vm.sh` that directly describe which code path Server 2019
+  now follows (both accurate to update now, since D1-D3 already make that path real). Verified via
+  `bash -n` on every touched script.
+- **D5** (pre-flight sanity): confirmed `validate_os server2019` succeeds, confirmed the updated error
+  message for an invalid OS now lists `server2019`, and grepped for any remaining stale
+  `<server2022|server2025|windows11>` usage strings across every touched script - none found (the one
+  remaining hit, `image-apply/apply-image-OLD.sh`, is the pre-existing untracked file unrelated to
+  this project's active pipeline, deliberately left untouched all session).
+
+**Total diff**: 10 files changed (`build.sh`, `register-vm.sh`, five `image-apply/*.sh` scripts,
+`packer/boot-and-provision.pkr.hcl`, plus the plan doc's own Phase C closure), one new file
+(`image-apply/unattend-server2019.xml`) - matches the plan's own predicted footprint exactly, no
+surprises found during implementation itself (the surprises, such as they were, all surfaced during
+Phase B's audit, not during D1-D5's mechanical execution).
+
+**Not yet done: Phase E (E2E testing, 2 builds including services provisioning)** - no real
+`build.sh server2019` run has happened yet. Everything above is verified at the level available
+without booting a VM (syntax, `packer validate`, direct function calls, diff/XML checks) - the actual
+end-to-end pipeline (partition -> apply -> bootable -> specialize -> WinRM -> role provisioning ->
+`inject-virtio-spice.sh` -> `register-vm.sh` -> `virsh start`) has not been exercised for Server 2019
+even once. That's Phase E, next.

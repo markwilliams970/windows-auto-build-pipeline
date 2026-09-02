@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Phase 3A (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): live-installs and confirms vioscsi/netkvm/
 # QXL+SPICE on an already-built, already-WinRM-reachable disk - written OS-agnostic (takes
-# server2022/server2025/windows11 like every other image-apply/*.sh script). Confirmed via 2
-# independent clean runs per OS (6 total): Windows 11 exercises all three capabilities (storage,
-# NIC, SPICE); Server 2022/2025 exercise two of three (storage, SPICE) by design, not gap - NIC
-# swap is deliberately scoped out for them (see below):
+# server2019/server2022/server2025/windows11 like every other image-apply/*.sh script). Confirmed
+# via 2 independent clean runs per OS (6 total, as of Server 2022/2025/Windows 11 - Server 2019 not
+# yet exercised, see WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md Phase E): Windows 11 exercises all
+# three capabilities (storage, NIC, SPICE); Server 2022/2025/2019 exercise two of three (storage,
+# SPICE) by design, not gap - NIC swap is deliberately scoped out for them (see below):
 #
 #   - Storage swap (vioscsi): runs for every OS, per explicit direction (2026-08-23) to exercise
 #     `vioscsi`/virtio-scsi on Server 2022/2025 too - matching both Windows 11's own choice in this
@@ -15,8 +16,8 @@
 #     there before, so Stage 1 stages+live-verifies it fresh, same as Windows 11's own e1000/ide-hd
 #     starting point, just swapping FROM a different (already-virtio) starting device.
 #   - NIC (netkvm): Windows 11 ONLY exercises the live-install-then-swap path (still on Setup.exe's
-#     own `e1000`). Server 2022/2025 already have `netkvm`/`virtio-net-pci` working from their own
-#     first boot (same offline-hivex mechanism as storage, `net_device = "virtio-net"` in
+#     own `e1000`). Server 2022/2025/2019 already have `netkvm`/`virtio-net-pci` working from their
+#     own first boot (same offline-hivex mechanism as storage, `net_device = "virtio-net"` in
 #     packer/boot-and-provision.pkr.hcl) - there is nothing to swap, so this script only confirms
 #     it's already Up rather than staging/swapping anything, and never relocates its placement.
 #   - SPICE (QXL + spice-vdagent): runs identically for every OS - this is a real, universal gap
@@ -68,14 +69,14 @@
 # graceful shutdown - the disk is left powered off, ready for real use, matching every other
 # script in this project's own convention.
 #
-# Usage: inject-virtio-spice.sh <server2022|server2025|windows11> <target-qcow2-path>
+# Usage: inject-virtio-spice.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
-OS="${1:?Usage: inject-virtio-spice.sh <server2022|server2025|windows11> <target-qcow2-path>}"
-TARGET_QCOW2="${2:?Usage: inject-virtio-spice.sh <server2022|server2025|windows11> <target-qcow2-path>}"
+OS="${1:?Usage: inject-virtio-spice.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>}"
+TARGET_QCOW2="${2:?Usage: inject-virtio-spice.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>}"
 validate_os "$OS"
 [[ -f "$TARGET_QCOW2" ]] || { echo "ERROR: $TARGET_QCOW2 not found - build it first" >&2; exit 1; }
 

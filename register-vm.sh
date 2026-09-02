@@ -6,7 +6,7 @@
 # section) - not reused verbatim, because that script assumes one fixed disk/NVRAM location
 # and one fixed device model; this project has two of each, by OS and by build stage:
 #
-#   - server2022/server2025: build.sh hands off to Packer, which leaves the final,
+#   - server2019/server2022/server2025: build.sh hands off to Packer, which leaves the final,
 #     role-provisioned disk at packer/output/<os>/<os>.qcow2 - then (as of this script's own
 #     introduction) build.sh runs inject-virtio-spice.sh against that same file in place, so
 #     by the time a real build finishes it's already on virtio-scsi + QXL/SPICE, NIC
@@ -42,9 +42,9 @@
 # fresh, persistent, per-domain NVRAM copy at registration time and never reuses anyone else's.
 #
 # Usage:
-#   ./register-vm.sh <server2022|server2025|windows11> [qcow2_path] [vm_name]
+#   ./register-vm.sh <server2019|server2022|server2025|windows11> [qcow2_path] [vm_name]
 # qcow2_path defaults to the OS's own well-known build output location (packer/output/<os>/
-# <os>.qcow2 for server2022/server2025; the most recently modified
+# <os>.qcow2 for server2019/server2022/server2025; the most recently modified
 # image-apply/output/builds/windows11-*.qcow2 for windows11 - timestamped per build, no
 # single fixed name). vm_name defaults to the disk's own baked-in ComputerName, lowercased
 # (image-apply/lib/common.sh's os_computer_name - reusing an existing convention rather than
@@ -56,7 +56,7 @@ source "${REPO_ROOT}/image-apply/lib/common.sh"
 
 fail() { echo "ERROR: $*" >&2; exit 1; }
 
-OS="${1:?Usage: register-vm.sh <server2022|server2025|windows11> [qcow2_path] [vm_name]}"
+OS="${1:?Usage: register-vm.sh <server2019|server2022|server2025|windows11> [qcow2_path] [vm_name]}"
 validate_os "$OS"
 
 command -v virsh >/dev/null 2>&1 || fail "virsh is not installed or not on PATH"

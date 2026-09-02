@@ -10,14 +10,14 @@
 # log observed (239616) - Session 8's own closing notes recommend this: recomputing is
 # cheap, and a mismatch would itself be a signal something changed.
 #
-# Usage: partition-disk.sh <server2022|server2025|windows11> <output-qcow2-path>
+# Usage: partition-disk.sh <server2019|server2022|server2025|windows11> <output-qcow2-path>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
-OS="${1:?Usage: partition-disk.sh <server2022|server2025|windows11> <output-qcow2-path>}"
-OUT_QCOW2="${2:?Usage: partition-disk.sh <server2022|server2025|windows11> <output-qcow2-path>}"
+OS="${1:?Usage: partition-disk.sh <server2019|server2022|server2025|windows11> <output-qcow2-path>}"
+OUT_QCOW2="${2:?Usage: partition-disk.sh <server2019|server2022|server2025|windows11> <output-qcow2-path>}"
 validate_os "$OS"
 
 SIZE_GB="$(os_disk_size_gb "$OS")"

@@ -23,14 +23,14 @@
 # descriptors. --strict-acls is deliberately not optional here: if this ever silently
 # stopped working, the build should hard-fail rather than quietly reintroduce this bug.
 #
-# Usage: apply-image.sh <server2022|server2025|windows11> <target-qcow2-path>
+# Usage: apply-image.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/common.sh"
 
-OS="${1:?Usage: apply-image.sh <server2022|server2025|windows11> <target-qcow2-path>}"
-TARGET_QCOW2="${2:?Usage: apply-image.sh <server2022|server2025|windows11> <target-qcow2-path>}"
+OS="${1:?Usage: apply-image.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>}"
+TARGET_QCOW2="${2:?Usage: apply-image.sh <server2019|server2022|server2025|windows11> <target-qcow2-path>}"
 validate_os "$OS"
 
 [[ -f "$TARGET_QCOW2" ]] || { echo "ERROR: $TARGET_QCOW2 not found - run partition-disk.sh first" >&2; exit 1; }
