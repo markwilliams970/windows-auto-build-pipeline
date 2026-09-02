@@ -3977,3 +3977,78 @@ without booting a VM (syntax, `packer validate`, direct function calls, diff/XML
 end-to-end pipeline (partition -> apply -> bootable -> specialize -> WinRM -> role provisioning ->
 `inject-virtio-spice.sh` -> `register-vm.sh` -> `virsh start`) has not been exercised for Server 2019
 even once. That's Phase E, next.
+
+---
+
+## Session (2026-09-02, continued): Phase E1 (Build 1, `ad-ds`) - real, reproducible bug found:
+## `Enable-PSRemoting` hangs indefinitely on Server 2019, root cause not yet identified
+
+**First real Server 2019 build attempt.** `./build.sh server2019 dev/services-domain-controller.yaml`
+ran partition-disk.sh, apply-image.sh (WIM index 2 applied cleanly, confirming Finding 3's
+verification was correct), make-bootable.sh, and apply-unattend.sh all cleanly, then handed off to
+Packer for the first real boot. **Packer's WinRM wait timed out after 15m19s** - the first genuine
+failure this project's Server-SKU pipeline has hit at this stage for any OS.
+
+**Diagnosis, not guessing** - the pre-Packer disk (`image-apply/output/builds/
+server2019-20260902-105345.qcow2`) survives a Packer failure untouched (Packer boots/modifies it in
+place but doesn't delete it on error), so it was booted directly via `tools/boot-adhoc-target.sh` for
+live diagnosis, per this project's own established convention for exactly this situation:
+
+1. **The boot itself is fine** - real, live Server Manager desktop, AutoLogon worked, hostname
+   `WIN2019PROD` confirmed correct. No BSOD, no INACCESSIBLE_BOOT_DEVICE, nothing wrong with the
+   offline-apply/bootable/specialize mechanism itself.
+2. **WinRM's listener IS reachable and responding** - but `curl -i` against it shows `WWW-Authenticate:
+   Negotiate` only, no `Basic` - confirming `FirstLogonCommands` Order 4 (which explicitly runs `winrm
+   set winrm/config/service/auth '@{Basic="true"}'`) never completed.
+3. **Offline-mounted the disk and checked the marker/log files `FirstLogonCommands` writes**:
+   `server2019-firstlogon-marker.txt` (Order 2) and `server2019-pnputil-log.txt` (Order 1) both exist
+   - `server2019-netcat-log.txt` (Order 3) and `server2019-winrm-log.txt` (Order 4) are **both
+   missing**. `FirstLogonCommands` got stuck somewhere between Order 2 and Order 3/4, not a clean
+   failure of one specific command with a logged error.
+4. **Booted the disk a third time and interactively reproduced the actual hang**, via
+   `tools/qmp-sendkey.py`/`qmp-type.py` (Win+R -> `powershell` -> admin shell, AutoLogon still active,
+   `LogonCount` budget not yet exhausted): `ipconfig /all` confirmed the network adapter (`Red Hat
+   VirtIO Ethernet Adapter`) is fully functional with a real DHCP lease (`10.0.2.15`) - so Order 3's
+   own 90-second network-wait loop should have succeeded quickly, not stalled. `Get-NetConnectionProfile`
+   run standalone returns instantly (`NetworkCategory: Public` - confirming Order 3's
+   `Set-NetConnectionProfile -NetworkCategory Private` never actually ran). **Running `Enable-PSRemoting
+   -Force -SkipNetworkProfileCheck` directly (Order 4's own first command) hung for 5+ minutes with zero
+   completion**, confirmed via a second PowerShell window opened alongside the hung one (not blocked by
+   it) - `Get-Service WinRM,MpsSvc,W32Time,LanmanServer` all show `Running`, and the hung process's own
+   accumulated CPU time barely grew (~6s over 5+ minutes) - consistent with a genuine blocking
+   wait/deadlock, not active computation. Checked for a hidden interactive dialog (a firewall
+   confirmation prompt is a known cause of similar-looking hangs) via Alt-Tab - none found.
+
+**This reproduces outside the `FirstLogonCommands`/specialize-pass context too** - run interactively,
+well after a normal AutoLogon desktop session was already active, `Enable-PSRemoting -Force
+-SkipNetworkProfileCheck` still hangs the same way. This rules out a timing race specific to how early
+`FirstLogonCommands` runs during specialize - whatever is wrong reproduces on a plain, fully
+interactive admin session too.
+
+**Root cause NOT yet identified** - this is an honest "found the exact failure, not yet the reason"
+entry, not a fix. A real, multi-angle web search (Microsoft Learn/Q&A, Experts Exchange, GitHub issue
+trackers) surfaced several candidate explanations, none confirmed against this specific VM yet:
+- `-SkipNetworkProfileCheck` is documented as a no-op on Server SKUs to begin with (only affects
+  client Windows editions' Public-network restriction) - ruled out as the actual lever, though it's
+  harmless to keep in the unattend.xml.
+- A documented Group Policy conflict (`Set-WSManQuickConfig` failing on "Allow remote server
+  management through WinRM" GPO setting) - plausible but unconfirmed; not yet checked directly against
+  this VM's own local GPO state (`gpresult`/`rsop.msc` not yet run).
+- A Microsoft Q&A thread describing "stuck at Enabling Feature(s)" on fresh Windows Server 2019
+  installs generally (suggesting possible CBS/component-store health issues, `sfc`/`DISM
+  /RestoreHealth` as a generic mitigation) - a real, if generic, precedent for "Server 2019 fresh
+  installs sometimes get stuck," not a specific mechanism match.
+- Not yet checked: Group Policy Client service (`gpsvc`) state specifically (only `WinRM`, `MpsSvc`,
+  `W32Time`, `LanmanServer` were checked this session); whether the hang is specific to the offline
+  `hivex`-injected NetKVM driver path (Server 2022/2025 use the identical mechanism and don't hit this,
+  which weighs against but doesn't rule out a driver-specific interaction); WMI repository health
+  (`winmgmt /verifyrepository`).
+
+**Status: Phase E1 blocked on this bug.** Not attempted yet: retrying with `winrm quickconfig -quiet`
+as a substitute for `Enable-PSRemoting` (a documented lighter-weight alternative some of the search
+results suggest is less prone to this class of hang), extending patience past 5 minutes to see if it
+ever completes, or checking `gpsvc`/WMI repository health directly. The diagnostic VM was shut down
+cleanly (QMP `system_powerdown`, confirmed exited) rather than left running or hard-killed. The
+failed build's disk (`image-apply/output/builds/server2019-20260902-105345.qcow2`) was kept, not
+deleted, as live evidence for continued diagnosis - matching this project's own disk-hygiene standard
+of preserving artifacts during an active reproducibility/diagnosis sequence.
