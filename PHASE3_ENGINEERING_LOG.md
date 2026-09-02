@@ -4157,3 +4157,99 @@ sequence (plain `winrm quickconfig -quiet` plus explicit listener/firewall comma
 `Enable-PSRemoting`'s broader `Register-PSSessionConfiguration` work entirely, since this project's own
 `FirstLogonCommands` only actually needs a working WinRM *listener*, not full PowerShell-remoting
 session-configuration registration) - not attempted yet, this is exactly the Part C discussion.
+
+---
+
+## Session (2026-09-02, continued): Direction 2 tested via the new harness - real progress, but the
+## root cause is broader than `Enable-PSRemoting` specifically. Not yet resolved.
+
+User decision: try Direction 2 first (drop `Enable-PSRemoting`, since this project's own WinRM usage
+never needed `Register-PSSessionConfiguration` in the first place - confirmed directly by reading
+`pywinrm`'s own `run_ps` source, which is just `run_cmd('powershell -encodedcommand ...')` over the
+plain WinRS shell resource, never the native PSRP/PSSession protocol). Using the new
+`dev/run-server2019-specialize-test.sh` harness (Part A above), this became a genuinely fast
+iterative investigation - roughly a dozen boot cycles in one session, each ~5-8 minutes instead of
+~35.
+
+**What was confirmed, in order:**
+
+1. **Removing `Enable-PSRemoting` alone did not fix it** - same symptom, `WWW-Authenticate: Negotiate`
+   only, no `Basic`.
+2. **A real, separate, self-inflicted bug found and fixed along the way**: a verbose multi-clause
+   `<Description>` element (citing `PHASE3_ENGINEERING_LOG.md`/a GitHub issue inline) caused Windows
+   Setup's own answer-file parser to reject the *entire file* as invalid - `"Windows could not parse
+   or process the unattend answer file... The answer file is invalid"` - even though `xmllint --noout`
+   reported it well-formed. **`xmllint` checks XML well-formedness only; it does not validate against
+   Windows Setup's own stricter unattend-answer-file schema.** Hit this exact mistake *twice* in this
+   session (fixed the first time, accidentally reintroduced a similarly verbose Description on the
+   second combined-fix attempt, hit the identical failure, caught and fixed again). **New standing
+   rule, now documented in `unattend-server2019.xml`'s own header comment for future editors**: keep
+   every `<Description>` terse (one short clause); put detailed rationale in the file's `<!-- -->`
+   header comment instead, never inline in a `<Description>`.
+3. **Marker-file forensics (`server2019-firstlogon-marker.txt`, `-pnputil-log.txt`, `-netcat-log.txt`,
+   `-winrm-log.txt`) precisely isolated which `FirstLogonCommands` order actually completes each run**
+   - the single most useful diagnostic technique this whole session, reused across ~10 iterations.
+4. **Isolated the REAL root cause of the original hang, and it was never `Enable-PSRemoting` at
+   all**: with a trivial `cmd.exe`-based Order 3/4 (marker-writing only), both completed instantly -
+   proving `FirstLogonCommands`' own queue processing is fine. Restoring the *real* Order 3 script
+   (with Order 4 trivial) reproduced the hang - meaning **Order 3, not Order 4, was the actual
+   original blocker**, and every previous session's live-interactive testing of `Enable-PSRemoting`
+   (Order 4) had been chasing a red herring that happened to *also* independently look bad, not the
+   actual gate.
+5. **Bisected Order 3's script line by line, each piece tested in isolation**: `Get-NetIPAddress
+   -AddressFamily IPv4 -ErrorAction SilentlyContinue` alone - works fine. The full while-loop +
+   `Where-Object` filter + the final `Get-NetConnectionProfile | Set-NetConnectionProfile` pipe -
+   hangs. Narrowing further: the while-loop + `Where-Object` alone (no final pipe) - **hangs**. This
+   pins the original Order 3 hang specifically to `Get-NetIPAddress ... | Where-Object {...}` -
+   piping `Get-NetIPAddress`'s output into `Where-Object` hangs indefinitely (let it run 5+ minutes
+   with zero progress) when invoked via `FirstLogonCommands` on Server 2019, even though the identical
+   pipeline construct is a completely ordinary, common PowerShell pattern. Not flaky/intermittent -
+   100% reproducible across every trial.
+6. **Fixed Order 3 by removing the wait-loop entirely** (not working around the hang - this project's
+   own New-NetFirewallRule call has no `-Profile` restriction, so the network-category wait was
+   defensive, never load-bearing; DHCP is fast/reliable here, confirmed directly). **Order 3 now
+   completes cleanly and quickly** - confirmed via the marker file (`server2019-netcat-log.txt` now
+   exists, empty, meaning `Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory
+   Private` itself does NOT hang - only the network-*readiness-wait* pattern that preceded it did).
+7. **With Order 3 genuinely fixed, Order 4 (WinRM enable, no `Enable-PSRemoting`) still never
+   completes.** Its own `Get-ChildItem WSMan:\localhost\Listener | Remove-Item ...; New-Item -Path
+   WSMan:\localhost\Listener ...` pipe was the next suspect (same class of problem as Order 3's -
+   piping a native cmdlet's output into another cmdlet, this time via the `WSMan:` PowerShell
+   provider) - **removed it entirely** (Server 2019 already ships a default WinRM listener active
+   before `FirstLogonCommands` ever runs, confirmed directly, so reconfiguring it in place via `winrm
+   set` - an external-process invocation, not a native-cmdlet pipe - rather than deleting/recreating
+   it was a reasonable, lower-risk substitute). **Still did not fix it** - Order 4 still never
+   completes.
+8. **Removed the final `Restart-Service WinRM` too** (the original JEA-issue candidate, now tested
+   directly rather than only by analogy) - **still did not fix it.** With every pipe removed and the
+   service restart removed, Order 4's remaining content is: `Set-Service WinRM -StartupType
+   Automatic`, three `winrm set ...` calls, and `New-NetFirewallRule ...` (no pipes anywhere) - and it
+   *still* never completes.
+
+**Status: not resolved.** The pattern that's emerged is broader than any single cmdlet or any single
+theory tested so far (`Enable-PSRemoting`'s `Register-PSSessionConfiguration`, the `WSMan:` provider
+pipe, `Restart-Service`) - multiple, structurally different PowerShell operations related to
+networking/WinRM configuration all fail to complete when run via `FirstLogonCommands` on Server 2019,
+while the *identical* operations run fine interactively from an already-logged-in admin session
+minutes later (confirmed directly for `Get-NetConnectionProfile`/`Set-NetConnectionProfile`, and for
+a trivial `powershell.exe` launch generally). This points toward something about the
+`FirstLogonCommands`/specialize **execution context itself** on Server 2019 - not yet identified
+directly (candidate areas not yet checked: Group Policy Client (`gpsvc`) state specifically, WMI
+repository health, whether `New-NetFirewallRule`/firewall-policy-store access needs a not-yet-ready
+dependency this early in boot) - rather than a property of any one specific cmdlet.
+
+**Not yet bisected further**: which of Order 4's five remaining individual commands (`Set-Service`,
+the three `winrm set` calls, or `New-NetFirewallRule`) is/are actually the blocker(s) - could be one,
+could be more than one. The same marker-file-driven bisection technique that worked for Order 3 would
+work here too; this is the natural next step if the investigation continues.
+
+**Cleanup**: all diagnostic VMs from this session were shut down (graceful QMP `system_powerdown`
+where it responded in time - roughly half the runs; `SIGTERM` fallback otherwise, since a guest that
+never got network/WinRM working also generally didn't process ACPI events reliably - never a hard
+`SIGKILL`/QMP `quit`). Disposable overlay `.qcow2` files accumulated under `dev/output/
+server2019-specialize-test/` across ~12 iterations this session - not yet pruned; worth a cleanup pass
+once this investigation concludes, per this project's own disk-hygiene standard (keep evidence during
+an active sequence, prune once it closes). The frozen baseline
+(`image-apply/output/server2019-baseline-bootable.qcow2`) was never written to by any of this -
+confirmed by every overlay independently reproducing the identical Order-1/2 marker state at the
+start of each run.

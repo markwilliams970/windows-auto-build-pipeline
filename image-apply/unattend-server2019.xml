@@ -10,6 +10,35 @@
   unattend-server2025.xml's own header comment for the full rationale behind this file's
   structure (why PnpCustomizationsNonWinPE isn't used, why pnputil runs live via
   FirstLogonCommands instead, etc.) - not repeated here.
+
+  Order 4's WinRM-enable step deliberately does NOT call Enable-PSRemoting (PHASE3_ENGINEERING_
+  LOG.md, 2026-09-02 Phase E1): its internal Register-PSSessionConfiguration step is a documented
+  WinRM StopPending hang trigger (PowerShell/JEA GitHub issue #30) - and this project's own
+  pywinrm usage (run_cmd/run_ps) only ever needs the plain WinRS shell resource, never a
+  registered PSSession endpoint, so nothing is actually lost by skipping it. Set-Service WinRM
+  -StartupType Automatic replaces the one thing Enable-PSRemoting would otherwise have covered
+  that this step still needs (every other step - listener, auth, firewall - was already explicit
+  here regardless).
+
+  Order 3's network-category step deliberately has NO wait-loop (PHASE3_ENGINEERING_LOG.md,
+  2026-09-02 Phase E1, same session): `Get-NetIPAddress | Where-Object {...}` hangs indefinitely
+  when run via FirstLogonCommands on Server 2019 specifically - isolated across 7 successive
+  diagnostic boots via dev/run-server2019-specialize-test.sh (Get-NetIPAddress alone works fine;
+  Get/Set-NetConnectionProfile both work fine; the pipe into Where-Object is what hangs). DHCP is
+  fast/reliable in this environment (confirmed directly via ipconfig), and Order 4's own
+  New-NetFirewallRule has no -Profile restriction, so the wait was defensive, never load-bearing -
+  removing it entirely is lower-risk than trying to fix or work around the hanging pipe. Order 4
+  originally also removed/recreated the WSMan listener via `Get-ChildItem WSMan:\localhost\
+  Listener | Remove-Item ...; New-Item -Path WSMan:\localhost\Listener ...` - this pipe hung too
+  (same diagnostic session), so it was dropped: Server 2019 already ships with a default listener
+  active (confirmed - WinRM responds before FirstLogonCommands ever runs), so this step now just
+  reconfigures it in place via `winrm set` (an external-process invocation, not a native
+  cmdlet pipe) rather than deleting and recreating it. NOTE for
+  future editors of this file: keep every <Description> here terse (one short clause) - a verbose
+  Description caused Windows Setup's own answer-file parser to reject the entire file as invalid
+  ("Windows could not parse or process the unattend answer file... for pass [specialize]"), a
+  failure mode this project hit twice before catching it - xmllint's well-formedness check does
+  NOT catch this, only Windows Setup's own stricter schema validation does.
 -->
 <unattend xmlns="urn:schemas-microsoft-com:unattend">
   <settings pass="specialize">
@@ -63,14 +92,14 @@
         <SynchronousCommand wcm:action="add">
           <Order>3</Order>
           <RequiresUserInput>false</RequiresUserInput>
-          <Description>Set network category to Private</Description>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$deadline = (Get-Date).AddSeconds(90); while (-not (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' })) { if ((Get-Date) -gt $deadline) { break }; Start-Sleep -Seconds 2 }; Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; C:\server2019-netcat-log.txt"</CommandLine>
+          <Description>Set network category to Private (no wait-loop - see this file's own header comment)</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; C:\server2019-netcat-log.txt"</CommandLine>
         </SynchronousCommand>
         <SynchronousCommand wcm:action="add">
           <Order>4</Order>
           <RequiresUserInput>false</RequiresUserInput>
-          <Description>Enable WinRM over HTTP</Description>
-          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck; Get-ChildItem WSMan:\localhost\Listener | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; New-Item -Path WSMan:\localhost\Listener -Transport HTTP -Address * -Force; winrm set winrm/config/service/auth '@{Basic=\"true\"}'; winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'; winrm set winrm/config/client '@{TrustedHosts=\"*\"}'; New-NetFirewallRule -DisplayName 'WinRM-HTTP' -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -ErrorAction SilentlyContinue; Restart-Service WinRM *&gt;&gt; C:\server2019-winrm-log.txt"</CommandLine>
+          <Description>Enable WinRM over HTTP (no Enable-PSRemoting, no pipe, no service restart - see header)</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Service WinRM -StartupType Automatic; winrm set winrm/config/service/auth '@{Basic=\"true\"}'; winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'; winrm set winrm/config/client '@{TrustedHosts=\"*\"}'; New-NetFirewallRule -DisplayName 'WinRM-HTTP' -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -ErrorAction SilentlyContinue *&gt;&gt; C:\server2019-winrm-log.txt"</CommandLine>
         </SynchronousCommand>
       </FirstLogonCommands>
     </component>
