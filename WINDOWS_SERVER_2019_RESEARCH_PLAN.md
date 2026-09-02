@@ -21,8 +21,15 @@ verification (not just web research) now that this project has direct access to 
 Microsoft Q&A, and re-grounded Finding 6 against this project's own subsequent history — the
 Start Menu/DCOM crash investigation continued well past what the first pass had visibility into,
 and its actual conclusion changes how Finding 6 should be read. See each finding below for what was
-promoted from inferred to confirmed, and the new "Finding 9" and "Finding 10" for what's genuinely
-new this pass.
+promoted from inferred to confirmed, and the new "Finding 9" for what's genuinely new this pass.
+
+**Phase A: CLOSED, same day (2026-09-02).** Research Pass 2 left exactly one open item: the Server
+2019 Evaluation ISO is gated behind a Microsoft registration form, not a scriptable download, so the
+WIM edition index (Finding 3) couldn't be directly verified yet. The user completed that form
+directly and handed off the resulting ISO; it's now cached in `../iso_cache/`
+(`ISO_CACHE_INVENTORY.md` updated) and the WIM index has been directly verified (index 2 =
+`ServerStandardEval`, Server Desktop Experience — see Finding 3, updated in place below). **No
+research-phase open questions remain.** Phase B (design + implementation plan) is next.
 
 ---
 
@@ -86,7 +93,47 @@ Server 2019 by several releases and postdates it by several more (this matches t
 found, in either direction, that offline apply is harder on 2019 than 2022** — consistent with this
 being the same primitive Microsoft has documented unchanged across Server 2016 through 2025.
 
-### 3. WIM edition index / EDITIONID — **still unverified — and Research Pass 2 found the actual acquisition blocker: Server 2019 evaluation media is not a plain download link like the other three OSes**
+### 3. WIM edition index / EDITIONID — **CONFIRMED 2026-09-02: index 2 = ServerStandardEval, Server (Desktop Experience) — exactly matching the "probably index 2" inference, now a citation instead of a guess**
+
+**Resolved.** The user completed Microsoft's registration form directly (see the acquisition-blocker
+writeup immediately below, kept for the record) and handed off the resulting ISO, which was cached
+into `../iso_cache/2019-17763.3650.221105-1748.rs5_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso`
+(build 17763.3650, matching the Extended-Support-eligible Server 2019 v1809 release line), with a
+`.sha256`/`.meta` sidecar pair added and a new row in `ISO_CACHE_INVENTORY.md`, matching the existing
+convention for every other cached ISO.
+
+This project's own non-negotiable verification recipe (`7z e ... sources/install.wim`, then
+`wimlib-imagex info install.wim` — the same technique `PHASE2_ENGINEERING_LOG.md`'s Finding 0 used
+for Server 2025, preferred over the older `strings -el | grep EDITIONID` technique) was run directly
+against the real extracted `install.wim`, not inferred or pattern-matched:
+
+| Index | `<NAME>` | `<EDITIONID>` | Installation Type |
+|---|---|---|---|
+| 1 | Windows Server 2019 SERVERSTANDARDCORE | `ServerStandardEval` | Server Core |
+| 2 | Windows Server 2019 SERVERSTANDARD | `ServerStandardEval` | **Server (Desktop Experience)** |
+| 3 | Windows Server 2019 SERVERDATACENTERCORE | `ServerDatacenterEval` | Server Core |
+| 4 | Windows Server 2019 SERVERDATACENTER | `ServerDatacenterEval` | Server (Desktop Experience) |
+
+**Index 2 is the value this project would actually use** (`ServerStandardEval`, Desktop Experience) —
+identical index position to Server 2022 and Server 2025's own already-proven `os_wim_index` value,
+and the same four-image ordering pattern (Standard Core, Standard Desktop Experience, Datacenter
+Core, Datacenter Desktop Experience) both of those OSes use. Two research passes' worth of "probably
+index 2, but that's pattern-matching, not a citation" is now closed: this is a direct, primary-source
+read of the real cached ISO, exactly matching this project's own "verify before trusting" standard.
+**Finding 3 status: CONFIRMED.** The single largest risk flagged in both prior research passes (a
+silent wrong-edition apply) no longer applies to Server 2019 specifically, once this value is written
+into `image-apply/lib/common.sh` at implementation time.
+
+The extracted `install.wim` scratch file was deleted after verification (4.7 GB, not worth retaining
+per this project's own disk-hygiene standard — the cached ISO itself is the durable artifact, the
+extraction is reproducible from it in under two minutes on this host).
+
+---
+
+**Original Research Pass 2 write-up below, kept for the record of how the acquisition blocker was
+found and resolved — the WIM index question itself is closed, above.**
+
+**Still unverified — and Research Pass 2 found the actual acquisition blocker: Server 2019 evaluation media is not a plain download link like the other three OSes**
 
 This project's own convention (never assume an index; verify via `7z x` + `strings -el ... | grep
 EDITIONID` against the real cached ISO) **still cannot be executed** — but Research Pass 2 found
@@ -335,11 +382,11 @@ today."
 | Install mechanism | Offline apply (`wimlib`+`bcdboot`), same as 2022/2025 — no evidence otherwise | Offline apply, production-confirmed | Setup.exe-driven (`_noprompt` ISO), production-confirmed — genuinely different mechanism, for a documented reason (offline-only path hits a hard BSOD) |
 | Setup.exe involved? | No (by design, same rule as 2022/2025) | No | Yes, required |
 | ACL/security-descriptor fix (`apply-image.sh` native NTFS apply) | Inherited automatically, unconditional in the shared script — no OS-specific work needed | Confirmed fixed, clean E2E builds 2026-08-25/26 | Inherited automatically (not exercised by Windows 11's own separate Setup.exe path, but not needed there either) |
-| WIM index verified? | **No — acquisition itself is blocked (see Media availability row); cannot be checked until resolved** | Yes, index 2 for both, directly verified via `7z`/`strings` | Yes, index 1, directly verified |
+| WIM index verified? | **Yes — CONFIRMED 2026-09-02, index 2 = `ServerStandardEval`, Server (Desktop Experience), via direct `wimlib-imagex info` against the real cached ISO** | Yes, index 2 for both, directly verified via `7z`/`strings` | Yes, index 1, directly verified |
 | VirtIO driver subfolder | `2k19` — **CONFIRMED present in the pinned `virtio-win-0.1.285.iso`, byte-identical (`sha256sum`-verified) to `2k22`'s driver binaries and INF text** | `2k22`/`2k25` — confirmed present in pinned ISO | `w11` — confirmed present in pinned ISO |
 | PCI hardware ID risk | Driver-side hardware IDs confirmed identical to 2k22 (hash-verified INF read); QEMU-negotiation side not independently boot-tested | Confirmed via Finding 3A-3, generalizes across Server SKUs | Confirmed via Finding 3A-3 |
 | DCOM "boot storm" mitigation | **Moot as an open question — `ServicesPipeTimeout=120000` is unconditional in `make-bootable.sh`, which Server 2019 would run through unmodified; applies automatically, no decision needed** | Present, applied unconditionally; the crash this project actually chased was later found to be a separate ACL bug, now fixed at the `apply-image.sh` level | Not evaluated (no roles/services layer applies to Windows 11) |
-| Media availability | **Live but gated behind a Microsoft registration form (name/email/company) — confirmed by direct fetch, unlike the other three sources, which resolve directly with no human interaction. Real acquisition blocker, not yet resolved.** | Confirmed live and cached, direct fwlink | Confirmed live and cached, though the fwlink has already drifted to a newer 25H2 build than what's cached (per `ISO_CACHE_INVENTORY.md`'s own caution) |
+| Media availability | **RESOLVED — gated behind a Microsoft registration form (name/email/company), unlike the other three sources, which resolve directly with no human interaction; the user completed the form directly and the ISO is now cached (`../iso_cache/2019-17763.3650.221105-1748...iso`, `ISO_CACHE_INVENTORY.md` updated). No longer blocking.** | Confirmed live and cached, direct fwlink | Confirmed live and cached, though the fwlink has already drifted to a newer 25H2 build than what's cached (per `ISO_CACHE_INVENTORY.md`'s own caution) |
 | Support lifecycle | Extended Support until 2029-01-09 — confirmed, no near-term deprecation risk | Actively supported | Actively supported |
 | Unattend.xml specialize pass | No regression found; expected to work identically | Confirmed working (Finding 41/42) | Confirmed working (own Setup.exe-driven answer file) |
 
@@ -350,22 +397,17 @@ today."
 Ordered as a dependency chain, mirroring how Server 2022 was actually brought up (Phase 2 Sessions
 12-13):
 
-1. **Resolve the ISO acquisition blocker first — this is now the actual critical-path item, not a
-   formality.** Server 2019's Evaluation download requires completing Microsoft's registration form
-   (name/email/company) in a real browser session — the user needs to either do this themselves and
-   hand off the resulting direct download link, or make an explicit, reviewed decision to accept a
-   non-Microsoft-first-party source (e.g. an Internet Archive-hosted copy of Server 2019 v1809 media
-   surfaced during this pass's research) as a deliberate exception to this project's established
-   "official Evaluation Center source" convention. Nothing below can start without this.
-2. **Cache the ISO** once acquired (Standard edition — Datacenter isn't needed, matching this
-   project's existing convention), verify its checksum, add a `.meta`/`.sha256` sidecar pair, and add
-   a row to `ISO_CACHE_INVENTORY.md` — matching the existing convention exactly (nothing new to
-   design here once the file is actually in hand).
-3. **Verify the WIM edition index directly**, per this project's own non-negotiable standard: `7z x`
-   the ISO, `strings -el ... | grep EDITIONID` against `install.wim`, confirm which index is
-   `ServerStandardEval` (Desktop Experience) before writing anything into
-   `image-apply/lib/common.sh`'s `os_wim_index()`. Do not carry forward the "probably index 2"
-   inference into code without this check — two research passes now, still not a citation.
+1. ~~Resolve the ISO acquisition blocker first.~~ **DONE 2026-09-02.** The user completed Microsoft's
+   registration form directly and handed off the resulting ISO; no non-Microsoft mirror was needed.
+2. ~~Cache the ISO.~~ **DONE 2026-09-02.** Cached as
+   `../iso_cache/2019-17763.3650.221105-1748.rs5_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso`,
+   checksum computed fresh (no prior sidecar to verify against), `.meta`/`.sha256` sidecars written,
+   `ISO_CACHE_INVENTORY.md` updated with a row matching the existing convention (with an explicit
+   note that this source has no scriptable re-download link, unlike the other four).
+3. ~~Verify the WIM edition index directly.~~ **DONE 2026-09-02, see Finding 3 above.** Index 2 =
+   `ServerStandardEval`, Server (Desktop Experience) — confirmed via `wimlib-imagex info` against the
+   real extracted `install.wim`, matching the "probably index 2" inference exactly. This value is
+   ready to write into `image-apply/lib/common.sh`'s `os_wim_index()` at implementation time.
 4. **Add `server2019` to `image-apply/lib/common.sh`'s per-OS tables** (`os_win_iso`,
    `os_wim_index`, driver subfolder `2k19`, disk size, default computer name), following the exact
    pattern already used for the other three OSes — no new mechanism needed. The `2k19` driver
@@ -387,31 +429,25 @@ Ordered as a dependency chain, mirroring how Server 2022 was actually brought up
 
 ## Feasibility assessment
 
-**Verdict, updated after Research Pass 2: still low-to-moderate risk overall, but the shape of the
-risk has shifted — the technical/engineering questions look better than Pass 1 assessed, while a
-new *procedural* blocker (ISO acquisition) is now the actual critical-path item, not a footnote.**
+**Verdict, updated after the ISO acquisition/verification closed out (2026-09-02): low risk, all the
+way down to implementation. Every open research question from Pass 1 and Pass 2 is now resolved.**
 
-**What got better this pass:**
-- The virtio driver question (Finding 4/5) is now hash-confirmed, not inferred — as close to zero
+**What got better across both passes and the final verification:**
+- The virtio driver question (Finding 4/5) is hash-confirmed, not inferred — as close to zero
   residual risk as this project's own "verify before trusting" standard can produce short of an
   actual boot test.
 - The DCOM boot-storm question (Finding 6), previously called "the single most load-bearing open
   question," turns out to already be resolved by architecture (the fix is unconditional in the
   shared script) — and the crash this project actually spent real effort chasing had an unrelated
   root cause (ACL/security-descriptor loss in the old FUSE-mounted `apply-image.sh`) that's since
-  been found and fixed at the shared-script level, which Server 2019 inherits automatically. This is
-  a materially better starting position than Pass 1 could see, because Pass 1 predates that fix.
+  been found and fixed at the shared-script level, which Server 2019 inherits automatically.
+- **The ISO acquisition blocker is resolved and the WIM edition index is confirmed** (Finding 3,
+  above) — index 2, exactly matching the "probably index 2" inference both research passes were
+  unwilling to accept as a citation. This was the single largest remaining risk (a silent
+  wrong-edition apply) and it's now closed by direct primary-source verification, not analogy.
 
-**What's now the real open item:**
-- The WIM edition index (Finding 3) remains unverified, and Research Pass 2 found *why* it's been
-  hard to close: Server 2019 is the only one of this project's four target OSes whose evaluation
-  media isn't a plain, scriptable download — it's gated behind a human-facing registration form.
-  This is a real, if mundane, procedural blocker: it means Server 2019's bring-up can't start with
-  "download and verify" the way Server 2022's Session 12 did; it needs a human (the user) to acquire
-  the file first, or an explicit decision to source it differently. This is not a technical risk —
-  once the file exists in `../iso_cache/`, every subsequent step (WIM index check, driver injection,
-  the full pipeline) is expected to behave exactly like Server 2022's proven bring-up — but it is a
-  real, concrete precondition that didn't exist for any other OS this project has added.
+**No open research items remain.** Everything from here is implementation work (Phase B/D), not
+further research — see Recommendations #4-7 below.
 
 Every layer this project has already identified as "least brittle" (`wimlib` WIM apply, `bcdboot`,
 offline `hivex` driver registration, the unattend/specialize pass, and now the ACL-preserving native
@@ -421,38 +457,32 @@ Server 2022/2025. Server 2019 predates Server 2022, not follows it, so in one se
 would be moving *backward* in Windows Server generations rather than forward into new territory —
 the offline-apply mechanism this project built was proven first on 2025 (the newest, least-tested
 target at the time) and generalized to 2022 with zero tooling changes; 2019 is architecturally closer
-to 2022 than 2025 is to 2022, if anything a slightly easier target technically, gated now only by
-the acquisition step above.
+to 2022 than 2025 is to 2022, if anything a slightly easier target technically — and no longer gated
+on anything research-shaped.
 
 Compare to Server 2022's own actual bring-up (Session 12): described in `PHASE3_ENGINEERING_LOG.md`
 as requiring **zero changes to any of the reusable tooling**, only OS-specific input values. Server
-2019's bring-up should land in the same category once the ISO is in hand — a low-effort configuration
-addition, not new engineering. **Rough effort estimate, once the ISO acquisition blocker is
-resolved: comparable to or slightly less than Server 2022's own Session 12 bring-up** (that session
-covered ISO download/verification, WIM index confirmation, and a full end-to-end build/WinRM
-confirmation cycle in a single session) — realistically one focused session for the offline-apply
-track, plus a second short session to confirm the three provisioning roles if not already exercised
-against 2019 specifically. **The acquisition step itself is a separate, human-driven precondition
-with no engineering effort estimate that applies — it's a registration form, not a research or
-implementation task.**
+2019's bring-up should land in the same category — a low-effort configuration addition, not new
+engineering. **Rough effort estimate: comparable to or slightly less than Server 2022's own Session
+12 bring-up** (that session covered ISO download/verification, WIM index confirmation, and a full
+end-to-end build/WinRM confirmation cycle in a single session, and this project's own equivalent
+verification work for Server 2019 is already done as of this entry) — realistically one focused
+session for the offline-apply track (Phase D, wiring `lib/common.sh` + a real `build.sh server2019`
+run), plus a second short session to confirm the three provisioning roles.
 
 ---
 
 ## Open questions / assumptions / risks
 
-**Open questions (need a decision or an empirical test, not answerable by more research) —
-Research Pass 2 closed two of Pass 1's three open questions; one new one replaces them:**
+**Open questions (need a decision or an empirical test, not answerable by more research) — all
+research-phase open questions from both passes are now closed:**
 
-1. **NEW (Research Pass 2): who acquires the Server 2019 ISO, and how?** This is now the actual
-   gating open question — the media requires completing a Microsoft registration form, which this
-   research pass deliberately did not do (see Finding 3). Needs the user's decision: complete the
-   form themselves and hand off the resulting link, or explicitly approve a non-Microsoft-first-party
-   source as a one-time, documented exception to this project's established sourcing convention.
-   Nothing past Recommendation #1 can proceed without this being resolved.
-2. Is the "probably index 2" WIM index inference (Finding 3) actually correct for Server 2019
-   Standard (Desktop Experience)? Still unverified after two research passes — genuinely can't be
-   resolved by more research, only by direct `7z`/`strings` verification once the ISO from question 1
-   is in hand. Not assumed from the partial community listing found either pass.
+1. ~~Who acquires the Server 2019 ISO, and how?~~ **Closed 2026-09-02** — the user completed
+   Microsoft's registration form directly; no non-Microsoft mirror was needed. Kept here, struck
+   through, for the record of how it was resolved.
+2. ~~Is the "probably index 2" WIM index inference (Finding 3) actually correct for Server 2019
+   Standard (Desktop Experience)?~~ **Closed 2026-09-02, confirmed yes** — direct `wimlib-imagex info`
+   verification against the real cached ISO (Finding 3, above). No longer open.
 3. ~~Does the DCOM/RPC "boot storm" race actually reproduce on Server 2019?~~ **Closed as a
    blocking question by Research Pass 2** — not because the underlying race was confirmed or
    excluded for 2019 (it still wasn't), but because the mitigation (`ServicesPipeTimeout=120000`) is
@@ -476,24 +506,22 @@ Research Pass 2 closed two of Pass 1's three open questions; one new one replace
   no OS-specific changes — reasonable (these are long-stable Windows Server role features, not new
   in 2022), but not independently exercised as part of either research pass, which focused on the
   offline-apply mechanism rather than re-verifying the already-proven-elsewhere provisioning layer.
-- **New this pass**: that a non-Microsoft-first-party mirror of Server 2019 media (if the project
-  decides to use one, per Open Question 1) carries the same provenance/checksum trust this project's
-  own `ISO_CACHE_INVENTORY.md` convention otherwise guarantees for every other source. This has not
-  been evaluated — it's flagged as a real decision point, not assumed benign, if that path is chosen.
+- ~~That a non-Microsoft-first-party mirror of Server 2019 media carries the same provenance/checksum
+  trust this project's own `ISO_CACHE_INVENTORY.md` convention otherwise guarantees.~~ **Moot** — the
+  user acquired the ISO directly from Microsoft's own Evaluation Center, so no mirror-trust question
+  actually arose.
 
 **Risks:**
 
-- The single largest risk is still a **silent WIM index mismatch** (Recommendation #3 skipped or
-  mis-verified) — `wimapply` would apply the wrong edition with no error at apply time, per
-  `CLAUDE.md`'s own "Version-sensitivity and brittleness" standard. Unchanged from Pass 1's
-  assessment; two research passes have now failed to find a citable primary source for the exact
-  index, which if anything raises the importance of not skipping the direct check once media is
-  available.
-- **New this pass**: a process risk around the ISO acquisition step itself — because it requires a
-  human-facing form rather than a scriptable download, it's the one step in this whole pipeline
-  that can't be re-run unattended or reproduced identically by a future session without a person
-  involved again. Worth deciding up front (Open Question 1) rather than rediscovering this gap
-  mid-implementation.
+- ~~The single largest risk was a silent WIM index mismatch.~~ **Resolved** — Finding 3's direct
+  verification confirms index 2 = `ServerStandardEval` (Desktop Experience), so the value that will
+  go into `image-apply/lib/common.sh` is a citation, not an inference.
+- A process risk around the ISO acquisition step remains true as a standing fact, even though it's
+  resolved for this specific ISO: because Server 2019's media requires a human-facing form rather
+  than a scriptable download, it's the one source in this project's cache that can't be re-acquired
+  unattended by a future session without a person involved again. Worth remembering if the cached
+  file is ever lost and needs re-downloading — not a blocker now that it's cached, but not a
+  "just re-run the script" situation either.
 - The DCOM boot-storm risk from Pass 1 is downgraded, not eliminated: this document should still not
   be read as confirming Server 2019 is immune to the underlying RPC/DCOM race described in the
   Microsoft Q&A source — only that whether it is or isn't no longer matters for this project's own

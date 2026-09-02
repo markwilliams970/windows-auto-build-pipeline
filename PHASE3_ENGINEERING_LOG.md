@@ -3849,3 +3849,64 @@ boot - CLAUDE.md's Open Items list is empty as of this entry.**
 established pattern from the Server 2022/2025 confirmation sessions. `win2025app` was not
 restarted this session - that's the user's own domain from an earlier session, left for them to
 restart when they want it back.
+
+---
+
+## Session (2026-09-02): Server 2019 project kicked off as a formal, gated addition - Phase A
+## (research) deepened and closed same day, including the ISO acquisition blocker
+
+The user asked to proceed with adding Windows Server 2019 as a fourth target OS, structured as five
+explicit phases with gates: A) deep research + engineering-quality summary, B) design/implementation
+plan, C) design review, D) implementation, E) E2E testing (2+ builds including role provisioning).
+This entry covers Phase A only - no pipeline code was touched (`build.sh`, `image-apply/*.sh`,
+`image-apply/lib/common.sh`, `services.yaml` all unmodified).
+
+**Research Pass 2** (background task, full detail in `WINDOWS_SERVER_2019_RESEARCH_PLAN.md`, updated
+in place rather than replaced) deepened the original scoping pass from 2026-09-01 with real
+local/host-side verification instead of just web research, now that the project had direct access to
+its own already-cached files:
+
+- **VirtIO `2k19` driver subfolder: promoted from "referenced by convention" to hash-confirmed.**
+  Direct `7z l`/`diff`/`sha256sum` against the already-cached `virtio-win-0.1.285.iso` found `2k19`'s
+  `vioscsi.inf`/`netkvm.inf`/`viostor.inf` byte-identical text to `2k22`'s, and the actual driver
+  binaries (`netkvm.sys`, `netkvmp.exe`, `vioscsi.sys`, `viostor.sys`) hash-identical. Hardware IDs
+  match `tools/gen-viostor-ddb-reg.py`'s existing presets exactly.
+- **DCOM/RPC "boot storm" race: reframed away as a decision point entirely.** `ServicesPipeTimeout=
+  120000` turns out to already be unconditional in `make-bootable.sh` (no OS branching) - Server 2019
+  would inherit it automatically, no separate call to make. Bonus finding: the Start Menu crash this
+  project actually spent real effort chasing (`STARTMENU_DCOM_ROOT_CAUSE_RESEARCH_PLAN.md`) turned
+  out to have an unrelated root cause (wimlib silently dropping ACLs via the old FUSE-mounted
+  `apply-image.sh`), since fixed at the shared-script level - Server 2019 inherits that fix too.
+- **New blocker found**: Server 2019's Evaluation ISO is the only one of this project's four target
+  OSes gated behind a Microsoft lead-generation registration form rather than a direct, scriptable
+  fwlink - confirmed by tracing the actual redirect (resolves to a landing page, not an ISO). The
+  research deliberately did not attempt to fabricate registration info to bypass it, correctly
+  treating this as something requiring the user's own action.
+
+**The user completed the registration form directly** and handed off the resulting ISO
+(`17763.3650.221105-1748.rs5_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso`, 5,652,088,832 bytes -
+build 17763.3650, the same v1809 release line, Extended Support until 2029-01-09 per the research's
+own Finding 9). Cached it into `../iso_cache/` with the `2019-` prefix matching this project's
+existing naming convention, computed its sha256 checksum fresh (`6dae072e...`), wrote `.meta`/
+`.sha256` sidecars, and added a row to `ISO_CACHE_INVENTORY.md` - with an explicit note that, unlike
+every other cached source, this one has no scriptable re-download link to record, since the
+acquisition step itself requires a human each time.
+
+**Ran this project's own non-negotiable WIM verification recipe directly against the real ISO**
+(`7z e ... sources/install.wim`, then `wimlib-imagex info install.wim` - the same technique
+`PHASE2_ENGINEERING_LOG.md` Finding 0 used for Server 2025, preferred over the older `strings -el |
+grep EDITIONID` technique): confirmed **index 2 = "Windows Server 2019 SERVERSTANDARD", EditionID
+`ServerStandardEval`, Installation Type Server (Desktop Experience)** - exactly matching the
+"probably index 2" inference two research passes had explicitly refused to treat as a citation
+without direct verification. Full four-image table (1=Standard Core, 2=Standard Desktop Experience,
+3=Datacenter Core, 4=Datacenter Desktop Experience) matches the identical pattern already proven for
+Server 2022/2025. The 4.7GB extracted `install.wim` scratch file was deleted after verification, per
+this project's own disk-hygiene standard - the cached ISO itself is the durable artifact.
+
+**Phase A is now closed - no research-phase open questions remain.** Every item flagged as
+"inferred, not verified" across both research passes (virtio driver presence/hardware IDs, the DCOM
+mitigation's applicability, the WIM edition index, media availability/support lifecycle) is now
+either confirmed by direct verification or resolved by architecture. `WINDOWS_SERVER_2019_RESEARCH_
+PLAN.md` was updated in place to reflect this throughout (Finding 3, the comparison table, the
+Feasibility assessment, and the Open Questions section all updated rather than left stale).
+**Next: Phase B (design + implementation plan with phase gates), not yet started as of this entry.**
