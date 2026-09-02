@@ -4253,3 +4253,88 @@ an active sequence, prune once it closes). The frozen baseline
 (`image-apply/output/server2019-baseline-bootable.qcow2`) was never written to by any of this -
 confirmed by every overlay independently reproducing the identical Order-1/2 marker state at the
 start of each run.
+
+---
+
+## Session (2026-09-02, continued): Order 4 bisected to completion - real root cause found, real
+## fix confirmed via a genuine end-to-end run. WinRM works.
+
+Continued the marker-file bisection technique on Order 4's remaining five commands (`Set-Service`,
+three `winrm set` calls, `New-NetFirewallRule`), same `dev/run-server2019-specialize-test.sh` harness,
+same graceful-QMP-shutdown-then-offline-mount pattern as every prior step this session (~8 more boot
+cycles).
+
+**Bisection result - every command works fine individually:**
+- `Set-Service WinRM -StartupType Automatic` alone - works.
+- `winrm set winrm/config/service/auth '@{Basic="true"}'` alone - works.
+- `winrm set winrm/config/service '@{AllowUnencrypted="true"}'` alone - works.
+- `winrm set winrm/config/client '@{TrustedHosts="*"}'` alone - works.
+
+**But combined, they hang - and the actual mechanism is narrower and stranger than "one bad
+command":** two `winrm set` calls in a row (no `Set-Service`, nothing else) - **hangs on the second
+call**. Tested whether this was specific to the external `winrm.exe` tool by substituting the native
+PowerShell `Set-Item WSMan:\localhost\Service\Auth\Basic -Value $true` / `Set-Item WSMan:\localhost\
+Service\AllowUnencryptedTraffic -Value $true` / `Set-Item WSMan:\localhost\Client\TrustedHosts -Value
+'*' -Force` cmdlets instead (no external process at all) - **three in a row still hangs**; **one alone
+still works fine**. **Root cause, precisely characterized: any single WSMan-configuration-changing
+operation completes fine on its own (external `winrm set` or native `Set-Item WSMan:`, doesn't
+matter); two or more of *either kind* run within the same `powershell.exe` process hang on the
+second one, every time, 100% reproducible.** Something about a first WSMan config change leaves a
+resource/lock that isn't released before a second one, in the same process, tries to touch it again -
+the exact underlying OS mechanism was not identified further (this is where the investigation
+stopped bisecting *why*, having already found an actionable *what*).
+
+**Fix, structural not probabilistic (per this project's own standing preference)**: split each
+WSMan-configuration change into its own `SynchronousCommand` `Order`, so each gets a fresh
+`powershell.exe` process - already known-safe, since `FirstLogonCommands`' own queue was proven
+(earlier in this session) to advance correctly between `Order`s regardless of command content. This
+avoids the trigger condition entirely (two WSMan changes sharing one process) rather than trying to
+out-wait whatever the underlying race is with a `Start-Sleep`. `unattend-server2019.xml`'s Order 4
+became Orders 4-8, one WSMan operation each (`Set-Service` startup type; Basic auth; unencrypted
+traffic; trusted hosts; firewall rule) - re-verified `xmllint --noout` well-formed and re-checked
+every `<Description>` stayed terse (per the earlier-caught answer-file-validity lesson).
+
+**Confirmed via a genuine, full end-to-end run through the new harness**:
+
+```
+==> RESULT: SUCCESS - WinRM Basic-auth reachable after ~249s
+```
+
+Not just a port-open check - real, authenticated WinRM commands run against the live VM:
+- `hostname` -> `WIN2019PROD` (matches the disk's own baked-in ComputerName)
+- `Get-NetAdapter` -> `Red Hat VirtIO Ethernet Adapter`, `Up`
+- `(Get-CimInstance Win32_OperatingSystem).Caption` -> `Microsoft Windows Server 2019 Standard
+  Evaluation` (confirms the correct edition, matching Phase A's Finding 3 WIM-index verification)
+- Direct read of `C:\server2019-winrm-log.txt` (all five split commands' own `*>>` output,
+  concatenated) confirms every individual step succeeded: `Auth\Basic = true`,
+  `Service\AllowUnencrypted = true`, `Client\TrustedHosts = *`, and the `WinRM-HTTP` firewall rule
+  present with `PrimaryStatus: OK`.
+
+VM shut down gracefully via a genuine WinRM `shutdown /s /t 0` (not QMP/ACPI - confirmed exited
+cleanly).
+
+**This is the first time in this project's history that Windows Server 2019 has been genuinely,
+authenticated-WinRM-reachable end-to-end through the offline-apply pipeline.** Every technical
+question Phase A/B research flagged as open is now also empirically closed by a real boot, not just
+inferred: the WIM index, the virtio driver, and now the specialize/`FirstLogonCommands` path all work.
+
+**What this session's investigation actually cost, worth being honest about**: roughly 25-30
+diagnostic boot cycles across the full Direction-2 investigation (this entry plus the two before it),
+made tractable only by the fast-iteration harness built at the start of the session - at full
+`build.sh` pipeline cost (~35+ minutes each), this would not have been a one-session investigation.
+
+**Next steps, not yet done:**
+1. **Port this exact fix back into `unattend-server2019.xml` as the permanent, canonical version** -
+   already done as part of this session's own edits (the file now reflects the working Order 4-8
+   split, not a diagnostic stub) - nothing further needed here, noting it explicitly since so many
+   intermediate diagnostic versions existed this session.
+2. **Re-run Phase E1 (Build 1, `ad-ds` profile) via the real, full `build.sh server2019` pipeline** -
+   everything confirmed so far has been via the fast-iteration harness against the frozen baseline,
+   not the actual production `partition-disk.sh` -> `apply-image.sh` -> `make-bootable.sh` ->
+   `apply-unattend.sh` -> Packer handoff sequence end to end. The harness intentionally skips Packer/
+   role-provisioning entirely - a real `build.sh` run is still needed to confirm the fix holds through
+   the full production path, including Packer's own WinRM wait and IIS/AD DS role installation.
+3. **Disk hygiene**: ~15+ disposable overlay `.qcow2` files remain under `dev/output/
+   server2019-specialize-test/` from this session's diagnostic sequence (~16GB+ as of the last check).
+   Per this project's own standard, prune once the sequence concludes - confirm with the user before
+   deleting anything.
