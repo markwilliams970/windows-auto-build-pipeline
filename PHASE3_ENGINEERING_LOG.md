@@ -4052,3 +4052,108 @@ cleanly (QMP `system_powerdown`, confirmed exited) rather than left running or h
 failed build's disk (`image-apply/output/builds/server2019-20260902-105345.qcow2`) was kept, not
 deleted, as live evidence for continued diagnosis - matching this project's own disk-hygiene standard
 of preserving artifacts during an active reproducibility/diagnosis sequence.
+
+---
+
+## Session (2026-09-02, continued): Fast-iteration harness for the specialize step + deep research
+## pass on the `Enable-PSRemoting` hang - one strong, well-corroborated lead found
+
+Per explicit direction: (A) build a fast-iteration harness since the existing one doesn't fit this
+problem, (B) do a real multi-angle research pass and write it up, (C) review together before deciding
+next steps. This entry covers A and B; C is a live discussion, not something to record here ahead of
+time.
+
+### A: `dev/run-server2019-specialize-test.sh` - a new harness, not a reuse of `dev/role-test.pkr.hcl`
+
+`dev/role-test.pkr.hcl`'s own existing fast-iteration pattern assumes WinRM already works - it's built
+for iterating on *role scripts* against an already-reachable reference disk, which is the opposite of
+what this bug needs (iterating on the *specialize step itself*, before WinRM ever comes up). Per this
+project's own "reuse the pattern, not necessarily the exact files" convention, built a new, smaller
+harness instead:
+
+1. **A frozen, never-booted baseline** (`image-apply/output/server2019-baseline-bootable.qcow2`) -
+   `partition-disk.sh` + `apply-image.sh` + `make-bootable.sh` run once (the genuinely slow ~20-minute
+   part: WIM extraction + apply + WinPE bcdboot pass), producing a disk that's bootable but has never
+   been specialized. This file is never written to by the harness itself - every run creates a fresh
+   `qemu-img` backing-file overlay against it, so the baseline stays reusable indefinitely.
+2. **`dev/run-server2019-specialize-test.sh`** (new): per run, creates a labeled overlay, runs
+   `apply-unattend.sh` against it (picking up whatever's currently in
+   `image-apply/unattend-server2019.xml` - so testing a new `FirstLogonCommands` approach is just
+   "edit the template, rerun the script"), boots it with QMP enabled (same `virtio-blk-pci` topology
+   as `tools/boot-adhoc-target.sh`, since this disk hasn't been through `inject-virtio-spice.sh`), and
+   polls for real WinRM Basic-auth reachability (not just a TCP-open check) up to a configurable
+   timeout. Leaves the VM running either way for live follow-up via the existing `tools/qmp-*.py`
+   scripts, rather than auto-cleaning up - the point is to keep poking at a failed run, not just get a
+   pass/fail verdict.
+3. **Validated by using it for real**, not just written and assumed correct: a full run
+   (`./dev/run-server2019-specialize-test.sh harness-validation 300`) reproduced the **identical**
+   failure signature (WinRM listener reachable, `WWW-Authenticate: Negotiate` only, no `Basic`) in
+   **~6 minutes end-to-end**, versus the ~35+ minutes the full `build.sh` pipeline takes to reach the
+   same failure point - roughly a 5-6x iteration speedup, exactly the tool this bug needs. VM was shut
+   down cleanly afterward (QMP `system_powerdown`, confirmed exited).
+
+### B: Deep research pass - multi-angle, real sources fetched directly, not just search snippets
+
+Per this project's own "verify the primary source" standard, fetched full article/issue content for
+the most promising leads rather than trusting search summaries alone.
+
+**Strongest lead found: `Enable-PSRemoting`'s internal `Register-PSSessionConfiguration` step can
+leave WinRM stuck in a `StopPending` service state, and this is a real, if under-documented, WinRM/
+Service-Control-Manager race - not previously reported as Server-2019-specific, but mechanically a
+strong match for our own evidence.** Found via
+[`PowerShell/JEA` issue #30](https://github.com/PowerShell/JEA/issues/30) (fetched directly, not just
+the search snippet): "Register-PSSessionConfiguration causes WinRM service hanging in state
+'stopping'" - the reporter's own words: "We use the following script to force restart WinRM service
+... [after] we lost PS remoting ability on host." The issue's own diagnosis: the problem "seems to
+happen more frequently when the configuration causes WinRM to change Logon As (from Network Service to
+Local System)" - i.e., exactly the kind of identity/config change `Enable-PSRemoting`'s own documented
+behavior (per Microsoft Learn: it "restarts the WinRM service to make the preceding changes effective"
+as its final step) would trigger on a **first-ever** run, which is exactly what's happening here (a
+fresh install's very first `Enable-PSRemoting` call, not a repeat run). The reported OS there is Server
+2012 R2, not 2019 - **this is presented as a mechanically-plausible, corroborated class of bug, not a
+confirmed Server-2019-specific match** - but it lines up with this session's own live evidence
+unusually well:
+- We independently found `WinRM` was already `Running` *before* `Enable-PSRemoting` was ever called
+  (Server 2019 apparently ships with a default WinRM listener pre-configured, unlike what a truly
+  from-scratch `quickconfig` would assume) - meaning `Enable-PSRemoting`'s own service-restart step
+  would need to stop an already-running service and change its configuration, the exact scenario the
+  JEA issue describes as the trigger.
+- The hung process accumulated almost no CPU time over 5+ minutes - consistent with blocking on a
+  Service Control Manager state transition (a `StopPending` deadlock) rather than active computation,
+  not just "slow."
+- The JEA issue's own workaround (force-`Stop-Process` the stuck WinRM host process, wait, then
+  restart the service) is concrete and directly testable against this project's own new harness.
+
+**Other candidates found, weaker or not yet corroborated by our own evidence:**
+- A real, on-point-titled community post -
+  [CheckYourLogs.Net: "The Case of Winrm.exe QC hanging in Windows Server 2019"](https://www.checkyourlogs.net/the-case-of-winrm-exe-qc-hanging-in-windows-server-2019-powershell/)
+  (fetched directly) - but its actual root cause is about the **external** `winrm.exe /qc`
+  command-line tool hanging when invoked in certain ways *from within* a PowerShell session
+  specifically (worked around by wrapping in `cmd.exe /c "winrm /qc"` instead), not about the
+  `Enable-PSRemoting` **cmdlet** (which uses the WSMan API directly, not by shelling out to
+  `winrm.exe`). Still valuable as independent confirmation that "WinRM configuration hanging in
+  PowerShell on Server 2019" is a real, previously-reported class of problem on this exact OS, not
+  something unique to this project's own environment - just not a mechanism match for our specific
+  symptom.
+- A documented Group Policy conflict (`Set-WSManQuickConfig` failing with "conflicting Group Policy
+  setting," fixed by setting "Allow remote server management through WinRM" to Not
+  Configured/Enabled) - plausible but **not yet checked** against this VM's own local GPO state
+  (`gpresult`/local security policy not yet inspected this session).
+- A Microsoft Q&A thread describing systems generically "stuck at Enabling Feature(s)" on fresh
+  Windows Server 2019 installs - a real, if generic, precedent that Server 2019 fresh-install
+  first-boot hangs of some kind are a known category, not a specific mechanism match.
+- **Checked and set aside as unlikely**: KB5041578 (a Windows Server 2019 Known Issue Rollback for a
+  Windows-Defender-related boot freeze) - that regression was introduced by an August 2024 cumulative
+  update; this project's cached eval media (build 17763.3650, dated November 2022) has never had
+  Windows Update run against it (the offline-apply pipeline doesn't touch Windows Update at all), so
+  the buggy code path that KB addresses almost certainly isn't present. Not independently verified
+  further given the low prior probability.
+
+**Not yet tested, the concrete next step this research points to**: using the new harness (Part A) to
+test the JEA issue's own workaround shape - either (a) detect a `StopPending` WinRM state during
+`FirstLogonCommands` and force-restart it, matching the issue's own remediation script, or (b) avoid
+triggering the identity-changing restart in the first place by using a lighter-weight WinRM-enablement
+sequence (plain `winrm quickconfig -quiet` plus explicit listener/firewall commands, skipping
+`Enable-PSRemoting`'s broader `Register-PSSessionConfiguration` work entirely, since this project's own
+`FirstLogonCommands` only actually needs a working WinRM *listener*, not full PowerShell-remoting
+session-configuration registration) - not attempted yet, this is exactly the Part C discussion.
