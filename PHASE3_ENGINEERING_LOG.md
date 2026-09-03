@@ -4542,3 +4542,59 @@ honestly: the ADWS-timing question is not fully closed by one success following 
 future `ad-ds` build (Server 2019 or otherwise) shows the diagnostic poll actually waiting several
 seconds before `ADWS` comes up, that's the confirming data point this instrumentation exists to catch,
 and would change the "one-off fluke" read above.
+
+---
+
+## Session (2026-09-02, continued): Phase E Build 2 (`iis`/`sql-server`) - clean, single-command
+## `build.sh` run, zero manual intervention. Phase E is done; Server 2019 is production-ready.
+
+`./build.sh server2019 dev/services-app-server.yaml` - the plain, documented entry point, no manual
+step-by-step reconstruction this time (unlike Build 1, which needed manual continuation after the
+transient `make-bootable.sh` timeout). **This run needed no intervention at all**: partition ->
+apply-image -> make-bootable -> apply-unattend -> Packer (WinRM connected cleanly on the first wait,
+IIS + SQL Server both provisioned, no post-reboot verification needed since `ad-ds` wasn't selected)
+-> `inject-virtio-spice.sh` (both stages clean) -> `Build complete`, all in one unattended invocation.
+Packer's own build phase finished in **17m32s** - notably faster than Server 2025's own historical
+~51 minutes for the identical `iis`/`sql-server` profile (not investigated further - plausibly host
+load/caching differences between sessions, not a Server 2019 vs. 2025 comparison worth reading much
+into from a single data point each).
+
+**Full verification, same evidentiary bar as every other OS in this project**: `register-vm.sh
+server2019` (re-registered `win2019prod` cleanly, replacing Build 1's own registration - marker check
+passed) -> `virsh start` -> real DHCP lease for `WIN2019PROD` (`192.168.122.23`) -> live WinRM,
+not just a screenshot:
+
+- `(Get-Service W3SVC).Status` -> `Running`
+- `Invoke-WebRequest http://localhost` -> `200`
+- `(Get-Service MSSQLSERVER).Status` -> `Running`
+- **`sqlcmd -S localhost -U sa -P ... -Q "SELECT 1"` -> real result set, `1 row affected`** - first
+  attempt used this project's usual lab password (`TestP@ssw0rd123`) and got a genuine `Login failed`
+  (not a hang, not a timeout - a real, correct SQL Server auth rejection); checked
+  `scripts/install-sql-server.ps1` directly and found the SA password there is intentionally
+  different (`ChangeMe-Lab123!`, `$saPassword` at the top of that script) - not a bug, just a
+  distinct-per-script lab convention that isn't the same as the OS-level Administrator password used
+  everywhere else. Retried with the correct password and got a clean, real result.
+- `Get-NetAdapter` -> `Red Hat VirtIO Ethernet Adapter`, `Up`
+- `Get-Disk` -> `QEMU QEMU HARDDISK`, `Online`, GPT (virtio-scsi, post-`inject-virtio-spice.sh` swap)
+- `(Get-CimInstance Win32_OperatingSystem).Caption` -> `Microsoft Windows Server 2019 Standard
+  Evaluation`
+
+VM shut down gracefully via genuine WinRM `shutdown /s /t 0`, confirmed `shut off` via `virsh
+domstate`, host confirmed clear of any leftover qemu processes afterward.
+
+**Phase E is done. Windows Server 2019 is production-ready by this project's own established
+bar** - matching Server 2022, Server 2025, and Windows 11 exactly: both required builds
+(`ad-ds` and `iis`/`sql-server`) completed and independently verified end-to-end through the real
+production pipeline, not just the fast-iteration harness. Two real, non-obvious bugs were found and
+fixed along the way (the `Get-NetIPAddress | Where-Object` hang in Order 3, and the "two WSMan
+config changes in one process" hang in Order 4-8) - both fixes are permanent, already committed, and
+apply to every future Server 2019 build through this pipeline, not one-off workarounds for this
+session.
+
+**What's left, not part of Phase E's own scope**: the deferred `CLAUDE.md` documentation pass
+(adding Server 2019 as a fourth production-ready target OS throughout - Repository Structure sketch,
+Development Approach narrative, Target Platform section, etc.), per Phase C's own decision to write
+that narrative only after proof, not ahead of it - proof now exists. Also still open, unrelated to
+Server 2019 specifically: disk hygiene (accumulated diagnostic overlays under `dev/output/
+server2019-specialize-test/`, ~16GB+, not yet pruned - flagged earlier this session, still pending a
+decision).
