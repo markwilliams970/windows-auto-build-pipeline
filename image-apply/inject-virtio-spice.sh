@@ -334,6 +334,15 @@ QEMU_PID1=$!
 log "Stage 1 qemu pid ${QEMU_PID1}, log ${WORK_DIR}/stage1-qemu.log"
 
 cleanup_stage1() {
+  # Capture the exit status that triggered this trap BEFORE running anything else - without this,
+  # the trap's own last command (kill -9 ... || true, which always succeeds) becomes the WHOLE
+  # SCRIPT's exit status once the EXIT trap finishes, silently turning a real failure (e.g. a
+  # winrm_ps timeout) into a reported success for anything driving this script. Found and fixed
+  # in install-tools.sh's own copy of this pattern first (PHASE4_TOOLS_INSTALLER_PLAN.md's Phase E
+  # testing, 2026-09-03), then confirmed this script carries the identical latent bug - dormant
+  # here only because every completed real run on record has had its graceful shutdown succeed,
+  # so this trap's hard-kill fallback has never actually been the thing that ended a run.
+  local exit_code=$?
   if kill -0 "$QEMU_PID1" 2>/dev/null; then
     # An error here (e.g. a winrm_ps failure) means this trap is the FIRST shutdown attempt for
     # this qemu process - unlike the intentional success-path call to qmp_graceful_shutdown
@@ -348,6 +357,7 @@ cleanup_stage1() {
       kill -9 "$QEMU_PID1" 2>/dev/null || true
     fi
   fi
+  exit "$exit_code"
 }
 trap cleanup_stage1 EXIT
 
@@ -481,6 +491,10 @@ QEMU_PID2=$!
 log "Stage 2 qemu pid ${QEMU_PID2}, log ${WORK_DIR}/stage2-qemu.log, SPICE on 127.0.0.1:${SPICE_PORT}, VNC on 127.0.0.1:$((5900 + VNC_DISPLAY))"
 
 cleanup_stage2() {
+  # Same exit-code-preservation fix as cleanup_stage1 above, and for the identical reason - see
+  # that function's own comment for the full story (found in install-tools.sh's own copy of this
+  # pattern during its Phase E testing, 2026-09-03, then confirmed present here too).
+  local exit_code=$?
   if kill -0 "$QEMU_PID2" 2>/dev/null; then
     # Same reasoning as cleanup_stage1 above - try graceful first, only hard-kill as a last
     # resort. This is the exact trap that hard-killed a live, healthy, WinRM-reachable Windows
@@ -493,6 +507,7 @@ cleanup_stage2() {
       kill -9 "$QEMU_PID2" 2>/dev/null || true
     fi
   fi
+  exit "$exit_code"
 }
 trap cleanup_stage2 EXIT
 

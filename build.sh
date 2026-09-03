@@ -58,7 +58,10 @@ if [[ "$OS" == "windows11" ]]; then
   log "[2/2] inject-virtio-spice.sh (Phase 3A - see WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)"
   "${REPO_ROOT}/image-apply/inject-virtio-spice.sh" "$OS" "$TARGET_QCOW2"
 
-  log "Build complete: ${TARGET_QCOW2} (Windows 11 - virtio-scsi/virtio-net/qxl+SPICE, no Packer handoff, no roles to provision)"
+  log "[Phase 4] install-tools.sh (see PHASE4_TOOLS_INSTALLER_PLAN.md)"
+  "${REPO_ROOT}/image-apply/install-tools.sh" "$OS" "$TARGET_QCOW2" "${TOOLS_YAML_PATH:-${REPO_ROOT}/tools.yaml}"
+
+  log "Build complete: ${TARGET_QCOW2} (Windows 11 - virtio-scsi/virtio-net/qxl+SPICE, tools installed, no Packer handoff, no roles to provision)"
   exit 0
 fi
 
@@ -121,4 +124,7 @@ PROVISIONED_QCOW2="${PACKER_OUTPUT_DIR}/${BUILD_ID}.qcow2"
 log "[Phase 3A] inject-virtio-spice.sh (vioscsi + QXL/SPICE - see WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)"
 "${REPO_ROOT}/image-apply/inject-virtio-spice.sh" "$OS" "$PROVISIONED_QCOW2"
 
-log "Build complete: ${PROVISIONED_QCOW2} (virtio-scsi/virtio-net/qxl+SPICE, roles provisioned - image-apply's own pre-Packer copy at ${TARGET_QCOW2} is now stale, superseded by this one)"
+log "[Phase 4] install-tools.sh (see PHASE4_TOOLS_INSTALLER_PLAN.md)"
+"${REPO_ROOT}/image-apply/install-tools.sh" "$OS" "$PROVISIONED_QCOW2" "${TOOLS_YAML_PATH:-${REPO_ROOT}/tools.yaml}"
+
+log "Build complete: ${PROVISIONED_QCOW2} (virtio-scsi/virtio-net/qxl+SPICE, roles provisioned, tools installed - image-apply's own pre-Packer copy at ${TARGET_QCOW2} is now stale, superseded by this one)"

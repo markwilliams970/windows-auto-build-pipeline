@@ -184,6 +184,65 @@ roles; it isn't in scope for AD/IIS/SQL Server monitoring integration testing th
 SKUs are. All three Server SKUs share the identical, unmodified role-provisioning scripts — Server
 2019 needed zero script changes to support any of the three roles.
 
+## Installing tools (7-Zip, PuTTY, WinSCP, Chrome, Notepad++, Datadog Agent)
+
+Every real build now finishes with a Phase 4 tool-install stage, wired into `build.sh`
+automatically for all four OSes — nothing extra to run for a normal build.
+
+`tools.yaml` (repo root) is a flat, commented list, same convention as `services.yaml`:
+
+```yaml
+tools:
+  - 7zip
+  - putty
+  - winscp
+  - chrome
+  - notepadplusplus
+  - datadog-agent   # requires DD_API_KEY - see below
+
+datadog:
+  agent_version: "7.83.0"
+  site: datadoghq.com
+  tags:
+    - "env:lab"
+    - "project:windows-auto-build-pipeline"
+```
+
+Five of the six tools (everything except the Datadog Agent) always install whichever version is
+currently latest from each vendor — `image-apply/install-tools.sh` resolves and downloads it
+fresh, from this Linux host (never from inside the guest), on every build; these churn too fast to
+usefully pin the way the OS ISOs are pinned. The Datadog Agent is the one deliberate exception: it
+installs exactly the version named in `tools.yaml`'s `datadog.agent_version`, since Agent version
+can matter for monitoring-integration test comparability across builds.
+
+**The Datadog Agent needs a real API key.** Set `DD_API_KEY` in the environment before running
+`build.sh` (or `image-apply/install-tools.sh` directly) whenever `datadog-agent` is listed in
+`tools.yaml` — the build fails loud, before ever starting a VM, if it's listed with no key set.
+Comment that line out in `tools.yaml` to build without it, no other change needed.
+
+```
+DD_API_KEY=<your key> ./build.sh server2022
+```
+
+**Running the tool installer against an already-built disk, without a full rebuild:**
+
+```
+image-apply/install-tools.sh <server2019|server2022|server2025|windows11> <qcow2-path> [tools_yaml_path] [Install|Uninstall|Status]
+```
+
+- `Install` (default) — installs anything listed in `tools.yaml` that isn't already present;
+  re-running it is a no-op for anything already installed. The Datadog Agent is the one exception:
+  if it's present at a different version than `tools.yaml`'s pinned `agent_version`, it's
+  reinstalled to converge on that version.
+- `Uninstall` — removes anything listed in `tools.yaml` that's currently present; a no-op for
+  anything already absent.
+- `Status` — reports PRESENT/ABSENT and installed version for all six tools, regardless of what's
+  currently listed in `tools.yaml`.
+
+Full design/research trail and real Phase E test results (a complete Create/Read/Update/Delete
+cycle confirmed against a real Server 2022 build, for every tool including the Datadog Agent's own
+version-convergence path): `PHASE4_TOOLS_INSTALLER_PLAN.md`.
+
 ## Inspecting a running build
 
 Every ad hoc QEMU invocation this project drives directly (not Packer-managed builds) exposes a
@@ -260,11 +319,16 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   VirtIO ISOs alone are roughly 25 GiB cached across all four OSes, per `ISO_CACHE_INVENTORY.md`,
   and each build's own disk image is tens of GB), so disk space needs active management on whatever
   host this runs on.
-- **No automated Datadog Agent or general tool installation.** A generalized, YAML-driven post-build
-  tool installer (7-Zip, PuTTY, WinSCP, Chrome, Notepad++, and the Datadog Agent itself) is designed
-  but not implemented — see `CLAUDE.md`'s Phase 4 for the design and its own honestly-stated
-  limitations (in particular, MSI-based silent installs can transiently expose the Datadog API key
-  in the process list — a narrow but real exposure window inherent to that install mechanism).
+- **Tool installer (`tools.yaml`) is implemented and tested on Server 2022 only.** Server
+  2019/2025 and Windows 11 share the identical code path with no OS branching, so this is a
+  lower-risk gap than most others here, but it's still an honest one — not yet confirmed. A real
+  (non-dummy) Datadog API key was also never used in testing, so Agent connectivity/telemetry
+  itself is unconfirmed, only the installer mechanism. Known, honestly-stated limitation of the
+  mechanism itself: MSI-based silent installs can transiently expose the Datadog API key in the
+  process list — a narrow but real exposure window inherent to that install mechanism, not
+  something this project's own design choice can fully eliminate. Five of the six tools also have
+  no version pinning by design (see "Installing tools" above) — a build's exact tool versions
+  aren't reproducible after the fact the way a pinned OS ISO is.
 - **Lab-only security posture.** Passwords baked into unattend/answer files are intentionally
   disposable placeholders, not real credentials, and are not treated as secrets. There's no secrets
   vault integration, no hardening pass, and no assumption this is safe to expose beyond an isolated
@@ -290,10 +354,14 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   `dev/role-test.pkr.hcl` — it iterates on the specialize/`FirstLogonCommands` step itself, not
   role scripts) was purpose-built to chase down two real, Server-2019-specific bugs found and fixed
   along the way; see `PHASE3_ENGINEERING_LOG.md`'s Phase E sessions for the full bisection trail.
-- **Phase 4 (Tooling)**: design is complete (`CLAUDE.md`) — a `tools.yaml`-driven post-build
-  installer for 7-Zip, PuTTY, WinSCP, Chrome, Notepad++, and the Datadog Agent, reusing this
-  project's existing pinned-media-cache convention rather than live downloads from inside the
-  guest. Not yet implemented.
+- **Phase 4 (Tooling) is implemented and tested** (2026-09-03) — see "Installing tools" above for
+  usage. `tools.yaml`-driven, wired into `build.sh` for all four OSes; five of the six tools fetch
+  fresh from each vendor host-side on every build rather than being pinned (they churn too fast to
+  usefully pin the way OS ISOs are), with the Datadog Agent as the one deliberate pinned exception.
+  Full CRUD (Create/Read/Update/Delete) and idempotency confirmed against a real Server 2022 build
+  for all six tools — see `PHASE4_TOOLS_INSTALLER_PLAN.md`. Not yet exercised on Server 2019/2025
+  or Windows 11 (same code path, no OS branching, but genuinely untested there); real Datadog
+  Agent connectivity was never confirmed (dummy API key used for testing).
 - **Phase 5 (lifecycle automation)**: build/verify/destroy workflow. Not started.
 - **Open engineering question**: whether Server 2019/2022/2025's existing offline-hivex NIC driver
   mechanism should ever be ported onto the newer live-swap technique used for Windows 11's VirtIO

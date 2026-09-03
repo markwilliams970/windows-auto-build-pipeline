@@ -4660,3 +4660,73 @@ the original Phase 3/3A capstone held itself to):
 None of these block calling Server 2019 production-ready - they're the next real frontier for this
 specific OS (mostly shared with the other three), not loose ends in what this addition itself
 promised.
+
+---
+
+## Session (2026-09-03): Phase 4 (Tooling) implemented and tested - two real bugs found, one worth
+a standing engineering standard
+
+Full Phase 4 design/implementation/testing trail lives in `PHASE4_TOOLS_INSTALLER_PLAN.md` (its
+own "Phase D: Implementation" and "Phase E: Testing" sections carry the complete record - CRUD
+matrix, per-tool fetch mechanisms, the Datadog Agent's version-convergence test). This entry exists
+specifically to put the second bug found along the way - a silently swallowed exit code - on record
+as a standing engineering lesson, not just a fix buried in that plan doc, per explicit user
+direction ("so that we have it on record and can better avoid this in the future").
+
+**Finding: a bash `trap ... EXIT` cleanup function's own last command decides the whole script's
+exit status, not the command that actually triggered the trap - and this project's QEMU-driving
+scripts all had the same latent bug because of it.**
+
+- **Symptom**: `install-tools.sh` (the new Phase 4 stage script)'s first real test run hit a real
+  WinRM timeout (a PCI-topology bug, documented separately in
+  `PHASE4_TOOLS_INSTALLER_PLAN.md`'s Phase D - not this finding's subject). The script's own
+  `cleanup()` EXIT trap correctly detected the still-running qemu process, correctly tried a
+  graceful shutdown, correctly fell back to a hard kill when that didn't complete in time, and
+  printed a clear error to stderr throughout. And yet the background task notification for the
+  whole `build.sh` run reported **exit code 0** - a real, observed failure reporting as success to
+  anything driving the script.
+- **Root cause**: `cleanup()`'s hard-kill fallback ended with `kill -9 "$QEMU_PID" 2>/dev/null ||
+  true`. Under bash's own EXIT-trap semantics, once a trap handler runs to completion without
+  itself calling `exit N`, the shell's final exit status is whatever `$?` happens to be after the
+  *trap's own last command* - not the status of whatever originally triggered the trap. Since
+  `kill -9 ... || true` always evaluates to 0, that became the script's exit status regardless of
+  what actually went wrong. This is a general bash gotcha, not specific to this project, but it's
+  an easy one to introduce unnoticed: the trap's own error-handling code (`echo ... >&2`, the
+  graceful-then-hard-kill sequence) all *looks* like it's correctly surfacing the failure, because
+  the stderr messages are real and correct - only the numeric exit code silently goes wrong.
+- **Scope, once checked rather than assumed**: grepped this project's other QEMU-driving scripts
+  for the same `... || true` trap-ending pattern rather than assuming `install-tools.sh` was the
+  only one affected. It wasn't - `image-apply/inject-virtio-spice.sh`'s `cleanup_stage1` and
+  `cleanup_stage2`, and `image-apply/windows11-setup-install.sh`'s `cleanup`, all carried the
+  identical pattern. None of the three had ever actually surfaced this bug in a real, completed
+  run on record - every prior successful run's graceful shutdown had completed before the trap's
+  hard-kill fallback line was ever reached, so the bug was latent, not previously triggered, in all
+  three. `windows11-setup-install.sh` additionally has its own separate, correct, explicit handling
+  for the specific WinRM-timeout case (`trap - EXIT; exit 1`, bypassing `cleanup()` entirely for
+  that one path) - this bug only mattered there for a *different* class of error, one occurring
+  somewhere else in the script.
+- **Fix, applied identically to all four traps**: capture `local exit_code=$?` as the trap
+  function's first statement (before running anything else that could itself change `$?`), and
+  call `exit "$exit_code"` as its last. Calling `exit` from inside a trap that's already running
+  because of an EXIT signal is safe in bash - it does not re-invoke the trap on itself, it simply
+  finalizes the exit with the given code. This only changes behavior on the actual error path:
+  every one of these scripts already explicitly disarms its own trap (`trap - EXIT`) immediately
+  before its own intentional, successful shutdown, so the happy path was never affected by the bug
+  and isn't affected by the fix either.
+- **Why this is worth a standing standard, not just a one-off fix**: the bug is invisible from
+  reading the trap's own error-handling logic - it only shows up by tracing bash's own EXIT-trap
+  exit-status rules, which nothing about this project's existing code would prompt a reader to
+  question. Added as a new bullet under `CLAUDE.md`'s "The rest of the standards" (Engineering
+  Standards section) so any *future* script that launches a background QEMU process and cleans it
+  up via an EXIT trap starts with the correct pattern, rather than this exact bug getting
+  reintroduced and rediscovered independently each time.
+
+**Separately, also found and fixed during this same testing session (full detail in
+`PHASE4_TOOLS_INSTALLER_PLAN.md`, not repeated here)**: a PCI topology mismatch in
+`install-tools.sh`'s own first QEMU invocation - implicit/default bus placement for the
+virtio-scsi controller instead of matching `inject-virtio-spice.sh` Stage 2's exact explicit
+`pcie-root-port` placement, which is exactly the class of risk Finding 3A-3
+(`WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`) already warned about and which this new script's own
+first design pass didn't fully follow through on. This is what actually produced the WinRM timeout
+that, in turn, exposed the exit-code bug above - the two findings are related by circumstance (one
+test run hit both), not by a shared root cause.

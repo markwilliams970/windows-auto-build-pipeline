@@ -93,11 +93,23 @@ rm -f "$QMP_SOCK"
 
 QEMU_LOG="${WORK_DIR}/qemu.log"
 cleanup() {
+  # Capture the exit status that triggered this trap BEFORE running anything else - without this,
+  # the trap's own last command (rm -f, or kill -9 ... || true when it runs) becomes the WHOLE
+  # SCRIPT's exit status once the EXIT trap finishes, silently turning a real failure into a
+  # reported success for anything driving this script. Same bug, same fix, as
+  # inject-virtio-spice.sh's cleanup_stage1/cleanup_stage2 (found there first during
+  # install-tools.sh's own Phase E testing, 2026-09-03, then confirmed present here too). The
+  # explicit WinRM-timeout path below already bypasses this trap correctly (trap - EXIT; exit 1),
+  # and normal completion already naturally exits 0 - this fix only matters for an error occurring
+  # somewhere else in the script (e.g. a crash inside the WinRM polling loop) that would otherwise
+  # have its real exit code silently discarded here.
+  local exit_code=$?
   if [[ -n "${QEMU_PID:-}" ]] && kill -0 "$QEMU_PID" 2>/dev/null; then
     log "Cleanup: qemu (pid ${QEMU_PID}) still running - forcing it down"
     kill -9 "$QEMU_PID" 2>/dev/null || true
   fi
   rm -f "$QMP_SOCK"
+  exit "$exit_code"
 }
 trap cleanup EXIT
 

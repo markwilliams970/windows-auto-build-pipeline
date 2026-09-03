@@ -1087,7 +1087,21 @@ scoped to.
   dependency, no live-internet-from-the-guest requirement, consistent with every other binary this
   project already handles.
 
-## Proposed design (not yet implemented - documentation only, per explicit request)
+## Proposed design (historical - see "RESOLVED" note at the bottom of this Phase 4 section for
+what actually shipped; kept here unedited as the record of the original proposal)
+
+**One real change from what's written below, made mid-implementation at explicit user direction
+(2026-09-03): the `../iso_cache/` pinned-installer approach described in this section was
+abandoned for five of the six tools.** These general-purpose desktop tools churn far faster than
+the Windows ISOs that convention was designed for, and pinning them would just relocate the
+staleness problem this document's own "Version-sensitivity and brittleness" standard already warns
+about. What shipped instead: `image-apply/install-tools.sh` resolves and downloads each tool's
+*current* version fresh, host-side (never from inside the guest - that would reintroduce the exact
+Chocolatey "hidden dependency" problem this section already rejects below), on every single build.
+The Datadog Agent is the one deliberate exception - still pinned, but as a version string in
+`tools.yaml` (`datadog.agent_version`) rather than a cached/checksummed binary. See
+`PHASE4_TOOLS_INSTALLER_PLAN.md`'s A.1/A.3 revision for the full reasoning and the real,
+live-verified fetch mechanism for each of the six tools.
 
 - **`tools.yaml`** (new, sibling to `services.yaml`, same flat-list-with-comments convention):
   ```yaml
@@ -1149,21 +1163,39 @@ silent installs generally, not something this project's own design choice can fu
    exists, Agent service running, status healthy, connectivity succeeds, host registration confirmed)
    unchanged - see "Datadog Validation Requirements" above.
 
-## Open questions
+## Open questions (resolved - see below)
 
-1. **Exact delivery + orchestration point**: does `install-tools.ps1` run as its own new
-   `image-apply/install-tools.sh` stage (mirroring `inject-virtio-spice.sh`'s own two-script pattern),
-   or fold into `build.sh` directly as a new numbered step? No strong reason yet to prefer one over
-   the other - a real design decision, not resolved here.
-2. **Per-tool version pinning discipline**: should `tools.yaml` allow pinning a specific version per
-   tool (matching `virtio-win-0.1.285.iso`'s own pinned-version convention), or always track "latest"
-   for these six (lower risk of drift for general-purpose desktop tools than for boot-critical OS
-   media, but not risk-free - see the new "Version-sensitivity and brittleness" standard above)?
-3. **Confirm the six-tool list and the `tools.yaml` schema sketch above** before any implementation
-   starts, per this project's own "explain design, identify assumptions, identify risks, ask
-   questions" instruction - this section is a proposal, not a locked decision.
+1. **Exact delivery + orchestration point**: resolved in favor of its own dedicated
+   `image-apply/install-tools.sh` stage, mirroring `inject-virtio-spice.sh`'s two-script pattern -
+   not folded into `build.sh` directly.
+2. **Per-tool version pinning discipline**: resolved as "always latest, fetched fresh host-side on
+   every build" for five of the six tools, with the Datadog Agent as the sole pinned exception (a
+   version string in `tools.yaml`, not a cached binary) - see the "Proposed design" section's own
+   revision note above for the full reasoning.
+3. **The six-tool list and `tools.yaml` schema**: confirmed as written, no changes.
 
-**Status:** design documented, nothing implemented yet.
+**Status: RESOLVED - Phases A through E all complete, 2026-09-03.** Real, committed files:
+`tools.yaml`, `scripts/install-tools.ps1` (guest-side CRUD engine - idempotent
+Install/Uninstall/Status, registry-based detection, never `Win32_Product`), and
+`image-apply/install-tools.sh` (host-side stage - live-verified per-tool fetch resolvers, delivery
+ISO, QEMU boot/WinRM/graceful-shutdown), wired into `build.sh` after `inject-virtio-spice.sh` for
+all four OSes. Confirmed end-to-end against a real Server 2022 build: full CRUD (Create/Read/
+Update/Delete) plus idempotency for all six tools, including the Datadog Agent's own
+version-convergence path (install at one pinned version, change the pin, re-run, confirm it
+upgrades to the new pinned version in place) - see `PHASE4_TOOLS_INSTALLER_PLAN.md`'s "Phase D:
+Implementation" and "Phase E: Testing" sections for the complete trail, including two real bugs
+found and fixed along the way: a PCI topology mismatch in `install-tools.sh`'s own first QEMU
+invocation (it used implicit bus placement instead of matching `inject-virtio-spice.sh` Stage 2's
+exact explicit `pcie-root-port` placement, causing a boot failure into WinRE instead of a real
+desktop - Finding 3A-3's own warning, confirmed the hard way), and an exit-code-swallowing bug in
+QEMU cleanup traps (`kill -9 ... || true` as a trap's last command silently turns a real failure
+into a reported success) found in `install-tools.sh` first and then also fixed in
+`inject-virtio-spice.sh` and `windows11-setup-install.sh`, which both carried the identical latent
+bug. **Not yet exercised**: Server 2019/2025 and Windows 11 (only Server 2022 was tested - the
+other three OSes share the identical code path with no OS branching in Phase 4 itself, a
+lower-risk gap than Phase 2/3's own per-OS verification needed to be, but still an honest gap); a
+real (non-dummy) Datadog API key was also never used, so Agent connectivity/telemetry itself was
+never confirmed, only the installer mechanism.
 
 ---
 
@@ -1363,6 +1395,26 @@ producing a silently-wrong or silently-broken disk after one.
   - **Always confirm with the user before deleting anything**, and prefer a targeted, reviewed list
     (state what's being proposed for deletion and why) over a broad/wildcard delete — same standard
     as any other destructive operation in this project.
+- **A bash `trap ... EXIT` cleanup function must capture `$?` as its own first statement and
+  `exit` with that saved value at the end — never let the trap's own last command decide the
+  script's exit status.** Found the hard way during Phase 4 testing (2026-09-03,
+  `PHASE4_TOOLS_INSTALLER_PLAN.md`'s "Phase D: Implementation"): every one of this project's
+  QEMU-driving scripts' cleanup traps (`install-tools.sh`, `inject-virtio-spice.sh`'s
+  `cleanup_stage1`/`cleanup_stage2`, `windows11-setup-install.sh`'s `cleanup`) ended their
+  hard-kill fallback with `kill -9 "$QEMU_PID" 2>/dev/null || true` as the trap's last command —
+  under bash's EXIT-trap semantics, *that* command's exit status (always 0, because of the
+  trailing `|| true`) becomes the whole script's own exit status once the trap finishes, silently
+  turning a real failure (a WinRM timeout, in the case that surfaced this) into a reported success
+  for `build.sh` and anything else driving the script. All four traps carried the identical latent
+  bug; three of the four had simply never hit their own hard-kill path in a completed run before
+  (every prior graceful shutdown had already succeeded), so it was dormant rather than absent.
+  Fix, applied uniformly: `local exit_code=$?` as the trap function's first line, `exit
+  "$exit_code"` as its last — calling `exit` from inside an EXIT trap is safe (bash does not
+  re-invoke the trap on itself) and this only changes behavior on the actual error path, since
+  every one of these scripts already disarms its trap (`trap - EXIT`) before its own intentional,
+  successful completion. **Any new script in this project that launches a background QEMU process
+  and cleans it up via an EXIT trap needs this pattern from the start**, not as a fix discovered
+  after a real failure gets silently swallowed.
 
 ---
 

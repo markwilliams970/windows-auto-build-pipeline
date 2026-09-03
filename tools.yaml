@@ -1,0 +1,26 @@
+tools:
+  - 7zip
+  - putty
+  - winscp
+  - chrome
+  - notepadplusplus
+  - datadog-agent   # requires DD_API_KEY env var at build time - install-tools.sh fails loud
+                     # before boot if this is listed and DD_API_KEY is unset. Comment this line
+                     # out (like services.yaml's own commented-out roles) to build without it.
+
+# Applies to all four target OSes uniformly - no per-OS exclusion list (unlike services.yaml's
+# Server-only roles). See PHASE4_TOOLS_INSTALLER_PLAN.md.
+#
+# 7zip/putty/winscp/chrome/notepadplusplus always install whatever is currently the latest
+# release from each vendor - install-tools.sh resolves this host-side, fresh, on every build
+# (see PHASE4_TOOLS_INSTALLER_PLAN.md's A.3/A.1-revision - these churn too fast to usefully pin).
+#
+# datadog-agent is the one deliberate exception: pinned to agent_version below, since the Agent's
+# version can affect monitoring-integration test comparability build-to-build. Consulted only if
+# datadog-agent is listed above. Real config (not secret) - safe to commit.
+datadog:
+  agent_version: "7.83.0"
+  site: datadoghq.com
+  tags:
+    - "env:lab"
+    - "project:windows-auto-build-pipeline"
