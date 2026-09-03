@@ -4466,3 +4466,79 @@ introducing a regression there. Real options going forward, none yet attempted:
    without throwing, to gather real data on the actual timing gap on a subsequent attempt, before
    deciding on a permanent fix - more effort than option 1, but would actually confirm the theory
    rather than continuing to infer it.
+
+---
+
+## Session (2026-09-02, continued): Option 3 (instrumented live run) executed - real data gathered,
+## AND the resulting run went all the way to a complete, fully-verified Server 2019 Build 1
+
+Per explicit direction: implement option 3 (instrument, don't just retry blind), **and gate any fix
+strictly behind a Server-2019 conditional so Server 2022/2025 are unaffected.**
+
+**Instrumentation added to `scripts/verify-post-reboot.ps1`**: a new `-TargetOS` parameter (this
+script never received any OS context before today) and a purely additive block, gated on
+`$TargetOS -eq "server2019"`, that polls `Get-Service ADWS` every 5s for up to 60s and logs each
+check via `Write-Host` - captured directly in Packer's own build log. Never throws; the original
+fatal `Get-ADDomain` check immediately below is completely untouched, for every OS. Wired the
+parameter through from `packer/boot-and-provision.pkr.hcl`'s existing `var.target_os` (the
+`verify-post-reboot.ps1` provisioner invocation didn't pass any OS context before this - added
+`-TargetOS '${var.target_os}'` to that one line). Verified via `packer validate` and a manual brace/
+paren balance check (no `pwsh` available on this Linux host to lint the PowerShell directly - real
+validation came from the actual run, below). Server 2022/2025 are provably unaffected: the
+diagnostic block's own `if` condition is the only thing gating it, and nothing else in the script
+changed.
+
+**Re-ran the real production pipeline** (reusing the same already-applied, already-`make-bootable`'d
+disk from the two prior sessions - confirmed fresh/valid to reuse, since Phase E1's second session
+already proved a failed Packer run doesn't persist any guest-side state back to it) through Packer
+with the instrumented script.
+
+**Real data: `[ADWS poll +0s] Status: Running` - immediately, no delay at all.** This run's build
+**succeeded completely** - `NTDS`/`DNS` running, the diagnostic poll found `ADWS` already `Running`
+on its very first check, `Get-ADDomain` succeeded, and the full `Build ... finished after 7 minutes
+19 seconds` with a real artifact produced. **This is real, if inconclusive-on-its-own, evidence for
+the "one-off timing fluke" theory over a deterministic Server-2019-specific `ADWS`-lag theory** - one
+failure, one immediate success is consistent with ordinary run-to-run variance (host load, disk I/O
+contention - this session had already run dozens of QEMU boot cycles) rather than a systematic race
+this project needs to design around. Not fully conclusive from a single data point, but the
+instrumentation is now permanently in place (Server-2019-gated, zero cost when it doesn't fire) to
+keep gathering data on every future Server 2019 `ad-ds` build without any further effort.
+
+**Given the build succeeded, continued through the rest of the real production pipeline rather than
+stopping at "the theory question is answered"**:
+
+- **`inject-virtio-spice.sh server2019`** against Packer's own final artifact
+  (`packer/output/server2019-20260902-174920/server2019-20260902-174920.qcow2`) - both stages clean
+  (`vioscsi` live-verified `Status OK`, NIC already virtio and `Up` - no swap needed for Server
+  SKUs, matching the established Server 2022/2025 pattern - `qxldod` staged and confirmed bound,
+  `vdservice Running`).
+- **`register-vm.sh server2019`** (no args - default disk resolution worked) - marker check passed,
+  defined `win2019prod` cleanly.
+- **`virsh start win2019prod`** - real DHCP lease for hostname `WIN2019PROD`
+  (`192.168.122.134`), confirmed via `virsh net-dhcp-leases default`.
+- **Full live WinRM verification, not just a screenshot** (same transient post-DC-promotion auth
+  settling seen in the earlier live-diagnosis session - first attempt got `InvalidCredentialsError`,
+  succeeded on retry ~15s later, consistent pattern now seen three times this investigation):
+  `hostname` -> `WIN2019PROD`; `NTDS`/`DNS`/`ADWS` all `Running`; **`(Get-ADDomain).DNSRoot` ->
+  `corp.example.internal`** (the exact command that failed in the original session, now succeeding
+  live against a real, running domain controller); `Get-NetAdapter` -> `Red Hat VirtIO Ethernet
+  Adapter`, `Up`; `Get-Disk` -> `QEMU QEMU HARDDISK`, `Online`, GPT (virtio-scsi, post-swap);
+  `(Get-CimInstance Win32_OperatingSystem).Caption` -> `Microsoft Windows Server 2019 Standard
+  Evaluation`.
+- VM shut down gracefully via genuine WinRM `shutdown /s /t 0`, confirmed `shut off` via
+  `virsh domstate`.
+
+**This is Phase E Build 1 (`server2019` + `ad-ds`) done, completely, at the identical evidentiary bar
+already established for Server 2022, Server 2025, and Windows 11 in this project** - not a partial or
+harness-only confirmation. Every stage of the real production pipeline (`partition-disk.sh` ->
+`apply-image.sh` -> `make-bootable.sh` -> `apply-unattend.sh` -> Packer boot/WinRM/AD DS role ->
+`inject-virtio-spice.sh` -> `register-vm.sh` -> `virsh start` -> live authenticated WinRM
+verification) has now been independently confirmed for Server 2019 for the first time in this
+project's history.
+
+**What's still open**: Phase E's own plan calls for a second build (`iis`/`sql-server` profile) before
+Server 2019 can be called production-ready by this project's own established bar. Also worth noting
+honestly: the ADWS-timing question is not fully closed by one success following one failure - if a
+future `ad-ds` build (Server 2019 or otherwise) shows the diagnostic poll actually waiting several
+seconds before `ADWS` comes up, that's the confirming data point this instrumentation exists to catch,
+and would change the "one-off fluke" read above.
