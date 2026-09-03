@@ -4338,3 +4338,68 @@ made tractable only by the fast-iteration harness built at the start of the sess
    server2019-specialize-test/` from this session's diagnostic sequence (~16GB+ as of the last check).
    Per this project's own standard, prune once the sequence concludes - confirm with the user before
    deleting anything.
+
+---
+
+## Session (2026-09-02, continued): Real `build.sh server2019` run - WinRM fix CONFIRMED through the
+## full production path; one new, separate, later-pipeline finding (ADWS verification race)
+
+Per explicit direction, ran the real production pipeline rather than only the fast-iteration harness:
+`./build.sh server2019 dev/services-domain-controller.yaml`.
+
+**One real, transient hiccup along the way, not related to today's WinRM fix**: `make-bootable.sh`'s
+own WinPE+bcdboot boot step timed out after 300s on the first attempt - this exact mechanism had
+already worked cleanly earlier the same session (building the fast-iteration baseline) and has never
+failed for any other OS in this project's history, so treated as host-load-related (many dozens of
+QEMU boot cycles had already run this session) rather than a real bug. **Retried `make-bootable.sh`
+directly against the already-partitioned-and-applied disk** (skipping the ~17-minute `apply-image.sh`
+re-run, since that step had already succeeded) - **succeeded cleanly on retry**, confirming the
+timeout was transient. Continued the pipeline manually from there (`apply-unattend.sh`, then Packer)
+using the disk's own existing `BUILD_ID` rather than restarting `build.sh` from scratch and burning
+another ~17 minutes.
+
+**Hit one real invocation mistake calling `packer build` directly** (bypassing `build.sh`'s own
+wrapper): passed `source_qcow2` as a path relative to the current shell, but Packer resolves template
+variables relative to the template directory - Packer tried to fetch `file:///output/builds/...`
+(missing the `image-apply` prefix) and failed immediately. Fixed by using absolute paths throughout
+(matching `build.sh`'s own `${REPO_ROOT}`-based convention exactly) - not a pipeline bug, a mistake in
+this session's manual reconstruction of `build.sh`'s steps.
+
+**The actual result, once running correctly: real confirmation the WinRM fix holds through the full
+production path, not just the fast-iteration harness.** Packer's own WinRM wait succeeded (previously
+the exact point that failed before today's fix), the disk rebooted after AD DS promotion, and
+`verify-post-reboot.ps1` confirmed both `NTDS` and `DNS` services `Running`. This is real,
+independent evidence beyond the harness: the harness never exercises Packer's own WinRM
+communicator or real role provisioning at all, so this is the first time the fix has been proven
+through a genuinely different code path than the one it was developed against.
+
+**New, separate, later-pipeline finding: `verify-post-reboot.ps1`'s `Get-ADDomain` check has no
+retry/wait, and lost the race against ADWS this run.** The build ultimately failed at:
+`Get-ADDomain failed after promotion: Unable to find a default server with Active Directory Web
+Services running.` - checked the script directly (`grep -n "ADWS\|Get-ADDomain\|Start-Sleep\|retry"
+scripts/verify-post-reboot.ps1`): it's a single, unguarded `Get-ADDomain -ErrorAction Stop` call, no
+loop, no wait. `NTDS`/`DNS` were already confirmed `Running` immediately before this check, so the
+domain controller promotion itself succeeded - `ADWS` (Active Directory Web Services) specifically,
+which `Get-ADDomain` depends on, is a separate service with its own startup timing and can reasonably
+start a beat later than `NTDS`/`DNS` after a promotion reboot. **This script is reused unchanged from
+the sibling project** (`CLAUDE.md`'s "Reuse directly" list) - not modified as part of today's Server
+2019 work, and deliberately not modified now either without a considered decision, since a change here
+would affect Server 2022/2025 too, not just Server 2019. Not yet determined whether this is a
+Server-2019-specific timing difference (plausible - this project's own history already documents
+Server 2019/2025 sometimes needing more first-boot patience than Server 2022) or a latent, low-
+frequency race that could in principle hit any OS and just hasn't been observed elsewhere yet.
+
+**Host state after the failure**: confirmed clean (no leftover qemu processes, no attached nbd
+devices) - Packer's own error-path cleanup (`qmp_graceful_shutdown`-first convention, fixed
+2026-08-25/26) ran normally. The pre-Packer disk (`image-apply/output/builds/
+server2019-20260902-174920.qcow2`) is left in its post-promotion, failed-verification state, not yet
+touched further - a live diagnostic boot of it (same technique as the WinRM investigation above) would
+directly show whether `ADWS` simply needed more time, if that's worth doing before deciding on a
+fix.
+
+**Status**: WinRM/specialize fix from the earlier sessions is now considered fully confirmed - no
+further verification needed there. This new ADWS-timing finding is a distinct, separate issue,
+not yet resolved, and not blocking the WinRM fix's own conclusion. Next step is the user's call: a
+plain retry (real chance of just succeeding, if this was a one-off slow boot), a live diagnostic
+boot of the failed disk to confirm the ADWS-timing theory directly, or adding a bounded retry loop to
+`verify-post-reboot.ps1` (a considered, cross-project change, not a quick unilateral edit).
