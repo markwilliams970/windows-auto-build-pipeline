@@ -4598,3 +4598,65 @@ that narrative only after proof, not ahead of it - proof now exists. Also still 
 Server 2019 specifically: disk hygiene (accumulated diagnostic overlays under `dev/output/
 server2019-specialize-test/`, ~16GB+, not yet pruned - flagged earlier this session, still pending a
 decision).
+
+---
+
+## SERVER 2019 STATUS: PRODUCTION-READY, FOURTH TARGET OS (2026-09-02)
+
+**Capstone summary, matching the style of "PHASE 3 STATUS: COMPLETE, INCLUDING PHASE 3A" above** -
+Server 2019 was added as this project's fourth target OS well after that original completion, via
+its own formal, gated project (A: research, B: design, C: design review, D: implementation, E: E2E
+testing) rather than a continuation of Phase 3's own original numbered work. Full narrative trail:
+`WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (Phase A), `WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`
+(Phase B/C), and this log's own sessions dated 2026-09-02 above (Phase D/E - research deepening, ISO
+acquisition, implementation, the WinRM-hang investigation and its resolution, the ADWS-timing
+question, and both required production builds). `CLAUDE.md`'s own Phase 3 section carries the
+durable summary ("Server 2019: fourth target OS added" subsection) - this entry is the pointer from
+the log's own tail, not a duplicate of that narrative.
+
+**What "production-ready" means here, concretely, mirroring the original capstone's own structure:**
+- **Mechanism reuse, confirmed not assumed**: `image-apply/lib/common.sh`, `partition-disk.sh`,
+  `apply-image.sh`, `make-bootable.sh` needed zero changes - Server 2019 is entirely config-table
+  entries. `tools/gen-viostor-ddb-reg.py` and the `services.yaml`/`run-services.ps1` role layer
+  needed zero changes too.
+- **Two real, Server-2019-specific bugs in the specialize/`FirstLogonCommands` path**, found via
+  systematic marker-file bisection across roughly a dozen fast-iteration boot cycles, both fixed
+  structurally: a `Get-NetIPAddress | Where-Object` pipe that hangs indefinitely (fix: removed the
+  now-provably-unnecessary wait-loop it was part of), and a subtler one where any two
+  WSMan-configuration changes sharing one PowerShell process hang, regardless of which two or which
+  mechanism (fix: one `SynchronousCommand` per WSMan operation, five in place of one).
+- **A new fast-iteration harness**, `dev/run-server2019-specialize-test.sh`, purpose-built for this
+  investigation and now a permanent, reusable tool for any future specialize-step debugging on this
+  OS - distinct from `dev/role-test.pkr.hcl`, which solves a different problem (role-script
+  iteration against an already-WinRM-reachable disk).
+- **Both required Phase E builds independently confirmed end-to-end** through the real production
+  pipeline, at the identical evidentiary bar as Server 2022/2025/Windows 11 (`register-vm.sh` +
+  `virsh start` + live authenticated WinRM, not a screenshot): `server2019` + `ad-ds` (NTDS/DNS/ADWS
+  all `Running`, live `Get-ADDomain` against a real domain controller) and `server2019` +
+  `iis`/`sql-server` (`W3SVC` Running, HTTP 200, `MSSQLSERVER` Running, real SA login + `SELECT 1`).
+
+**What's genuinely still open, so this isn't overstated as fully settled** (same honesty standard
+the original Phase 3/3A capstone held itself to):
+- **The ADWS-timing question is inconclusive** - one real build failed at `Get-ADDomain` with
+  `NTDS`/`DNS` already `Running`; a second, otherwise-identical build's own diagnostic
+  instrumentation found `ADWS` already `Running` immediately, no delay. Reads as ordinary
+  run-to-run variance rather than a deterministic race, but two data points isn't proof either way.
+  Non-fatal, Server-2019-gated instrumentation stays permanently in `scripts/verify-post-reboot.ps1`
+  to keep gathering real data on every future `ad-ds` build - see `CLAUDE.md`'s Open Items for the
+  live-tracked version of this.
+- **A real correction to a documented assumption about Packer's own failure semantics** was found
+  along the way (rebooting `source_qcow2` after a *failed* Packer provisioner run does not show
+  guest state at the point of failure - Packer works against an ephemeral internal copy that's
+  discarded on failure) - corrected directly in `packer/boot-and-provision.pkr.hcl`'s own header,
+  and worth remembering for any *other* OS's future Packer-failure debugging too, not just Server
+  2019's.
+- **Disk hygiene**: diagnostic overlays under `dev/output/server2019-specialize-test/` (~16GB+ as of
+  this entry) are intentionally not yet pruned, per explicit direction to hold onto them - a pending
+  decision, not an oversight.
+- **Phase 4 (Tooling) and Phase 5 (Lifecycle)** remain exactly as undone for Server 2019 as for the
+  other three OSes - this addition didn't change their own status, design-complete-but-unimplemented
+  for Phase 4, not-started for Phase 5.
+
+None of these block calling Server 2019 production-ready - they're the next real frontier for this
+specific OS (mostly shared with the other three), not loose ends in what this addition itself
+promised.

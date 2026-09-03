@@ -1,9 +1,9 @@
 # Windows Auto-Build Pipeline
 
-Build fully reproducible, disposable Windows lab VMs — Windows Server 2022, Windows Server 2025,
-and Windows 11 Enterprise Evaluation — without relying on an interactive installer boot. Every
-build applies a fresh Windows image straight to disk from Linux and comes up unattended, ready for
-automated configuration and testing.
+Build fully reproducible, disposable Windows lab VMs — Windows Server 2019, Windows Server 2022,
+Windows Server 2025, and Windows 11 Enterprise Evaluation — without relying on an interactive
+installer boot. Every build applies a fresh Windows image straight to disk from Linux and comes up
+unattended, ready for automated configuration and testing.
 
 This is a working, hand-run-from-the-command-line research/lab tool, not a packaged product. It's
 documented here so it can be picked up, understood, and driven by someone who wasn't part of
@@ -32,11 +32,14 @@ approach doesn't work.
 
 ## Two installation mechanisms, by OS
 
-- **Windows Server 2022 and 2025**: fully offline image application. `wimlib` applies the Windows
-  image directly onto a partitioned, formatted disk from this Linux host — no boot of any kind
-  during installation. The disk is made bootable afterward (WinPE + a real `bcdboot` run, once),
-  specialized via an offline-dropped `unattend.xml`, and only then booted for the first time, via
-  Packer, straight into a WinRM-reachable, already-configured machine.
+- **Windows Server 2019, 2022, and 2025**: fully offline image application. `wimlib` applies the
+  Windows image directly onto a partitioned, formatted disk from this Linux host — no boot of any
+  kind during installation. The disk is made bootable afterward (WinPE + a real `bcdboot` run,
+  once), specialized via an offline-dropped `unattend.xml`, and only then booted for the first
+  time, via Packer, straight into a WinRM-reachable, already-configured machine. Server 2019 was
+  added after the other two OSes proved the mechanism out — see "Summary of prior work" below;
+  its own design/research trail lives in `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` and
+  `WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`.
 - **Windows 11**: a Setup.exe-driven install using a Microsoft-patched, prompt-free install ISO
   (the `_noprompt` boot files Microsoft has shipped for over a decade, applied via a hand-built
   QEMU invocation with explicit UEFI boot-order control) plus an answer-file ISO — one unattended
@@ -80,7 +83,14 @@ worth knowing both because it explains some of the design and because it's where
 
 The full engineering trail — every finding, every dead end, every root cause — lives in
 `PHASE2_ENGINEERING_LOG.md`, `PHASE3_ENGINEERING_LOG.md`,
-`WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`, and `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`. `CLAUDE.md`
+`WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`, `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, and — for
+Server 2019 specifically, added after the original three OSes were already production-ready —
+`WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (research/feasibility), `WINDOWS_SERVER_2019_IMPLEMENTATION_
+PLAN.md` (design), and `PHASE3_ENGINEERING_LOG.md`'s own later sessions (bring-up, including two
+real, non-obvious bugs found and fixed: a `Get-NetIPAddress | Where-Object` pipe that hangs
+indefinitely when run via `FirstLogonCommands` on Server 2019 specifically, and a second, subtler
+one where any two WSMan-configuration changes run in the same PowerShell process — not any single
+change — hang the same way; both fixed structurally, not with a timing workaround). `CLAUDE.md`
 is the current, authoritative summary of project status and design decisions; this README doesn't
 duplicate it.
 
@@ -108,24 +118,32 @@ Full detail, exact package names, and a verification script: `PREREQUISITES.md`.
 
 Builds read Windows ISOs and the VirtIO driver ISO from `../iso_cache/` (path configurable via the
 `ISO_CACHE_DIR` environment variable); nothing downloads automatically during a build. Populate it
-with the Windows Server 2022, Windows Server 2025, and Windows 11 Enterprise Evaluation ISOs, plus
-the latest stable `virtio-win.iso`. `ISO_CACHE_INVENTORY.md` records exactly what's cached on this
-project's own development host today, including verified re-download links and checksums — use it
-as a reference for what "populated" looks like, not as a guarantee those exact links or builds are
-still current (see "Risks and limitations" below).
+with the Windows Server 2019, Windows Server 2022, Windows Server 2025, and Windows 11 Enterprise
+Evaluation ISOs, plus the latest stable `virtio-win.iso`. `ISO_CACHE_INVENTORY.md` records exactly
+what's cached on this project's own development host today, including verified re-download links
+and checksums — use it as a reference for what "populated" looks like, not as a guarantee those
+exact links or builds are still current (see "Risks and limitations" below).
+
+**Server 2019's ISO is the one exception to "just re-download it"**: unlike the other three
+sources, its Evaluation download is gated behind a Microsoft registration form (name/email/company)
+rather than a direct, scriptable fwlink — confirmed by tracing the actual redirect target. Acquiring
+it (or re-acquiring it, if the cached copy is ever lost) requires a human to complete that form in a
+browser first; see `WINDOWS_SERVER_2019_RESEARCH_PLAN.md`'s Finding 3 for the full detail and the
+`ISO_CACHE_INVENTORY.md` row for exactly what's cached today.
 
 ## Running a build
 
 ```
-./build.sh <server2022|server2025|windows11> [services_yaml_path] [computer_name]
+./build.sh <server2019|server2022|server2025|windows11> [services_yaml_path] [computer_name]
 ```
 
-- `server2022` / `server2025` run the full offline-apply pipeline (partition → apply image → make
-  bootable → specialize → hand off to Packer for first boot + role provisioning), then automatically
-  run `image-apply/inject-virtio-spice.sh` against Packer's own final, role-provisioned disk — so a
-  real build's disk always ends up on virtio-scsi + QXL/SPICE, not just on request (NIC stays on the
-  existing, already-proven offline-hivex VirtIO NIC mechanism, untouched). `services_yaml_path`
-  (optional, defaults to `services.yaml`) selects which roles get provisioned — see "Roles" below.
+- `server2019` / `server2022` / `server2025` run the full offline-apply pipeline (partition → apply
+  image → make bootable → specialize → hand off to Packer for first boot + role provisioning), then
+  automatically run `image-apply/inject-virtio-spice.sh` against Packer's own final,
+  role-provisioned disk — so a real build's disk always ends up on virtio-scsi + QXL/SPICE, not just
+  on request (NIC stays on the existing, already-proven offline-hivex VirtIO NIC mechanism,
+  untouched). `services_yaml_path` (optional, defaults to `services.yaml`) selects which roles get
+  provisioned — see "Roles" below.
 - `windows11` runs the Setup.exe-driven install, then the same `inject-virtio-spice.sh` step (storage
   *and* NIC swapped to VirtIO this time, plus SPICE) — no Packer handoff, no roles.
 - `computer_name` (optional) overrides the default computer name baked into the unattend/answer
@@ -141,10 +159,14 @@ Rough timings from real logged production runs on this project's own development
 these to vary with host hardware, not to be portable guarantees, and note these specific numbers
 predate the automatic driver-injection step above being added, which adds real time on top): Server
 2022 + AD DS, ~7 minutes; Server 2025 + IIS/SQL Server, ~51 minutes; Windows 11 (install + driver
-injection), on a similar order. A completed build leaves a `.qcow2` disk image under
-`image-apply/output/builds/` for Windows 11, or under `packer/output/<os>-<timestamp>/` (a unique
-directory per build — see the note below) for Server 2022/2025, with the disk itself already on
-virtio-scsi/virtio-net/QXL+SPICE and confirmed reachable over WinRM.
+injection), on a similar order; Server 2019's own two confirming builds (Packer's own boot +
+role-provisioning phase specifically, not counting offline-apply or driver injection) - AD DS,
+~7 minutes; IIS/SQL Server, ~18 minutes, notably faster than Server 2025's own historical run for
+the identical profile, not investigated further (plausibly host-load/caching differences between
+sessions rather than a real per-OS difference). A completed build leaves a `.qcow2` disk image
+under `image-apply/output/builds/` for Windows 11, or under `packer/output/<os>-<timestamp>/` (a
+unique directory per build — see the note below) for Server 2019/2022/2025, with the disk itself
+already on virtio-scsi/virtio-net/QXL+SPICE and confirmed reachable over WinRM.
 
 Each real build gets its own unique build ID (`<os>-<timestamp>`), used for both the disk's own
 filename and Packer's output directory — so repeated builds of the same OS never collide on a shared
@@ -152,14 +174,15 @@ path (an early version of this pipeline had a real bug here: a fixed `packer/out
 that a second build of the same OS would fail against; fixed 2026-08-23, see `CLAUDE.md`'s Phase 3A
 entry for the full account).
 
-## Roles (Server 2022/2025 only)
+## Roles (Server 2019/2022/2025 only)
 
 `services.yaml` (or a path passed as `build.sh`'s second argument) is a flat, commented list of
 roles to provision: `iis`, `ad-ds`, `sql-server`. `ad-ds` (domain controller) and `iis`/`sql-server`
 (app server) are mutually exclusive profiles — `dev/services-domain-controller.yaml` and
 `dev/services-app-server.yaml` are ready-made examples of each. Windows 11 gets none of these
 roles; it isn't in scope for AD/IIS/SQL Server monitoring integration testing the way the Server
-SKUs are.
+SKUs are. All three Server SKUs share the identical, unmodified role-provisioning scripts — Server
+2019 needed zero script changes to support any of the three roles.
 
 ## Inspecting a running build
 
@@ -173,7 +196,7 @@ python3 tools/qmp-screenshot.py --socket /tmp/<name>.sock --out /tmp/shot.png
 `tools/qmp-watch.sh` loops that at an interval for watching a boot sequence unfold frame by frame;
 `tools/qmp-sendkey.py`, `tools/qmp-click.py`, and `tools/qmp-type.py` send keystrokes, clicks, and
 typed text into a running VM (mouse clicks need a USB tablet device on the guest — already wired
-into this project's own production QEMU invocations). Every build (all three OSes) now comes up with
+into this project's own production QEMU invocations). Every build (all four OSes) now comes up with
 a SPICE display (QXL + guest tools), reachable with any SPICE client, for genuine interactive use —
 not just headless automation.
 
@@ -183,7 +206,7 @@ A finished build's disk is just a loose `.qcow2` file until it's registered as a
 `register-vm.sh` does that, so it shows up in `virsh list --all` / virt-manager instead:
 
 ```
-./register-vm.sh <server2022|server2025|windows11> [qcow2_path] [vm_name]
+./register-vm.sh <server2019|server2022|server2025|windows11> [qcow2_path] [vm_name]
 ```
 
 `qcow2_path` defaults to the most recently built disk for that OS; `vm_name` defaults to the disk's
@@ -199,8 +222,9 @@ virt-viewer --connect qemu:///system <vm_name>
 ```
 
 This script's device model is confirmed by a real `virsh start` boot, live-verified over WinRM, for
-Server 2022 and Server 2025 (2026-08-26) — Windows 11's own device model (its NIC also swaps, unlike
-Server 2022/2025) remains unconfirmed by a real boot; see "Risks and limitations" below.
+**all four target OSes**: Server 2022 and Server 2025 (2026-08-26), Windows 11 including its own
+NIC-swap code path (2026-09-01), and Server 2019 (2026-09-02, both role profiles). No open item
+remains here.
 
 `register-vm.sh` also refuses to register a disk that hasn't actually been through
 `inject-virtio-spice.sh` yet (checked via an on-disk completion marker) rather than silently applying
@@ -233,8 +257,9 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   
 - **No automated environment lifecycle yet.** There's no "destroy" or cleanup workflow — VMs and
   their disk images are left in place until removed by hand. Build artifacts are large (Windows and
-  VirtIO ISOs alone are roughly 20 GiB cached, and each build's own disk image is tens of GB), so
-  disk space needs active management on whatever host this runs on.
+  VirtIO ISOs alone are roughly 25 GiB cached across all four OSes, per `ISO_CACHE_INVENTORY.md`,
+  and each build's own disk image is tens of GB), so disk space needs active management on whatever
+  host this runs on.
 - **No automated Datadog Agent or general tool installation.** A generalized, YAML-driven post-build
   tool installer (7-Zip, PuTTY, WinSCP, Chrome, Notepad++, and the Datadog Agent itself) is designed
   but not implemented — see `CLAUDE.md`'s Phase 4 for the design and its own honestly-stated
@@ -255,12 +280,22 @@ Read this before relying on this pipeline for anything beyond disposable lab use
 
 ## Next steps and ongoing work
 
+- **Server 2019 is production-ready** (2026-09-02) — the fourth target OS, added after the original
+  three via a formal, gated process (research → design → design review → implementation → E2E
+  testing, all five phases documented in `WINDOWS_SERVER_2019_RESEARCH_PLAN.md`,
+  `WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`, and `PHASE3_ENGINEERING_LOG.md`). Both required
+  builds (`ad-ds` and `iis`/`sql-server`) are independently confirmed end-to-end through the real
+  production pipeline, at the same evidentiary bar as every other OS. `dev/
+  run-server2019-specialize-test.sh` (new fast-iteration harness, distinct from
+  `dev/role-test.pkr.hcl` — it iterates on the specialize/`FirstLogonCommands` step itself, not
+  role scripts) was purpose-built to chase down two real, Server-2019-specific bugs found and fixed
+  along the way; see `PHASE3_ENGINEERING_LOG.md`'s Phase E sessions for the full bisection trail.
 - **Phase 4 (Tooling)**: design is complete (`CLAUDE.md`) — a `tools.yaml`-driven post-build
   installer for 7-Zip, PuTTY, WinSCP, Chrome, Notepad++, and the Datadog Agent, reusing this
   project's existing pinned-media-cache convention rather than live downloads from inside the
   guest. Not yet implemented.
 - **Phase 5 (lifecycle automation)**: build/verify/destroy workflow. Not started.
-- **Open engineering question**: whether Server 2022/2025's existing offline-hivex NIC driver
+- **Open engineering question**: whether Server 2019/2022/2025's existing offline-hivex NIC driver
   mechanism should ever be ported onto the newer live-swap technique used for Windows 11's VirtIO
   NIC — currently left as-is (offline-hivex) since it's already proven and the swap would be a
   breaking change to a working mechanism; flagged in `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, not
@@ -269,10 +304,10 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   against what's hardcoded in `image-apply/lib/common.sh`/`tools/gen-viostor-ddb-reg.py`, and fails
   loudly before a build runs against drifted media, is identified as worthwhile but not yet built
   (`CLAUDE.md`'s "Version-sensitivity and brittleness" standard).
-- `register-vm.sh`'s device model (virtio-scsi + QXL/SPICE) is confirmed by a real `virsh start` boot
-  for Server 2022 and Server 2025 (2026-08-26) — live-verified over WinRM, not just a screenshot.
-  **Windows 11's own device model (its NIC also swaps, unlike Server 2022/2025) remains unconfirmed
-  by a real boot** — flagged as an Open Item in `CLAUDE.md`.
+- `register-vm.sh`'s device model (virtio-scsi + QXL/SPICE) is now confirmed by a real `virsh start`
+  boot, live-verified over WinRM (not just a screenshot), for **all four target OSes** — Server 2022
+  and Server 2025 (2026-08-26), Windows 11 including its own NIC-swap code path (2026-09-01), and
+  Server 2019 (2026-09-02). No open item remains here.
 - `register-vm.sh` now enforces its own precondition instead of assuming it: it refuses to register a
   disk that hasn't actually been through `inject-virtio-spice.sh` (checked via an on-disk completion
   marker), closing a real device-topology-mismatch bug that cost real debugging time before it was
@@ -281,7 +316,9 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   path) has the same fixed-per-OS Packer output-directory pattern that caused the collision bug fixed
   above in the production path~~ — **fixed 2026-08-26**, same `run_id`-threading approach as
   `build.sh`'s own fix. Not yet exercised by a real end-to-end Packer build, since this harness's own
-  Phase 2 reference disks no longer exist on disk (a separate, pre-existing gap).
+  Phase 2 reference disks no longer exist on disk (a separate, pre-existing gap) - still true as of
+  Server 2019's own addition, which deliberately used a new, purpose-built harness instead
+  (`dev/run-server2019-specialize-test.sh`) rather than extending this one.
 
 ## Acknowledgements
 

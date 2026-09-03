@@ -32,11 +32,25 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 **Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** for its own success criterion — offline image application → bootable → specialized → real, unattended WinRM connectivity — confirmed end-to-end for **all three target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation) when hand-run (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). `image-apply/`'s real scripts formalizing that recipe were written and confirmed during Phase 3's own Session 2 for Server 2022/2025 specifically; Session 3 then ran the same scripts against Windows 11 and found real, blocking problems the hand-run recipe never hit — see `PHASE3_ENGINEERING_LOG.md` Session 3 and `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`.
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** for its own success criterion — offline image application → bootable → specialized → real, unattended WinRM connectivity — confirmed end-to-end for **all three original target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation) when hand-run (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). `image-apply/`'s real scripts formalizing that recipe were written and confirmed during Phase 3's own Session 2 for Server 2022/2025 specifically; Session 3 then ran the same scripts against Windows 11 and found real, blocking problems the hand-run recipe never hit — see `PHASE3_ENGINEERING_LOG.md` Session 3 and `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`. This exact mechanism later generalized to a fourth OS, Server 2019 (2026-09-02), with zero changes to any of `partition-disk.sh`/`apply-image.sh`/`make-bootable.sh` - see "Implementation Status" above.
 
 **Phase 3** (role provisioning) is **done**, including the production pipeline — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server), through both a fast-iteration test harness (`dev/`) and the real production path (`image-apply/`'s scripts + `packer/boot-and-provision.pkr.hcl` + `build.sh`, taking a blank disk all the way to a provisioned VM with no hand-run steps). See its entry under Development Approach below and `PHASE3_ENGINEERING_LOG.md` for the full trail across both sessions. **Phases 4-5** are not yet started.
 
 **Windows 11 is also production-ready, as of Phase 3.4/3.5**, via a genuinely different mechanism than Server 2022/2025's Phase 2/3 pipeline above (Setup.exe-driven, `image-apply/windows11-setup-install.sh`, no Packer handoff, no roles - Windows 11 doesn't get AD DS/IIS/SQL Server). See the "RESOLVED" note under Phase 3's own section below and `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries for the full trail - six independent clean production runs total.
+
+**Windows Server 2019 is also production-ready, as of 2026-09-02** - the fourth target OS, added
+well after the original three via its own formal, gated project (not a phase of this document's own
+numbered sequence - see "Development Approach" below for why the phase numbers stay aligned with the
+sibling project's and aren't renumbered for this addition). Server 2019 reuses Server 2022/2025's
+existing Phase 2 offline-apply mechanism and Phase 3 role-provisioning scripts **completely
+unchanged** - the entire addition was config-table entries (`image-apply/lib/common.sh`, one new
+`image-apply/unattend-server2019.xml` template) plus two real, Server-2019-specific bugs found and
+fixed in the specialize/`FirstLogonCommands` path (neither existing in Server 2022/2025's own proven
+recipe). Full trail: `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (Phase A: research/feasibility),
+`WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md` (Phase B/C: design + design review), and
+`PHASE3_ENGINEERING_LOG.md`'s later 2026-09-02 sessions (Phase D: implementation, Phase E: E2E
+testing - both required builds, `ad-ds` and `iis`/`sql-server`, independently confirmed end-to-end
+through the real production pipeline).
 
 ---
 
@@ -48,9 +62,21 @@ and the matching `PHASE*_ENGINEERING_LOG.md` - this list exists purely for disco
 item (and update the phase section it points at) once it's actually resolved, don't just leave it
 stale here.
 
-**None currently open.** The last standing item (Windows 11's `register-vm.sh` device-model case,
-NIC-swap branch unconfirmed by a real boot) was resolved 2026-09-01 - see Phase 3A's own section
-below and `PHASE3_ENGINEERING_LOG.md`'s corresponding session entry for the full evidentiary trail.
+- **Server 2019's ADWS-timing question is inconclusive, not blocking.** One real build's `ad-ds`
+  provisioning hit `Get-ADDomain failed after promotion: Unable to find a default server with Active
+  Directory Web Services running` even with `NTDS`/`DNS` already confirmed `Running`; a second,
+  otherwise-identical build's own diagnostic instrumentation found `ADWS` already `Running` on its
+  very first check, no delay at all. One failure followed by one immediate success is consistent
+  with ordinary run-to-run timing variance rather than a deterministic Server-2019-specific race, but
+  isn't fully conclusive from two data points. Non-fatal, Server-2019-gated diagnostic
+  instrumentation (`scripts/verify-post-reboot.ps1`, gated on `-TargetOS server2019`, zero effect on
+  Server 2022/2025) is already in place and will keep gathering real timing data on every future
+  Server 2019 `ad-ds` build with no further effort - see `PHASE3_ENGINEERING_LOG.md`'s Phase E
+  sessions (2026-09-02) for the full trail.
+
+Previously resolved: Windows 11's `register-vm.sh` device-model case (NIC-swap branch unconfirmed by
+a real boot) was resolved 2026-09-01 - see Phase 3A's own section below and
+`PHASE3_ENGINEERING_LOG.md`'s corresponding session entry for the full evidentiary trail.
 
 ---
 
@@ -272,9 +298,10 @@ phase — general-purpose, add it up front rather than rediscovering the gap eac
 command didn't have this and had to fall back to keyboard-only `Alt+Tab`/`Escape` navigation via
 `qmp-sendkey.py` instead, which happened to be sufficient there but won't always be. **Closed as of
 Phase 3.4/3.5's completion**: both of this project's real production `qemu-system-x86_64`
-invocations (`make-bootable.sh`, covering Server 2022/2025; `windows11-setup-install.sh`, covering
-Windows 11) now include this device pair up front, verified with a real boot rather than assumed -
-all three target OSes are covered.
+invocations (`make-bootable.sh`, covering Server 2022/2025 at the time, and Server 2019 too once it
+was added later, 2026-09-02, unmodified; `windows11-setup-install.sh`, covering Windows 11) now
+include this device pair up front, verified with a real boot rather than assumed - all four target
+OSes are covered.
 
 **Convention going forward**: whenever a `qemu-system-x86_64` invocation is constructed for testing
 or experimentation in this project (not necessarily Packer-managed builds — see caveat below), add
@@ -332,8 +359,10 @@ configured), plus additional packages this project specifically needs:
 
 ## Guest
 
-Same as the sibling project: Windows Server 2022/2025 Evaluation, Windows 11 Enterprise
-Evaluation; UEFI boot; VirtIO devices; QEMU Guest Agent.
+Windows Server 2019/2022/2025 Evaluation, Windows 11 Enterprise Evaluation; UEFI boot; VirtIO
+devices; QEMU Guest Agent. Server 2019/2022/2025 are the same underlying evaluation-media
+convention as the sibling project; Server 2019 was added to this project specifically (2026-09-02),
+not present in the sibling project's own scope.
 
 ---
 
@@ -374,9 +403,11 @@ unchanged by that generalization.
 Expect this to evolve significantly as the actual offline-apply pipeline gets built — this is a
 starting sketch, not a fixed target. It has not been kept fully current (e.g. `tools/qmp-eject.py`,
 `tools/qmp-pixel.py`, `tools/qmp-sendkey.py`, `tools/qmp-click.py`, `tools/qmp-type.py`,
-`packer/`'s `dev/role-test.pkr.hcl` sibling, and `image-apply/`'s various `.xml` templates aren't
-listed below) - treat it as a rough map of the major pieces, not an exhaustive or current listing;
-`find` or `ls` the real tree for that.
+`packer/`'s `dev/role-test.pkr.hcl` sibling, `dev/run-server2019-specialize-test.sh` (a second,
+distinct fast-iteration harness - see its own header comment for how it differs from
+`dev/role-test.pkr.hcl`), and `image-apply/`'s various `.xml` templates aren't listed below) - treat
+it as a rough map of the major pieces, not an exhaustive or current listing; `find` or `ls` the real
+tree for that.
 
 ```
 windows-auto-build-pipeline/
@@ -386,22 +417,24 @@ windows-auto-build-pipeline/
 ├── HANDOFF_FROM_UNATTENDED_INSTALL.md   # read this first
 ├── services.yaml                         # copied/adapted from the sibling project
 ├── build.sh                              # real: orchestrates image-apply/*.sh then Packer, then
-│                                            # inject-virtio-spice.sh (Phase 3A, all three OSes)
+│                                            # inject-virtio-spice.sh (Phase 3A, all four OSes)
 ├── register-vm.sh                        # real: defines a libvirt domain from a finished build's
 │                                            # disk (virsh list/virt-manager visibility) - adapted
 │                                            # from ../windows-server-vm-automation/register-vm.sh
 
-├── image-apply/                # real, confirmed production for Server 2022/2025
-│   │                             # (PHASE3_ENGINEERING_LOG.md Session 2). Windows 11 no longer uses
-│   │                             # this offline-apply sequence at all as of Phase 3.4 - it has its
+├── image-apply/                # real, confirmed production for Server 2019/2022/2025
+│   │                             # (PHASE3_ENGINEERING_LOG.md Session 2; Server 2019 added
+│   │                             # 2026-09-02 with zero changes to these scripts, config-table
+│   │                             # entries only). Windows 11 no longer uses this offline-apply
+│   │                             # sequence at all as of Phase 3.4 - it has its
 │   │                             # own separate, self-contained script (windows11-setup-install.sh,
 │   │                             # not listed below - this diagram is a known-stale sketch, see the
 │   │                             # note under Repository Structure's own heading)
 │   ├── lib/common.sh           # per-OS config table (WIM index, driver subfolder, disk size, name)
-│   ├── partition-disk.sh       # qemu-nbd + sgdisk + mkfs - Server 2022/2025 only
-│   ├── apply-image.sh          # wimlib apply - Server 2022/2025 only
-│   ├── make-bootable.sh        # WinPE + bcdboot, then offline viostor/netkvm driver injection - Server 2022/2025 only
-│   ├── apply-unattend.sh       # drops %WINDIR%\Panther\unattend.xml - Server 2022/2025 only
+│   ├── partition-disk.sh       # qemu-nbd + sgdisk + mkfs - Server 2019/2022/2025 only
+│   ├── apply-image.sh          # wimlib apply - Server 2019/2022/2025 only
+│   ├── make-bootable.sh        # WinPE + bcdboot, then offline viostor/netkvm driver injection - Server 2019/2022/2025 only
+│   ├── apply-unattend.sh       # drops %WINDIR%\Panther\unattend.xml - Server 2019/2022/2025 only
 │   ├── windows11-setup-install.sh  # real production script for Windows 11 - Setup.exe-driven,
 │   │                                  # self-contained (partition+install+bootable+specialize in
 │   │                                  # one unattended run, no Packer handoff)
@@ -869,8 +902,10 @@ swapped NIC negotiating correctly under libvirt's own auto-assigned PCI address,
 and `Get-PnpDevice -Class Display` showed the Red Hat QXL controller `OK`. This is the same Finding
 3A-3 inference (libvirt's PCI address allocation doesn't need to reproduce
 `inject-virtio-spice.sh`'s exact `addr=` values) now confirmed for the NIC-swap path too, not just
-the storage-only path Server 2022/2025 already proved. All three target OSes' `register-vm.sh`
-device models are now confirmed by a real `virsh start` boot - no open item remains here.
+the storage-only path Server 2022/2025 already proved. All three target OSes existing at the time
+(Server 2022, Server 2025, Windows 11) had their `register-vm.sh` device models confirmed by a real
+`virsh start` boot as of this entry - Server 2019 (added later, 2026-09-02) is confirmed too; see
+"Server 2019: fourth target OS added" below.
 
 **`register-vm.sh` now enforces its own precondition instead of just assuming it, and two real bugs
 found via a genuine E2E run are fixed (2026-08-25/26, `PHASE3_ENGINEERING_LOG.md`'s corresponding
@@ -895,6 +930,112 @@ checked against the new length guard directly (2267 chars, well under budget) th
 wasn't rebuilt this session - the device-model gap noted above was closed in a later session
 (2026-09-01, see above).
 
+## Server 2019: fourth target OS added (2026-09-02)
+
+Added well after the original three OSes were already production-ready, via its own formal, gated
+project (A: research, B: design, C: design review, D: implementation, E: E2E testing) rather than as
+part of this phase's own original numbered work - `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` and
+`WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md` carry Phases A-C in full; this section is the durable
+summary of D/E, alongside `PHASE3_ENGINEERING_LOG.md`'s own 2026-09-02 sessions for the complete
+trail (research, ISO acquisition, implementation, and four separate debugging arcs: the WinRM hang,
+its own root-cause bisection, the ADWS-timing question, and the two full production builds).
+
+**Confirmed to need zero changes to the existing offline-apply mechanism.** Every `image-apply/*.sh`
+script (`partition-disk.sh`, `apply-image.sh`, `make-bootable.sh`) is entirely table-driven off
+`image-apply/lib/common.sh` - none of them contain OS-specific logic of their own. The real
+implementation footprint was five one-line table additions in `common.sh` (ISO path, WIM index 2 -
+directly verified via `wimlib-imagex info`, matching Server 2022/2025's own index - driver subfolder
+`2k19`, 40GB disk, `WIN2019PROD` computer name), one case-statement line plus a new
+`image-apply/unattend-server2019.xml` template in `apply-unattend.sh`, and one validation-list line
+in `packer/boot-and-provision.pkr.hcl`. `tools/gen-viostor-ddb-reg.py` needed no changes at all -
+it's driven by `--driver` flag, not OS, and Phase A's own research hash-confirmed `2k19`'s driver
+files are byte-identical to `2k22`'s. The `services.yaml`/`run-services.ps1` role-provisioning layer
+also needed zero changes - confirmed via direct grep, it has no OS-version references anywhere.
+
+**Real ISO-acquisition wrinkle, unique to this one source**: Server 2019's Evaluation media is the
+only one of this project's four sources gated behind a Microsoft registration form (name/email/
+company) rather than a direct, scriptable fwlink - confirmed by tracing the actual redirect target.
+The user completed the form directly; the ISO is cached (`../iso_cache/2019-17763.3650.221105-1748...
+iso`, `ISO_CACHE_INVENTORY.md` updated with an explicit note that this source has no re-download
+link to record, unlike the other three).
+
+**Two real, Server-2019-specific bugs found in the specialize/`FirstLogonCommands` path - neither
+exists in Server 2022/2025's own proven recipe, both fixed structurally, not with a timing
+workaround:**
+
+1. **`Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object {...}`
+   hangs indefinitely** when run via `FirstLogonCommands` on Server 2019 specifically - isolated via
+   marker-file bisection (`server2019-firstlogon-marker.txt`/`-pnputil-log.txt`/`-netcat-log.txt`/
+   `-winrm-log.txt`, each `FirstLogonCommands` step writing its own, precisely pinpointing which
+   `Order` actually completes each run) across roughly a dozen fast-iteration boot cycles.
+   `Get-NetIPAddress` alone, no pipe, returns instantly every time; piped into `Where-Object`, it
+   never completes (let run 5+ minutes with zero progress). 100% reproducible, not flaky. Fix:
+   removed the network-readiness wait-loop entirely from `unattend-server2019.xml`'s Order 3 - it
+   was defensive, never load-bearing (the project's own `New-NetFirewallRule` call has no `-Profile`
+   restriction, and DHCP is fast/reliable in this environment, confirmed directly via `ipconfig`).
+2. **Any two WSMan-configuration-changing operations run in the same `powershell.exe` process hang
+   on the second one** - not any single command (each individually confirmed fine, both via external
+   `winrm set` calls and native `Set-Item WSMan:\...` cmdlets), and not `Enable-PSRemoting`
+   specifically (an earlier, plausible-looking theory - its own `Register-PSSessionConfiguration`
+   step is a documented WinRM `StopPending` hang trigger, `PowerShell/JEA` GitHub issue #30 - removing
+   it alone did not fix the hang; this project's own `pywinrm` usage, `run_cmd`/`run_ps`, never
+   needed it anyway, confirmed by reading `pywinrm`'s own source: it's the plain WinRS shell
+   resource, never the native PSRP/`PSSession` protocol). Some resource/lock the first WSMan change
+   takes isn't released before a second one in the same process touches it again - the exact
+   underlying OS mechanism wasn't traced further. Fix: split each WSMan operation
+   (`Set-Service WinRM -StartupType Automatic`, three `winrm set` calls, `New-NetFirewallRule`) into
+   its own `SynchronousCommand` (`unattend-server2019.xml`'s Orders 4-8), so each gets a fresh
+   process - structural, not a `Start-Sleep`-between-calls workaround.
+
+**A new, purpose-built fast-iteration harness** (`dev/run-server2019-specialize-test.sh`) made this
+bisection tractable in one session (~25-30 diagnostic boot cycles total across the investigation) -
+distinct from `dev/role-test.pkr.hcl`, which assumes WinRM already works and iterates on role
+scripts. This one iterates on the specialize step itself, against a frozen, never-booted baseline
+(`image-apply/output/server2019-baseline-bootable.qcow2`, built once) plus a `qemu-img` backing-file
+overlay per run - reproduced the known hang in ~6 minutes instead of the ~35 the full `build.sh`
+pipeline takes to reach the same point.
+
+**Real, if inconclusive, finding about Packer's own failure semantics, discovered while diagnosing
+an unrelated AD DS timing question**: rebooting `source_qcow2` after a *failed* Packer provisioner
+run does not show the guest state at the point of failure - `AD-Domain-Services` `InstallState`
+was still `Available`, not `Installed`, proving Packer's own qemu builder works against an ephemeral
+internal copy that's discarded on failure, not `source_qcow2` directly, despite this project's own
+prior documented assumption ("no backing file... boots the disk directly") only actually holding for
+a *successful* build. Corrected directly in `packer/boot-and-provision.pkr.hcl`'s own header comment.
+This closes off "just reboot the disk and look" as a diagnostic strategy for mid-provisioning Packer
+failures specifically (it remains valid for genuine offline-apply-stage failures).
+
+**The ADWS-timing question itself remains inconclusive** - one real `ad-ds` build failed at
+`Get-ADDomain` even with `NTDS`/`DNS` already `Running`; a second, otherwise-identical build's own
+non-fatal diagnostic instrumentation (`scripts/verify-post-reboot.ps1`, a new `-TargetOS` parameter,
+gated strictly to `$TargetOS -eq "server2019"` - zero effect on Server 2022/2025, confirmed by the
+gate being the only thing controlling it) found `ADWS` already `Running` on its very first check, no
+delay at all. One failure then one immediate success reads as ordinary run-to-run timing variance
+(host load - dozens of QEMU boot cycles had already run that session) rather than a deterministic
+Server-2019-specific race, but isn't fully conclusive from two data points. The instrumentation stays
+in place permanently to keep gathering real data on every future Server 2019 `ad-ds` build at zero
+ongoing cost.
+
+**Both required Phase E builds completed and independently verified end-to-end through the real
+production pipeline**, at the identical evidentiary bar as Server 2022/2025/Windows 11 (real
+authenticated WinRM against a `register-vm.sh` + `virsh start` boot, not a screenshot):
+- **`server2019` + `ad-ds`**: `build.sh` needed one manual continuation after a transient
+  `make-bootable.sh` WinPE-boot timeout (retried cleanly - almost certainly host load from the
+  session's many prior boot cycles, not a real bug); the rest of the pipeline, including Packer's
+  own WinRM wait (previously the exact failure point), ran clean. Live-verified: `hostname` ->
+  `WIN2019PROD`; `NTDS`/`DNS`/`ADWS` all `Running`; **`(Get-ADDomain).DNSRoot` ->
+  `corp.example.internal`** (the exact command that failed in the original investigation, now
+  succeeding against a real running domain controller); working VirtIO NIC/disk; correct OS caption.
+- **`server2019` + `iis`/`sql-server`**: a clean, single-command `./build.sh server2019 dev/
+  services-app-server.yaml` run, zero manual intervention, Packer's own phase finishing in 17m32s.
+  Live-verified: `W3SVC` `Running`, HTTP `200`, `MSSQLSERVER` `Running`, a real SA login + live
+  `SELECT 1` (first attempt used this project's usual lab password and got a genuine `Login failed`
+  - not a bug, `scripts/install-sql-server.ps1` intentionally uses a distinct SA password,
+  `ChangeMe-Lab123!`, not the OS-level Administrator password used everywhere else in this project).
+
+**Windows Server 2019 is production-ready as of this entry** - the fourth target OS, at parity with
+Server 2022, Server 2025, and Windows 11.
+
 ---
 
 # Phase 4: Tooling (generalized from "Datadog Integration", 2026-08-23)
@@ -912,7 +1053,9 @@ than Datadog-specific.
 which gets none of Phase 3's AD/IIS/SQL roles) a real, interactive, SPICE-reachable desktop for the
 first time in this project's history. A desktop a human might actually sit at benefits from having
 7-Zip/Chrome/Notepad++/PuTTY/WinSCP on it, not just headless monitoring - this phase is now genuinely
-useful to all three target OSes, not just the Server SKUs Phase 3's roles are scoped to.
+useful to all four target OSes (Server 2019 added later, 2026-09-02, gets a SPICE desktop from the
+same unmodified `inject-virtio-spice.sh` mechanism), not just the Server SKUs Phase 3's roles are
+scoped to.
 
 ## Research first (per this project's own "search before you build" standard)
 
@@ -964,9 +1107,9 @@ useful to all three target OSes, not just the Server SKUs Phase 3's roles are sc
       - "env:lab"
       - "project:windows-auto-build-pipeline"
   ```
-  Applies to all three OSes (unlike `services.yaml`, which is Server-only per "Windows Configuration
+  Applies to all four OSes (unlike `services.yaml`, which is Server-only per "Windows Configuration
   Goals" above) - `tools.yaml` has no OS-exclusivity concept, every entry is expected to work
-  identically on Server 2022/2025 and Windows 11.
+  identically on Server 2019/2022/2025 and Windows 11.
 - **`../iso_cache/` gains one pinned, checksummed installer per tool** (7-Zip, PuTTY, WinSCP, Chrome,
   Notepad++, Datadog Agent), each documented in `ISO_CACHE_INVENTORY.md` exactly like the existing
   five entries - same convention, not a new one.
@@ -1000,7 +1143,7 @@ silent installs generally, not something this project's own design choice can fu
    `/VERYSILENT`, `msiexec /qn`, etc.) - true for every tool on this list based on their vendors' own
    published documentation, but not yet independently verified against this project's own cached
    copies the way `CLAUDE.md`'s "verify before trusting" standard would want before shipping.
-2. `tools.yaml` applies uniformly to all three OSes - no per-OS tool exclusions anticipated, unlike
+2. `tools.yaml` applies uniformly to all four OSes - no per-OS tool exclusions anticipated, unlike
    `services.yaml`'s Server-only roles.
 3. Datadog Agent validation reuses the sibling project's own already-documented bar (Windows service
    exists, Agent service running, status healthy, connectivity succeeds, host registration confirmed)
@@ -1139,18 +1282,23 @@ invisible until a live `pnputil` install actually needed it) that a routine driv
 easily reintroduce in a different form.
 
 **Second — WIM image index (`os_wim_index` in `image-apply/lib/common.sh`).** Hardcoded per OS
-(Server 2022/2025 index 2, Windows 11 index 1), each verified exactly once against one specific
-pinned ISO (`PHASE2_ENGINEERING_LOG.md` Session 12 Finding 42, Session 13 Finding 43) via direct `7z`
-extraction and `strings -el ... | grep EDITIONID` - never assumed, per this project's own "verify
-before trusting" standard. A new Server 2022/2025 servicing baseline or Windows 11 release reordering
-editions within the WIM breaks this silently: `wimapply` would apply the wrong SKU with no error,
-since there's no validation that the resolved index still matches the expected `EDITIONID` before
-using it. Cheap to re-verify against a new ISO (the exact recipe is already documented above), but
-nothing currently *forces* that re-verification before a build runs against a refreshed ISO. **Not
-hypothetical**: `ISO_CACHE_INVENTORY.md`'s own re-download-link verification (2026-08-23) found the
-Windows 11 media fwlink already resolving to a 25H2 build, a full servicing generation past what's
-actually cached - confirming this class of drift happens on this project's own real timeline, not
-just in theory.
+(Server 2019/2022/2025 index 2, Windows 11 index 1), each verified exactly once against one specific
+pinned ISO (`PHASE2_ENGINEERING_LOG.md` Session 12 Finding 42, Session 13 Finding 43; Server 2019's
+own index verified 2026-09-02 via `wimlib-imagex info`, preferred over the older `7z`/`strings`
+technique for the same job - see `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` Finding 3) via direct
+extraction, never assumed, per this project's own "verify before trusting" standard. A new Server
+20XX servicing baseline or Windows 11 release reordering editions within the WIM breaks this
+silently: `wimapply` would apply the wrong SKU with no error, since there's no validation that the
+resolved index still matches the expected `EDITIONID` before using it. Cheap to re-verify against a
+new ISO (the exact recipe is already documented above), but nothing currently *forces* that
+re-verification before a build runs against a refreshed ISO. **Not hypothetical**:
+`ISO_CACHE_INVENTORY.md`'s own re-download-link verification (2026-08-23) found the Windows 11 media
+fwlink already resolving to a 25H2 build, a full servicing generation past what's actually cached -
+confirming this class of drift happens on this project's own real timeline, not just in theory.
+Server 2019's own ISO carries a structurally different risk in the *same* direction from a different
+angle: its Evaluation download is gated behind a Microsoft registration form rather than a
+scriptable fwlink, so there's no automated way to even check whether the cached copy has drifted -
+re-verification there requires a human to re-acquire the file first, not just re-run a script.
 
 **Third — Setup.exe's own OOBE/hardware-compatibility-bypass behavior (Windows 11's Setup.exe path
 only).** Already has one real, documented precedent of Microsoft changing this class of behavior
