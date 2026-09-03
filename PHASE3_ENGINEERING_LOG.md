@@ -4403,3 +4403,66 @@ not yet resolved, and not blocking the WinRM fix's own conclusion. Next step is 
 plain retry (real chance of just succeeding, if this was a one-off slow boot), a live diagnostic
 boot of the failed disk to confirm the ADWS-timing theory directly, or adding a bounded retry loop to
 `verify-post-reboot.ps1` (a considered, cross-project change, not a quick unilateral edit).
+
+---
+
+## Session (2026-09-02, continued): Attempted live diagnosis of the failed disk - real, important
+## correction to a prior assumption about how this project's Packer failure semantics actually work
+
+Per explicit direction, attempted to boot `image-apply/output/builds/server2019-20260902-174920.qcow2`
+directly (via `tools/boot-adhoc-target.sh`, matching Packer's own `disk_interface = "virtio"`/
+`net_device = "virtio-net"` topology) to inspect the post-AD-DS-promotion, failed-`Get-ADDomain`
+state live and confirm the ADWS-timing theory directly.
+
+**This didn't work as intended - and the reason why is itself a real, useful finding.** Live checks
+against the booted disk (`sc query NTDS`/`DNS`/`ADWS` - all returned `1060: service does not exist`;
+`(Get-WindowsFeature -Name AD-Domain-Services).InstallState` -> `Available`, not `Installed`) showed
+**AD DS was never actually installed on this specific disk file at all.** Combined with the boot's own
+behavior (early WinRM connection attempts got transient `ReadTimeout`/`InvalidCredentialsError`
+responses before eventually succeeding, `Test-Path C:\server2019-firstlogon-marker.txt` returned
+`True` but only after this boot, consistent with `FirstLogonCommands` running for the first time
+during *this* boot, not having already run previously) - this disk was actually still in its
+pre-Packer, never-booted state. **This directly contradicts an assumption stated earlier in this
+project** (`build.sh`'s own header comment and this log's own prior entry: "Packer boots and modifies
+[the disk] directly ... no reference disk to protect here" / "Packer boots and modifies it in place").
+That assumption is evidently only true for a build that *succeeds* - **a build that fails during
+provisioning does not persist its guest-side changes back to `source_qcow2` at all.** Packer's own
+qemu builder must be working against some ephemeral copy/resize target internally that gets discarded
+on failure (the exact mechanism wasn't traced further - this is a real, confirmed *symptom*, not yet
+a root-caused *mechanism*), not the literal file path passed in as `source_qcow2`.
+
+**Practical consequence, worth remembering for any future Packer-build-failure investigation in this
+project**: booting the `source_qcow2` file after a failed Packer run does **not** show you the guest
+state at the point of failure - it shows you the guest state from *before* Packer ever touched it.
+This closes off "just reboot the disk and look" as a diagnostic strategy for mid-provisioning Packer
+failures specifically (it remains valid for offline-apply-stage failures, like the `make-bootable.sh`
+WinPE timeout earlier this session, where the disk file genuinely is what failed).
+
+**Did not confirm or refute the ADWS-timing theory** - the live boot that was performed is real,
+useful evidence of something else entirely (this disk boots and specializes cleanly on its own, one
+more confirming data point for the WinRM fix, now via yet a third independent boot beyond the harness
+and the real `build.sh` run), but says nothing about what actually happened during the real AD DS
+promotion, since that guest state no longer exists anywhere to inspect.
+
+**VM shut down gracefully** via a genuine WinRM `shutdown /s /t 0` (confirmed exited, host verified
+clear afterward - no leftover qemu processes).
+
+**Status and next step, given the diagnosis approach didn't pan out**: the ADWS-timing theory from
+the prior entry remains plausible but unconfirmed. Per the user's explicit instruction, **any fix for
+this must be gated behind a Server-2019-specific conditional** if `verify-post-reboot.ps1` needs a
+change - it's reused unchanged by Server 2022/2025 today, and a shared, unconditional change risks
+introducing a regression there. Real options going forward, none yet attempted:
+1. **Plain retry** via a fresh `build.sh server2019` run (or reusing this exact still-fresh,
+   never-Packer-booted disk directly, since it's confirmed equivalent to a brand-new
+   partition+apply+bootable+unattended disk) - cheap, and would resolve this immediately if it really
+   was a one-off timing fluke.
+2. **Add a small, Server-2019-gated retry/wait loop to `verify-post-reboot.ps1`** around its
+   `Get-ADDomain` check specifically (e.g., `if ($env:TARGET_OS -eq 'server2019') { <retry loop> }
+   else { <original one-shot check> }` or an equivalent OS-conditional, whatever mechanism the script
+   already has for knowing which OS it's running against - needs checking) - a considered, reviewed
+   change given it touches a script shared with Server 2022/2025, not a unilateral edit.
+3. **Capture diagnostics from inside a live Packer run instead of after the fact** - e.g., a temporary,
+   Server-2019-gated instrumentation step that logs `Get-Service ADWS`/`Get-WindowsFeature` state
+   without throwing, to gather real data on the actual timing gap on a subsequent attempt, before
+   deciding on a permanent fix - more effort than option 1, but would actually confirm the theory
+   rather than continuing to infer it.

@@ -8,6 +8,19 @@
 # real build applies the WIM fresh, per CLAUDE.md's "Ephemeral Infrastructure, Still"
 # principle), so there is no reference disk to protect here.
 #
+# IMPORTANT, confirmed the hard way (PHASE3_ENGINEERING_LOG.md, 2026-09-02 Phase E1 session):
+# this "no backing file" design intent does NOT mean source_qcow2 reflects the guest's
+# provisioned state after a FAILED build. Rebooting source_qcow2 after a provisioner failure
+# showed the disk still in its pre-Packer, never-booted state (AD-Domain-Services InstallState
+# still "Available", not "Installed") - Packer's own qemu builder evidently works against an
+# ephemeral internal copy/resize target that's discarded on failure, not source_qcow2 directly,
+# despite the file path being passed straight through with no explicit copy step in this
+# template. The exact internal mechanism wasn't traced further. Practical consequence: "just
+# reboot source_qcow2 and look" is NOT a valid diagnostic strategy for a mid-provisioning
+# Packer failure - it only shows pre-Packer state. It remains valid for genuine offline-apply-
+# stage failures (partition-disk.sh/apply-image.sh/make-bootable.sh), since those really do
+# write directly to the file on disk.
+#
 # cpu_model = "host" is set from the start - PHASE3_ENGINEERING_LOG.md Finding 1 found
 # that omitting it (the qemu builder's own default) leaves QEMU on a generic, feature-
 # minimal CPU model that Windows Server 2025 could not reliably bring WinRM up under
