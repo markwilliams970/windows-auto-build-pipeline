@@ -162,6 +162,6 @@ build {
   }
 
   provisioner "powershell" {
-    inline = ["powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Windows\\Temp\\scripts\\verify-post-reboot.ps1"]
+    inline = ["powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\Windows\\Temp\\scripts\\verify-post-reboot.ps1 -TargetOS '${var.target_os}'"]
   }
 }

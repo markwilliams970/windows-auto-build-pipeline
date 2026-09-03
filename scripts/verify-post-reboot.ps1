@@ -3,6 +3,9 @@
 # No-ops unless install-ad.ps1 actually ran, since AD DS/DNS only finish
 # coming up after that reboot completes - install-ad.ps1 itself runs before
 # the reboot and can't verify anything real yet.
+param(
+    [string]$TargetOS = ""
+)
 $ErrorActionPreference = "Stop"
 
 $marker = "C:\Windows\Temp\.ad-ds-installed"
@@ -22,6 +25,28 @@ foreach ($svcName in @("NTDS", "DNS")) {
         throw "Service '$svcName' is not running after AD DS promotion (status: $($svc.Status))"
     }
     Write-Host "Service '$svcName' is running."
+}
+
+# Server-2019-gated diagnostic instrumentation, PHASE3_ENGINEERING_LOG.md 2026-09-02 Phase E1:
+# a real build hit "Get-ADDomain failed after promotion: Unable to find a default server with
+# Active Directory Web Services running" right after this exact point, even with NTDS/DNS both
+# confirmed Running - the theory is ADWS starts a beat later than NTDS/DNS specifically. This
+# block gathers real timing data on that theory (non-fatal - it never throws, only logs) rather
+# than continuing to infer it. Gated strictly to $TargetOS -eq "server2019": Server 2022/2025
+# behavior is completely unchanged by this block, including when $TargetOS is empty/unset
+# (e.g. if this script is ever invoked directly without the parameter).
+if ($TargetOS -eq "server2019") {
+    Write-Host "=== Server 2019 ADWS diagnostic instrumentation (non-fatal, does not affect 2022/2025) ==="
+    for ($i = 0; $i -lt 12; $i++) {
+        $adwsSvc = Get-Service -Name "ADWS" -ErrorAction SilentlyContinue
+        $status = if ($adwsSvc) { $adwsSvc.Status } else { "NOT-FOUND" }
+        Write-Host "[ADWS poll +$($i * 5)s] Status: $status"
+        if ($adwsSvc -and $adwsSvc.Status -eq "Running") {
+            Write-Host "[ADWS poll] Reached Running after ~$($i * 5)s"
+            break
+        }
+        Start-Sleep -Seconds 5
+    }
 }
 
 try {
