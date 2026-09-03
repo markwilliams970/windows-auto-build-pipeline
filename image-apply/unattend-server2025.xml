@@ -7,7 +7,7 @@
   and wimapply'd offline before this file is ever placed). Windows Setup's own configuration-pass
   engine picks up %WINDIR%\Panther\unattend.xml automatically at first real boot for the specialize
   and oobeSystem passes, per Microsoft's documented answer-file search order - no DISM
-  /Apply-Unattend and no Setup.exe involved at any point. See PHASE2_ENGINEERING_LOG.md Session 9.
+  /Apply-Unattend and no Setup.exe involved at any point. See project_documentation/PHASE2_ENGINEERING_LOG.md Session 9.
 
   Session 10/11 correction: an earlier version of this file used
   Microsoft-Windows-PnpCustomizationsNonWinPE's DriverPaths to inject the NetKVM network driver

@@ -9,11 +9,11 @@ tools:
                      # out (like services.yaml's own commented-out roles) to build without it.
 
 # Applies to all four target OSes uniformly - no per-OS exclusion list (unlike services.yaml's
-# Server-only roles). See PHASE4_TOOLS_INSTALLER_PLAN.md.
+# Server-only roles). See project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md.
 #
 # 7zip/putty/winscp/chrome/notepadplusplus always install whatever is currently the latest
 # release from each vendor - install-tools.sh resolves this host-side, fresh, on every build
-# (see PHASE4_TOOLS_INSTALLER_PLAN.md's A.3/A.1-revision - these churn too fast to usefully pin).
+# (see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md's A.3/A.1-revision - these churn too fast to usefully pin).
 #
 # datadog-agent is the one deliberate exception: pinned to agent_version below, since the Agent's
 # version can affect monitoring-integration test comparability build-to-build. Consulted only if

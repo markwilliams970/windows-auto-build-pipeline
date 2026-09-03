@@ -45,7 +45,7 @@
 # rule, not a materially bigger grant.
 #
 # Update 3: added for the NTFS $LogFile/dirty-bit investigation flagged
-# back in PHASE3_ENGINEERING_LOG.md Session 3 as a real, not-yet-tested
+# back in project_documentation/PHASE3_ENGINEERING_LOG.md Session 3 as a real, not-yet-tested
 # hypothesis behind Windows 11's post-Sysprep BSOD (Session 4/Finding 12) -
 # ntfsinfo (read-only volume/journal inspection) and ntfsfix (resets the
 # NTFS journal file and schedules a native Windows chkdsk at next mount;
@@ -59,7 +59,7 @@
 # target a path other than the pinned device argument.
 #
 # Update 4 (2026-08-24): reverses the "wimapply...never need[s] root at all"
-# claim in this file's own header - PHASE3_ENGINEERING_LOG.md's "ROOT CAUSE
+# claim in this file's own header - project_documentation/PHASE3_ENGINEERING_LOG.md's "ROOT CAUSE
 # CONFIRMED" entry traced the Start Menu/DCOM-activation crash directly to
 # that exact design choice. `wimlib-imagex apply` against an ntfs-3g mount
 # opened with uid=/gid= (this project's only mount mode, chosen specifically

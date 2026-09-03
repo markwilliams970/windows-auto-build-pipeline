@@ -5,7 +5,7 @@
 pivot story (the research question "how is Windows 11 actually built unattended elsewhere," through
 production-readiness). This work starts *after* that story closed (Phase 3.5 done) and is a distinct,
 cross-cutting addition — the same three drivers, generalized across all three target OSes — not a
-continuation of that specific sub-story. `CLAUDE.md`'s own Phase 3 section links back to this
+continuation of that specific sub-story. `../CLAUDE.md`'s own Phase 3 section links back to this
 document (added once real findings existed here, matching how `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`
 was referenced once its own work was underway, not before).
 
@@ -155,7 +155,7 @@ territory for Server (nothing today registers it there), not because the underly
 ## Why this is its own document
 
 `windows11-setup-install.sh` (the current, production-ready Windows 11 build path — see
-`CLAUDE.md`'s Phase 3.4/3.5 status and `PHASE3_ENGINEERING_LOG.md`) deliberately ships with a plain
+`../CLAUDE.md`'s Phase 3.4/3.5 status and `PHASE3_ENGINEERING_LOG.md`) deliberately ships with a plain
 `ide-hd` target disk and an `e1000` NIC. That was never an oversight — Phase 3.2/3.3's own scope
 notes say so explicitly: the question those phases needed answered was "does the full answer file
 process correctly through Setup.exe," not "does this project's virtio technique also work here."
@@ -739,7 +739,7 @@ contradicting a driver-based explanation. The `qxldod` swap itself is still a re
 for `spice-guest-tools`' outdated driver — it just isn't what was breaking Start Menu. The actual
 root cause (a documented Windows Server 2022 RPC/DCOM boot-race, triggered by this project's own
 multi-boot-cycle build pattern) and its fix (an offline `ServicesPipeTimeout` registry increase in
-`make-bootable.sh`) are recorded in `CLAUDE.md`'s Finding 3A-5, not here — it's not a virtio/SPICE
+`make-bootable.sh`) are recorded in `../CLAUDE.md`'s Finding 3A-5, not here — it's not a virtio/SPICE
 driver issue and doesn't belong in this document's own scope.
 
 **Evidentiary status**: the `qxldod` driver swap itself (the actual subject of this finding) has been
@@ -787,7 +787,7 @@ them.
    this project; local testing only, no remote/public exposure. Implemented exactly this way in
    `image-apply/inject-virtio-spice.sh`'s `-spice` args.
 3. **Driver/tool caching → Decided: yes, cache it.** `spice-guest-tools-latest.exe` is cached under
-   `../iso_cache/`, sha256-sidecar'd, documented in `ISO_CACHE_INVENTORY.md` alongside the project's
+   `../iso_cache/`, sha256-sidecar'd, documented in `../ISO_CACHE_INVENTORY.md` alongside the project's
    other cached media (see that file's own "Known gap" note on the fact that spice-space.org ships a
    rolling "latest" filename rather than a versioned release, so this doesn't yet have the same
    ETag-based re-check convention the Microsoft/virtio-win sources do — a real, still-open item,

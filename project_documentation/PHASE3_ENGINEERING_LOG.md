@@ -5,7 +5,7 @@ Status as of this writing: **Phase 3 is done.** All four OS × profile combinati
 offline-applied, Phase-2-proven reference disks. The reused role-provisioning scripts needed zero
 changes beyond a new, project-specific mutual-exclusion guard. One real, non-obvious defect was
 found and fixed in the new test harness itself (Finding 1 below) — not in the reused scripts, and
-not in Phase 2's mechanism. See `CLAUDE.md`'s Phase 3 section for the current status summary and
+not in Phase 2's mechanism. See `../CLAUDE.md`'s Phase 3 section for the current status summary and
 `PHASE2_ENGINEERING_LOG.md` for the offline-apply mechanism this phase builds on.
 
 **This banner describes only where the file starts, not where it ends.** This same log later covers
@@ -13,7 +13,7 @@ Windows 11's entire separate journey - the fully-offline pipeline's Findings 7-9
 STOP, the Setup.exe-driven pivot (Phase 3.1-3.3), formalizing it into production scripts and
 discovering the NVRAM-boot-order design (Phase 3.4), and production-readiness validation (Phase 3.5)
 - ending with Windows 11 reaching the same production-ready status Server 2022/2025 have here. See
-`CLAUDE.md`'s Phase 3 section and `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` for the current,
+`../CLAUDE.md`'s Phase 3 section and `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` for the current,
 rolled-up status of all three OSes; treat this file as the chronological record behind that summary,
 not a replacement for reading it.
 
@@ -26,7 +26,7 @@ diagnosis, root cause, fix, in the order they were actually hit, including the d
 
 - Reused `scripts/run-services.ps1`, `install-ad.ps1`, `install-iis.ps1`, `install-sql-server.ps1`,
   `verify-post-reboot.ps1` from `../windows-server-vm-automation/scripts/` byte-for-byte, per
-  `CLAUDE.md`'s explicit reuse instruction — no changes needed to any of the four role scripts.
+  `../CLAUDE.md`'s explicit reuse instruction — no changes needed to any of the four role scripts.
 - **New requirement not present in the sibling project:** two mutually-exclusive profiles —
   `ad-ds` alone vs. `iis`/`sql-server` together — enforced twice: a fast host-side pre-check in the
   new `dev/run-phase3-test.sh` wrapper (fails in well under a second, before any VM boots) and a
@@ -36,7 +36,7 @@ diagnosis, root cause, fix, in the order they were actually hit, including the d
   ready-made profile files: `dev/services-domain-controller.yaml` (`ad-ds`), `dev/services-app-server.yaml`
   (`iis` + `sql-server`).
 - **New test harness**: `dev/role-test.pkr.hcl` + `dev/run-phase3-test.sh`, following
-  `CLAUDE.md`'s "reuse the pattern, not necessarily the exact files" note about the sibling
+  `../CLAUDE.md`'s "reuse the pattern, not necessarily the exact files" note about the sibling
   project's own `dev/` fast-iteration harness. Boots a disposable copy-on-write overlay
   (`use_backing_file = true`) on top of Phase 2's own confirmed-good, WinRM-reachable reference
   disks (`image-apply/output/win2022-session12.qcow2` / `win2025-session11.qcow2`, sha256-verified
@@ -49,7 +49,7 @@ diagnosis, root cause, fix, in the order they were actually hit, including the d
   reintroduced `INACCESSIBLE_BOOT_DEVICE`. Caught by reading the prior log before running anything,
   not hit empirically.
 - This harness is explicitly **not** the production `packer/boot-and-provision.pkr.hcl` named in
-  `CLAUDE.md`'s repo-structure sketch — that file still doesn't exist, and isn't real buildable work
+  `../CLAUDE.md`'s repo-structure sketch — that file still doesn't exist, and isn't real buildable work
   yet, since `image-apply/`'s own scripts (`partition-disk.sh`/`apply-image.sh`/`make-bootable.sh`/
   `apply-unattend.sh`) are still hand-run steps recorded only in `PHASE2_ENGINEERING_LOG.md`, not
   formalized. See "STATUS AND NEXT STEPS" below.
@@ -66,9 +66,9 @@ only in which reference disk/checksum the shared `locals.os_config` map selected
 
 **Diagnosis:** The failing disk (`win2025-session11.qcow2`) was `PHASE2_ENGINEERING_LOG.md` Session
 11/13's own confirmed-good, real-WinRM-verified reference disk, so a broken disk seemed unlikely but
-had to be ruled out empirically, not assumed — per `CLAUDE.md`'s "verify before trusting" standard
+had to be ruled out empirically, not assumed — per `../CLAUDE.md`'s "verify before trusting" standard
 and its QMP-screendump convention for exactly this kind of situation (Packer's own qemu builder
-doesn't expose QMP, per `CLAUDE.md`'s documented caveat, so this needed a separate ad hoc
+doesn't expose QMP, per `../CLAUDE.md`'s documented caveat, so this needed a separate ad hoc
 `qemu-system-x86_64` invocation, not a Packer-internal debugging trick):
 
 1. Built a throwaway COW overlay of `win2025-session11.qcow2` and booted it directly with
@@ -1235,7 +1235,7 @@ Per that plan's own research (Phases 0-2, primary-source-verified: Microsoft's o
 `_noprompt` boot files, confirmed present on this project's own cached media, combined with this
 project's already-proven direct `bootindex=` control instead of Packer's QEMU builder) and Phase
 3's design (a gated, phased plan with an explicit pass/fail criterion at each step, not an
-assumption the whole thing works end to end), executed Phase 3.1 - CLAUDE.md's standing Setup.exe
+assumption the whole thing works end to end), executed Phase 3.1 - ../CLAUDE.md's standing Setup.exe
 ban having just been explicitly, narrowly relaxed for Windows 11 to allow it.
 
 **What was done**: extracted the full Windows 11 Enterprise Evaluation ISO (`7z x`, all ~7GB, not
@@ -1664,7 +1664,7 @@ This is no longer just "promising evidence" - by this project's own standard, it
 (both preserved at the time this section was first written). No VM left running, no `qemu-nbd`
 attached.
 
-**Housekeeping, immediately following**: per this project's own disk-hygiene standard (CLAUDE.md),
+**Housekeeping, immediately following**: per this project's own disk-hygiene standard (../CLAUDE.md),
 now that the evidentiary bar was met, attempt 1's and attempt 2's disks (`win11-phase33-target-
 attempt1.qcow2`, `win11-phase33-target-attempt2.qcow2`) and attempt 2's now-orphaned OVMF vars file
 (`OVMF_VARS_phase33-attempt2.fd`) were reviewed and deleted, by explicit user confirmation - ~33GB
@@ -1685,7 +1685,7 @@ hiccup observed in two of three attempts here.
 ## Phase 3.4: formalize into production scripts. Real scripts, real bugs caught by actually
 ## running them - including one genuine install failure that reshaped the eject-timing design.
 
-Design decisions made explicit before writing code (per CLAUDE.md's Claude Instructions), confirmed
+Design decisions made explicit before writing code (per ../CLAUDE.md's Claude Instructions), confirmed
 with the user rather than defaulted: (1) eject-trigger timing is a hybrid - a calibrated base
 timeout as the real signal, then a bounded pixel-sample poll window as a confirm/best-effort safety
 net, not OCR; (2) Windows 11 skips the Packer handoff entirely (no roles to provision, the new
@@ -1954,9 +1954,9 @@ all three OSes equally and hasn't been started for any of them.
 ---
 
 ## Housekeeping: USB tablet device added to both production `qemu-system-x86_64` invocations, closing
-## a gap CLAUDE.md flagged (Session 4) but never actually fixed.
+## a gap ../CLAUDE.md flagged (Session 4) but never actually fixed.
 
-CLAUDE.md's own "Known gotcha" note (under QEMU/KVM/libvirt) documented that a guest's default
+../CLAUDE.md's own "Known gotcha" note (under QEMU/KVM/libvirt) documented that a guest's default
 relative PS/2 mouse can't be driven by `tools/qmp-click.py`'s absolute-position clicks, and that
 `make-bootable.sh` didn't yet carry the fix (`-device qemu-xhci,id=usbbus -device
 usb-tablet,bus=usbbus.0`) the sibling project already uses via libvirt domain XML. Added directly to
@@ -1986,7 +1986,7 @@ successful Windows 11 build via the now-fully-superseded fully-offline pipeline 
 architecture is dead, replaced end to end by the Setup.exe-driven approach), `winpe-boot.qcow2`
 (2.0GB, an early predecessor to the still-active `winpe-boot-index1-work.qcow2`, superseded), and
 `winpe-boot-index2.qcow2` (1.5GB, an artifact of Phase 2's abandoned Setup.exe/`boot.wim` pivot -
-closed per CLAUDE.md's "RECONSIDERATION CLOSED" note back in Session 6). By explicit user
+closed per ../CLAUDE.md's "RECONSIDERATION CLOSED" note back in Session 6). By explicit user
 confirmation, all three deleted (~21.5GB). `winpe-boot-index1-work.qcow2` - confirmed via `grep`
 as the actual `WINPE_QCOW2` `make-bootable.sh` requires - was left untouched.
 
@@ -2122,7 +2122,7 @@ own specialize/oobeSystem-only unattend pass does (`SkipMachineOOBE`/`SkipUserOO
 `AutoLogon` + `FirstLogonCommands`) - ruling out OOBE-skipping itself as the differentiator. The real
 difference: `win2022-dc` went through Microsoft's own `DISM`-driven `/Apply-Image` (as part of real
 Setup.exe), while this project deliberately uses `wimlib`'s own `wimapply` instead, specifically
-documented in this project's own `CLAUDE.md` as a deliberate choice to avoid ever needing to boot a
+documented in this project's own `../CLAUDE.md` as a deliberate choice to avoid ever needing to boot a
 Windows environment. Targeted research found direct, credible confirmation this is a real, documented
 limitation, not a guess: "wimlib-imagex has no awareness of Windows 'packages' ... importantly, it
 cannot manage or apply the AppX package provisioning information that may be embedded in the image."
@@ -2541,7 +2541,7 @@ evidence at each step, not assumption, per this project's own "verify before tru
 
 Read the sibling project's own `packer/locals.pkr.hcl`: its pinned Server 2022 `iso_checksum` is
 `sha256:3e4fa6d8507b554856fc9ca6079cc402df11a8b79344871669f0251535255325` - **byte-identical** to
-this project's own `ISO_CACHE_INVENTORY.md` entry for `2022-SERVER_EVAL_x64FRE_en-us.iso`. Cross-
+this project's own `../ISO_CACHE_INVENTORY.md` entry for `2022-SERVER_EVAL_x64FRE_en-us.iso`. Cross-
 checked against `win2022-dc`'s own build history: the sibling repo's commit introducing its first
 successful Server 2022 build (`d31ab04`, containing the "`win2022-dc.qcow2` at 5.06GB" build-completion
 log) is dated 2026-07-22 - the same week the shared `../iso_cache/` copy was downloaded
@@ -2556,7 +2556,7 @@ literal same file, confirmed by checksum, not inference.
 Extracted `sources/install.wim` from the cached ISO (`7z e`, this project's own established
 technique) and read its real metadata with `wimlib-imagex info` rather than guessing from the
 filename (which carries no build number at all, unlike the Server 2025/Windows 11 fwlinks - noted as
-a real caution back in `ISO_CACHE_INVENTORY.md`'s own "Re-download links" section):
+a real caution back in `../ISO_CACHE_INVENTORY.md`'s own "Re-download links" section):
 
 ```
 Edition ID:              ServerStandardEval
@@ -3637,7 +3637,7 @@ produced is trustworthy rather than merely hoped-for.
 - `dev/role-test.pkr.hcl`'s own fixed-per-OS `output_directory` collision (the same class of bug
   `build.sh` itself already fixed via `BUILD_ID`) was never back-ported to that harness.
 - Phase 4 (Tooling - 7-Zip/PuTTY/WinSCP/Chrome/Notepad++/Datadog Agent) remains fully undesigned
-  beyond the proposal already written up in `CLAUDE.md`.
+  beyond the proposal already written up in `../CLAUDE.md`.
 - Phase 5 (Lifecycle - Verify/Destroy workflows) has not been started.
 
 None of these block calling Phase 3/3A done - they're the next real frontier, not loose ends in what
@@ -3648,7 +3648,7 @@ this phase actually promised.
 ## Session (2026-08-26, continued): `dev/role-test.pkr.hcl`'s own fixed-per-OS output_directory
 ## collision bug - fixed, matching `build.sh`'s own already-fixed pattern exactly
 
-Closed out the one open item from `CLAUDE.md`'s Phase 3A section flagging this as not yet addressed.
+Closed out the one open item from `../CLAUDE.md`'s Phase 3A section flagging this as not yet addressed.
 `dev/role-test.pkr.hcl` had the identical root cause `build.sh` itself hit and fixed: `output_directory`
 (and `vm_name`) fixed per OS (`output/vm-${target_os}`), not per-run-unique - Packer's qemu builder
 refuses to run if `output_directory` already exists.
@@ -3747,7 +3747,7 @@ Server SKU track never invokes it).
 written:**
 1. **WIM edition index.** This project's own non-negotiable standard (`7z x` + `strings -el ... |
    grep EDITIONID` against the real cached ISO) cannot run yet - Server 2019 media isn't cached
-   (confirmed against `ISO_CACHE_INVENTORY.md` and a direct `../iso_cache/` listing). One community
+   (confirmed against `../ISO_CACHE_INVENTORY.md` and a direct `../iso_cache/` listing). One community
    `Dism /Get-WimInfo` listing confirms index 4 = Datacenter Desktop Experience for one real Server
    2019 image but didn't surface the full index table, so **the Standard Desktop Experience index
    this project would actually want is not confirmed** - "probably index 2, matching 2022/2025" is
@@ -3789,7 +3789,7 @@ been empirically resolved.
 ---
 
 ## Session (2026-09-01): Windows 11's `register-vm.sh` device-model case - closed by a real
-## `virsh start` boot, the last remaining item from CLAUDE.md's Open Items list
+## `virsh start` boot, the last remaining item from ../CLAUDE.md's Open Items list
 
 Closed out the one standing Open Item: Windows 11's NIC-swap branch of `register-vm.sh`'s device
 model had only ever been checked statically (its WinRM verification payload measured under the
@@ -3843,7 +3843,7 @@ address allocation for virtio devices doesn't need to reproduce `inject-virtio-s
 `addr=` values for Windows to still bind the already-registered driver) holds for the NIC-swap case
 too, exactly as it already did for the storage-only case Server 2022/2025 proved on 2026-08-23/26.
 **All three target OSes' `register-vm.sh` device models are now confirmed by a real `virsh start`
-boot - CLAUDE.md's Open Items list is empty as of this entry.**
+boot - ../CLAUDE.md's Open Items list is empty as of this entry.**
 
 `win11prod` was left running for inspection after this confirmation, matching this project's own
 established pattern from the Server 2022/2025 confirmation sessions. `win2025app` was not
@@ -3888,7 +3888,7 @@ its own already-cached files:
 build 17763.3650, the same v1809 release line, Extended Support until 2029-01-09 per the research's
 own Finding 9). Cached it into `../iso_cache/` with the `2019-` prefix matching this project's
 existing naming convention, computed its sha256 checksum fresh (`6dae072e...`), wrote `.meta`/
-`.sha256` sidecars, and added a row to `ISO_CACHE_INVENTORY.md` - with an explicit note that, unlike
+`.sha256` sidecars, and added a row to `../ISO_CACHE_INVENTORY.md` - with an explicit note that, unlike
 every other cached source, this one has no scriptable re-download link to record, since the
 acquisition step itself requires a human each time.
 
@@ -3932,7 +3932,7 @@ case-statement line plus a new template file in `apply-unattend.sh`, one validat
 Packer template.
 
 **Phase C**: the plan's five open decision points (computer name convention, Datacenter edition
-scope, `dev/` harness scope, Phase E build order, `CLAUDE.md` documentation timing) were presented to
+scope, `dev/` harness scope, Phase E build order, `../CLAUDE.md` documentation timing) were presented to
 the user as a consolidated list and confirmed with zero changes to the plan as written - see the plan
 doc's own "Phase C: design review - CLOSED" section for the record of each.
 
@@ -4382,7 +4382,7 @@ loop, no wait. `NTDS`/`DNS` were already confirmed `Running` immediately before 
 domain controller promotion itself succeeded - `ADWS` (Active Directory Web Services) specifically,
 which `Get-ADDomain` depends on, is a separate service with its own startup timing and can reasonably
 start a beat later than `NTDS`/`DNS` after a promotion reboot. **This script is reused unchanged from
-the sibling project** (`CLAUDE.md`'s "Reuse directly" list) - not modified as part of today's Server
+the sibling project** (`../CLAUDE.md`'s "Reuse directly" list) - not modified as part of today's Server
 2019 work, and deliberately not modified now either without a considered decision, since a change here
 would affect Server 2022/2025 too, not just Server 2019. Not yet determined whether this is a
 Server-2019-specific timing difference (plausible - this project's own history already documents
@@ -4591,7 +4591,7 @@ config changes in one process" hang in Order 4-8) - both fixes are permanent, al
 apply to every future Server 2019 build through this pipeline, not one-off workarounds for this
 session.
 
-**What's left, not part of Phase E's own scope**: the deferred `CLAUDE.md` documentation pass
+**What's left, not part of Phase E's own scope**: the deferred `../CLAUDE.md` documentation pass
 (adding Server 2019 as a fourth production-ready target OS throughout - Repository Structure sketch,
 Development Approach narrative, Target Platform section, etc.), per Phase C's own decision to write
 that narrative only after proof, not ahead of it - proof now exists. Also still open, unrelated to
@@ -4610,7 +4610,7 @@ testing) rather than a continuation of Phase 3's own original numbered work. Ful
 `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (Phase A), `WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`
 (Phase B/C), and this log's own sessions dated 2026-09-02 above (Phase D/E - research deepening, ISO
 acquisition, implementation, the WinRM-hang investigation and its resolution, the ADWS-timing
-question, and both required production builds). `CLAUDE.md`'s own Phase 3 section carries the
+question, and both required production builds). `../CLAUDE.md`'s own Phase 3 section carries the
 durable summary ("Server 2019: fourth target OS added" subsection) - this entry is the pointer from
 the log's own tail, not a duplicate of that narrative.
 
@@ -4642,7 +4642,7 @@ the original Phase 3/3A capstone held itself to):
   instrumentation found `ADWS` already `Running` immediately, no delay. Reads as ordinary
   run-to-run variance rather than a deterministic race, but two data points isn't proof either way.
   Non-fatal, Server-2019-gated instrumentation stays permanently in `scripts/verify-post-reboot.ps1`
-  to keep gathering real data on every future `ad-ds` build - see `CLAUDE.md`'s Open Items for the
+  to keep gathering real data on every future `ad-ds` build - see `../CLAUDE.md`'s Open Items for the
   live-tracked version of this.
 - **A real correction to a documented assumption about Packer's own failure semantics** was found
   along the way (rebooting `source_qcow2` after a *failed* Packer provisioner run does not show
@@ -4716,7 +4716,7 @@ scripts all had the same latent bug because of it.**
 - **Why this is worth a standing standard, not just a one-off fix**: the bug is invisible from
   reading the trap's own error-handling logic - it only shows up by tracing bash's own EXIT-trap
   exit-status rules, which nothing about this project's existing code would prompt a reader to
-  question. Added as a new bullet under `CLAUDE.md`'s "The rest of the standards" (Engineering
+  question. Added as a new bullet under `../CLAUDE.md`'s "The rest of the standards" (Engineering
   Standards section) so any *future* script that launches a background QEMU process and cleans it
   up via an EXIT trap starts with the correct pattern, rather than this exact bug getting
   reintroduced and rediscovered independently each time.

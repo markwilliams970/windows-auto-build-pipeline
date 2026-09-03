@@ -4,13 +4,13 @@
 # device, the same "DISM /Apply-Image-equivalent" this project exists to use instead
 # of a booted interactive installer.
 #
-# WIM image index per OS is independently verified in PHASE2_ENGINEERING_LOG.md
+# WIM image index per OS is independently verified in project_documentation/PHASE2_ENGINEERING_LOG.md
 # (Finding 0 for Server 2025, Session 12 Finding 42 for Server 2022, Session 13
 # Finding 43 for Windows 11) - see image-apply/lib/common.sh's os_wim_index().
 #
 # Applies directly to the raw nbd partition device (not an ntfs-3g-mounted directory)
 # with --strict-acls, via the sudo rule in tools/sudoers-windows-auto-build-pipeline.
-# PHASE3_ENGINEERING_LOG.md's "ROOT CAUSE CONFIRMED" entry (2026-08-24) traced the Start
+# project_documentation/PHASE3_ENGINEERING_LOG.md's "ROOT CAUSE CONFIRMED" entry (2026-08-24) traced the Start
 # Menu/DCOM-activation crash directly to the previous approach: mounting via ntfs-3g
 # with uid=/gid= (specifically so this step could run as the normal user) silently
 # disables ntfs-3g's own Windows ACL/security-descriptor support - confirmed directly by

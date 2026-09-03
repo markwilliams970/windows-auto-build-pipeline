@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Phase 3.3 test artifact for WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md - NOT yet the production
+  Phase 3.3 test artifact for project_documentation/WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md - NOT yet the production
   autounattend.xml, but the first complete one: windowsPE (proven working in Phase 3.2, unchanged)
   plus a real specialize/oobeSystem pass, adapted from this project's existing, production
   unattend-windows11.xml (the offline-apply pipeline's own proven oobeSystem content) with one

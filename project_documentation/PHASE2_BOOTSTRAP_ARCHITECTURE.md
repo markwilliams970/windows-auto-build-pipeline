@@ -227,10 +227,10 @@ importantly — what looks different at first glance but isn't.
 | BCD store format / `bcdboot`-equivalent mechanism | Same NT 10.x BCD schema | Same | Same | **Yes** — BCD-SYS's own docs confirm it uses "a Windows 10/11 equivalent" template regardless of target, and nothing in the research suggests Server-vs-client or 2022-vs-2025 changes the schema itself |
 | Offline WIM apply / driver injection mechanism | Same `wimapply` + `hivex` pattern | Same | Same | **Yes** |
 | TPM 2.0 / Secure Boot hardware-eligibility gate | **Enforced, but only inside `Setup.exe`** (the `appraiserres.dll`/`MoSetup` "unsupported hardware" check) | N/A — Server SKUs don't carry this consumer-facing gate | N/A — same as Server 2022 | **Irrelevant to our pipeline for all three** — since offline WIM application never runs `Setup.exe` at all, this entire gate is bypassed structurally, not via a registry workaround. This independently confirms deploymentresearch.com's finding (cited in the handoff doc) that TPM/Secure Boot has "no technical requirement" for the imaging step itself |
-| Secure Boot certificate rotation (UEFI CA 2023) | Relevant *if* Secure Boot is enabled at runtime | Relevant *if* Secure Boot is enabled at runtime | Relevant *if* Secure Boot is enabled at runtime | This is a *runtime firmware* concern, not an OS-family concern — it only matters at all if we choose to run these lab VMs with Secure Boot enabled in OVMF. **Recommendation: disable Secure Boot in OVMF for all three targets in this lab context** (it's not a testing requirement per CLAUDE.md's Datadog-integration goals) and this entire concern disappears; if Windows 11 realism later requires Secure Boot specifically, `bcdboot`'s `/bootex` flag exists for exactly this, and confirming BCD-SYS has an equivalent is a scoped follow-up item, not a blocker now |
+| Secure Boot certificate rotation (UEFI CA 2023) | Relevant *if* Secure Boot is enabled at runtime | Relevant *if* Secure Boot is enabled at runtime | Relevant *if* Secure Boot is enabled at runtime | This is a *runtime firmware* concern, not an OS-family concern — it only matters at all if we choose to run these lab VMs with Secure Boot enabled in OVMF. **Recommendation: disable Secure Boot in OVMF for all three targets in this lab context** (it's not a testing requirement per ../CLAUDE.md's Datadog-integration goals) and this entire concern disappears; if Windows 11 realism later requires Secure Boot specifically, `bcdboot`'s `/bootex` flag exists for exactly this, and confirming BCD-SYS has an equivalent is a scoped follow-up item, not a blocker now |
 | SAN policy (`OfflineShared` default bringing disks up offline) | **Not applicable** — Windows client SKUs default to `OnlineAll`, this is a Server-only default | Applies in principle, but only to *non-boot* SAN-presented disks; the boot volume itself is excluded from this policy by design | Same as Server 2022 — the community report that surfaced this (Proxmox forum thread, cited in the handoff doc) described the *interactive installer* hitting this with virtio storage, not an offline-applied boot disk | **Low risk for our topology specifically** — we have a single boot disk per VM, and SAN policy targets non-boot SAN-class storage. Worth a footnote in case this project ever adds secondary data disks to a build (e.g. for a SQL Server data volume), not a concern for the boot volume itself |
 | Media vintage / build number | Very new (24H2/25H2-era builds) | Oldest, most conservative build baseline | Newer, closer to Windows 11's build lineage than to Server 2022's | This is exactly the axis the sibling project's *interactive-installer* failures correlated with — but that correlation was specific to `Setup.exe`'s own boot-catalog/UEFI-shell interaction, which this project's mechanism never invokes. No evidence found that media vintage affects offline WIM-apply, `hivex` registry editing, or BCD-SYS's approach |
-| WIM image index / `<NAME>`/`<EDITIONID>` selection | Must be verified per-ISO (unchanged requirement) | Already confirmed in sibling project's engineering log | Already confirmed in sibling project's engineering log | Not a mechanism difference — just ordinary due diligence per `CLAUDE.md`'s "verify before trusting" standard, same as always |
+| WIM image index / `<NAME>`/`<EDITIONID>` selection | Must be verified per-ISO (unchanged requirement) | Already confirmed in sibling project's engineering log | Already confirmed in sibling project's engineering log | Not a mechanism difference — just ordinary due diligence per `../CLAUDE.md`'s "verify before trusting" standard, same as always |
 
 **The headline conclusion from this table**: everything that made Server 2025 and Windows 11
 *uniquely* hard for the sibling project was a property of `Setup.exe`'s interactive boot process
@@ -247,7 +247,7 @@ outright, not something inherent to any of the three OSes.
 
 ## Revised Phase 2 sub-milestone sequence
 
-Replacing the sequence in `CLAUDE.md`/`HANDOFF_FROM_UNATTENDED_INSTALL.md`'s Phase 2 section:
+Replacing the sequence in `../CLAUDE.md`/`HANDOFF_FROM_UNATTENDED_INSTALL.md`'s Phase 2 section:
 
 1. **Partition + apply WIM** (unchanged from original plan) — `qemu-nbd` + `sgdisk` + `mkfs.ntfs`,
    then `wimapply` targeting Windows Server 2025's confirmed image index, per the existing
@@ -259,7 +259,7 @@ Replacing the sequence in `CLAUDE.md`/`HANDOFF_FROM_UNATTENDED_INSTALL.md`'s Pha
 3. **If step 2 succeeds**: inject VirtIO drivers via `hivex`/`hivexregedit` (Stage 2 above), drop
    `unattend.xml` at `\Windows\Panther\` (Stage 3 above), then attempt the disk's first real boot
    with Packer (`disk_image = true`) and confirm WinRM reachability — this is the Phase 2 success
-   criterion from `CLAUDE.md`, unchanged.
+   criterion from `../CLAUDE.md`, unchanged.
 4. **If step 2 fails**: fall back to the WinPE + real `bcdboot` plan exactly as already documented
    in `HANDOFF_FROM_UNATTENDED_INSTALL.md`'s "Technical building blocks" section, starting with its
    own first sub-question (does a disk-attached WinPE image avoid the optical-media UEFI landmine).
@@ -315,7 +315,7 @@ one, in case this project's tooling is ever redistributed rather than just run i
   to this document, noting the WinPE plan is now the documented fallback rather than the first
   attempt. Its own content stays accurate and shouldn't be rewritten — it's still the fallback
   plan's specification.
-- `CLAUDE.md`: Phase 2's sub-milestone list and "Making the disk bootable" section should reference
+- `../CLAUDE.md`: Phase 2's sub-milestone list and "Making the disk bootable" section should reference
   BCD-SYS as the first approach to attempt, with WinPE demoted to documented fallback.
 - `START_PROMPT.md`: its "Run the single highest-value experiment" section currently names the
   WinPE-boot test as that experiment — recommend updating it to name the BCD-SYS test instead, same
@@ -324,7 +324,7 @@ one, in case this project's tooling is ever redistributed rather than just run i
 Have not made these edits yet — flagging them here so the update can happen as a deliberate,
 reviewed step rather than silently while writing this analysis.
 
-**Update: done.** `CLAUDE.md`'s "Making the disk bootable" section now documents BCD-SYS as the
+**Update: done.** `../CLAUDE.md`'s "Making the disk bootable" section now documents BCD-SYS as the
 first attempt with WinPE as the fallback, matching this recommendation. `START_PROMPT.md` was
 updated too at the time, though that file is itself now a stale Session-7 snapshot superseded by
 later phases (see its own top-of-file note) - not relevant to this specific TODO's own resolution.

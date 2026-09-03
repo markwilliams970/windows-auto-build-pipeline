@@ -27,7 +27,7 @@ foreach ($svcName in @("NTDS", "DNS")) {
     Write-Host "Service '$svcName' is running."
 }
 
-# Server-2019-gated diagnostic instrumentation, PHASE3_ENGINEERING_LOG.md 2026-09-02 Phase E1:
+# Server-2019-gated diagnostic instrumentation, project_documentation/PHASE3_ENGINEERING_LOG.md 2026-09-02 Phase E1:
 # a real build hit "Get-ADDomain failed after promotion: Unable to find a default server with
 # Active Directory Web Services running" right after this exact point, even with NTDS/DNS both
 # confirmed Running - the theory is ADWS starts a beat later than NTDS/DNS specifically. This

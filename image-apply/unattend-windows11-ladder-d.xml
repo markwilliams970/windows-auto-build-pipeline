@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Bisection ladder Variant D - PHASE3_ENGINEERING_LOG.md Finding 13's next step, isolating
+  Bisection ladder Variant D - project_documentation/PHASE3_ENGINEERING_LOG.md Finding 13's next step, isolating
   whether the live `pnputil /add-driver` FirstLogonCommands step alone (with a real logon via
   AutoLogon, but WITHOUT the two heavy PowerShell FirstLogonCommands blocks - the network-wait/
   Set-NetConnectionProfile loop and the Enable-PSRemoting/WinRM-listener-rebuild/Restart-Service

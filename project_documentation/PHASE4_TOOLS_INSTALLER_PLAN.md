@@ -15,29 +15,29 @@ tested*.
 
 ### A.1 — Package-manager mechanism: what to build the installer on top of
 
-Three real candidates were researched beyond the Chocolatey mention already in `CLAUDE.md`'s
+Three real candidates were researched beyond the Chocolatey mention already in `../CLAUDE.md`'s
 original Phase 4 sketch: **winget**, **Chocolatey** (re-examined, not just carried over), and
 **PSAppDeployToolkit (PSADT)**. None of the three is adopted wholesale; the reasoning for each:
 
 | Option | Finding | Verdict |
 |---|---|---|
-| **winget** | Built into Windows Server 2025 (delivered via Windows Update as part of App Installer) but **not reliably present on Server 2019 or Server 2022** without a manual sideload workaround — confirmed via multiple independent sources, not just one blog. This project's four target OSes need one mechanism that behaves identically everywhere (`tools.yaml` "has no OS-exclusivity concept" per `CLAUDE.md`); winget would need a bootstrapping workaround on 3 of 4 OSes just to be present, which defeats using it as *the* mechanism. Its offline/pinning story is also weaker than Chocolatey's — full offline mirroring needs third-party tooling, not a first-class winget feature. | **Rejected** — inconsistent OS coverage across this project's own target matrix, the same category of problem `CLAUDE.md` already flags for `services.yaml`'s OS-exclusivity gap. |
-| **Chocolatey** | Re-confirmed, not just re-asserted: Chocolatey's own ecosystem guidance still states the public community repository's reliability "cannot be guaranteed" for production/organizational use and recommends an internalized or private/proxy repo for repeatable builds — i.e., Chocolatey's own maintainers recommend the same pinned-local-cache pattern this project's `ISO_CACHE_DIR` convention already implements by hand. Adopting Chocolatey as-is would add a new bootstrap dependency (Chocolatey itself needs installing on the guest, needing live internet access from inside the guest at exactly the right unattended moment) — a "hidden dependency" this project's own standards already warn against. | **Rejected**, same conclusion as the original `CLAUDE.md` sketch, now with the public-repo caveat independently re-confirmed rather than just carried forward. |
+| **winget** | Built into Windows Server 2025 (delivered via Windows Update as part of App Installer) but **not reliably present on Server 2019 or Server 2022** without a manual sideload workaround — confirmed via multiple independent sources, not just one blog. This project's four target OSes need one mechanism that behaves identically everywhere (`tools.yaml` "has no OS-exclusivity concept" per `../CLAUDE.md`); winget would need a bootstrapping workaround on 3 of 4 OSes just to be present, which defeats using it as *the* mechanism. Its offline/pinning story is also weaker than Chocolatey's — full offline mirroring needs third-party tooling, not a first-class winget feature. | **Rejected** — inconsistent OS coverage across this project's own target matrix, the same category of problem `../CLAUDE.md` already flags for `services.yaml`'s OS-exclusivity gap. |
+| **Chocolatey** | Re-confirmed, not just re-asserted: Chocolatey's own ecosystem guidance still states the public community repository's reliability "cannot be guaranteed" for production/organizational use and recommends an internalized or private/proxy repo for repeatable builds — i.e., Chocolatey's own maintainers recommend the same pinned-local-cache pattern this project's `ISO_CACHE_DIR` convention already implements by hand. Adopting Chocolatey as-is would add a new bootstrap dependency (Chocolatey itself needs installing on the guest, needing live internet access from inside the guest at exactly the right unattended moment) — a "hidden dependency" this project's own standards already warn against. | **Rejected**, same conclusion as the original `../CLAUDE.md` sketch, now with the public-repo caveat independently re-confirmed rather than just carried forward. |
 | **PSAppDeployToolkit (PSADT)** | A real, actively-maintained, widely-used enterprise deployment framework — not a guess, not abandoned (v4.1.0 is current, code-signed PowerShell module, importable standalone with no SCCM/Intune dependency). Its idempotent-detection pattern is genuinely worth adopting: PSADT's own community guidance is explicit that **`Win32_Product` WMI queries must not be used for detection** — querying it silently triggers a Windows Installer *reconfigure* of every MSI-installed application on the machine, a real, documented side effect, not a style preference. PSADT's `Get-InstalledApplication`/`Test-RegistryValue` instead scan the registry Uninstall keys directly. However, PSADT's actual bulk (banner UI, user-deferral prompts, "close running applications" interaction, restart-handling UX, `Deploy-Application.ps1`-per-app template scaffolding) is built for **interactive enterprise desktop deployment via SCCM/Intune** — none of that applies to this project's headless, fully unattended, single-VM lab builds. | **Not adopted wholesale** (would violate this project's own "avoid overly complex frameworks" standard for a 6-tool unattended pipeline) — **but its registry-based idempotent-detection pattern is adopted directly** as the detection mechanism below, and its "never use `Win32_Product`" finding is treated as a hard constraint on this design. |
 
 **Net decision**: no third-party package manager. Extend this project's own already-proven
 delivery-ISO pattern (already used for `spice-guest-tools-latest.exe` and `virtio-win-*.iso` in
 `image-apply/inject-virtio-spice.sh`) to the six Phase 4 tools, and run each vendor's own documented
 silent-install flags directly — this is the "thin adapter, not a new mechanism" tier of
-`CLAUDE.md`'s own decision tree under "Deciding what to build vs. what to adopt," and it's the same
+`../CLAUDE.md`'s own decision tree under "Deciding what to build vs. what to adopt," and it's the same
 tier this project has already used successfully for every binary dependency so far.
 
 **Revised 2026-09-03, mid-Phase-D, at the user's explicit direction: these six tools are NOT
 pinned/checksummed into `../iso_cache/` the way the OS ISOs and `virtio-win`/`spice-guest-tools`
 are.** The user's own observation is correct and overrides A.6/B.6 below as originally written:
 general-purpose desktop tools churn far faster than Windows Server evaluation media, and
-`CLAUDE.md`'s "Version-sensitivity and brittleness" standard already treats a stale pinned binary as
-a real, previously-observed risk (the Windows 11 fwlink drift documented in `ISO_CACHE_INVENTORY.md`)
+`../CLAUDE.md`'s "Version-sensitivity and brittleness" standard already treats a stale pinned binary as
+a real, previously-observed risk (the Windows 11 fwlink drift documented in `../ISO_CACHE_INVENTORY.md`)
 — applying that same pin-and-hope-it-stays-current model to six fast-moving tools would just
 relocate the drift problem, not solve it. The one exception is the Datadog Agent, whose version can
 plausibly affect monitoring-integration test comparability build-to-build — for that one tool only,
@@ -53,7 +53,7 @@ and delivered via the same mounted-ISO mechanism as everything else in this pipe
 
 ### A.2 — Delivery mechanism: verified against the actual codebase, not assumed
 
-`CLAUDE.md`'s own original Phase 4 sketch described delivery as "a mounted ISO or WinRM copy" —
+`../CLAUDE.md`'s own original Phase 4 sketch described delivery as "a mounted ISO or WinRM copy" —
 ambiguous. Checked directly against `image-apply/inject-virtio-spice.sh` (lines 110–118): the
 **established, working pattern is a small delivery ISO built with `mkisofs`, attached to the QEMU
 VM as an extra CD-ROM `-drive ...,media=cdrom`**, explicitly **not** WinRM file transfer. The
@@ -143,7 +143,7 @@ datadog:
     - "project:windows-auto-build-pipeline"
 ```
 
-Applies uniformly to all four target OSes — no per-OS exclusion list, matching `CLAUDE.md`'s own
+Applies uniformly to all four target OSes — no per-OS exclusion list, matching `../CLAUDE.md`'s own
 Phase 4 assumption #2.
 
 ### B.2 — Per-tool installer spec table (mechanics, not user config — lives in code, not `tools.yaml`)
@@ -253,7 +253,7 @@ previously-built ISO would silently defeat the entire point of this design chang
 **Secret handling**: `$DD_API_KEY` is read from the host environment (matching the existing
 `ADMIN_PASSWORD`-with-default convention used throughout `image-apply/*.sh`), threaded only into
 the WinRM invocation's command-line argument at the moment `install-tools.ps1` actually runs — never
-written into `tools.yaml`, never baked into the delivery ISO. This matches `CLAUDE.md`'s original
+written into `tools.yaml`, never baked into the delivery ISO. This matches `../CLAUDE.md`'s original
 Phase 4 secret-handling note, now grounded in confirmed real MSI property names (`APIKEY`, `SITE`,
 `TAGS`) rather than assumed ones. The known, honestly-stated limitation from that note stands
 unchanged: the key is transiently visible in the guest's process list while `msiexec` runs — a real,
@@ -272,15 +272,15 @@ log "[Phase 4] install-tools.sh (see PHASE4_TOOLS_INSTALLER_PLAN.md)"
 ```
 
 Rationale for running last: Phase 3A's own desktop (SPICE/QXL) is what makes these six tools useful
-in the first place (`CLAUDE.md`: *"A desktop a human might actually sit at benefits from having
+in the first place (`../CLAUDE.md`: *"A desktop a human might actually sit at benefits from having
 7-Zip/Chrome/Notepad++/PuTTY/WinSCP on it"*) — installing them before the display stack exists would
 work but has no ordering benefit, while installing after guarantees the tools land on the final,
 fully-configured artifact `register-vm.sh` will actually define a domain from.
 
-### B.6 — `ISO_CACHE_INVENTORY.md`: deliberately NOT touched
+### B.6 — `../ISO_CACHE_INVENTORY.md`: deliberately NOT touched
 
 **Revised 2026-09-03, superseding the original plan.** None of the six tools are added to
-`../iso_cache/` or `ISO_CACHE_INVENTORY.md` — that file's whole purpose is a durable record of
+`../iso_cache/` or `../ISO_CACHE_INVENTORY.md` — that file's whole purpose is a durable record of
 *pinned* binaries (its own header: *"what was cached, when, and from where"*), and these six are now
 explicitly not pinned. Caching them there would misrepresent them as version-stable the way the OS
 ISOs/`virtio-win`/`spice-guest-tools` genuinely are. The per-build `manifest.txt` (B.4) is this
@@ -295,12 +295,12 @@ the correct scope for a value that's expected to differ build-to-build.
    multiple independent sources per tool, and (as of the 2026-09-03 revision) the fetch mechanism
    for all six was additionally confirmed with real, live HTTP requests during this research pass,
    not just search-result summaries. Still **not independently re-verified against a real install
-   run** the way `CLAUDE.md`'s "verify before trusting" standard ultimately wants — that's Phase E.
+   run** the way `../CLAUDE.md`'s "verify before trusting" standard ultimately wants — that's Phase E.
 2. WinSCP's Inno Setup installer is self-upgrading when re-run against an existing install of an
    older version — standard Inno Setup behavior, not vendor-confirmed line-by-line. If false, the
    fallback is trivial (uninstall-then-install) but changes `Install-Tool`'s WinSCP branch slightly.
 3. `tools.yaml` applies uniformly to all four OSes with no per-OS exclusions — carried over from
-   `CLAUDE.md`'s own Phase 4 assumption #2, unchanged by this research pass.
+   `../CLAUDE.md`'s own Phase 4 assumption #2, unchanged by this research pass.
 4. The delivery-ISO drive-letter discovery pattern (`Get-Volume` by label) that
    `inject-virtio-spice.sh` already uses for `virtiocd`/`spicecd` generalizes cleanly to a third ISO
    label (`TOOLSCD`) attached in the same boot session — no reason to expect otherwise, but unverified
@@ -324,9 +324,9 @@ the correct scope for a value that's expected to differ build-to-build.
    approach's failure mode) for "occasionally broken until someone fixes the resolver" (this design's
    failure mode). Acceptable for six general-purpose desktop tools per the user's own explicit
    direction; would not be an acceptable trade for boot-critical OS media, which is exactly why
-   `CLAUDE.md`'s existing pinned-ISO convention is untouched by this change.
+   `../CLAUDE.md`'s existing pinned-ISO convention is untouched by this change.
 2. **Datadog API key process-list exposure** during the MSI's own execution window — inherent to
-   MSI-property-based secret passing, already flagged in `CLAUDE.md`'s original Phase 4 note,
+   MSI-property-based secret passing, already flagged in `../CLAUDE.md`'s original Phase 4 note,
    unchanged by this design.
 3. **A build's exact tool versions are no longer reproducible after the fact** for the five
    floating-latest tools (by design, per the user's direction) — `manifest.txt` (B.4) records what
@@ -346,7 +346,7 @@ the correct scope for a value that's expected to differ build-to-build.
 1. **7-Zip installer format: MSI**, as recommended — CRUD uniformity with PuTTY/Chrome/Datadog wins
    over the `.exe`/NSIS alternative. B.2's table stands unchanged.
 2. **`install-tools.sh` is its own dedicated stage script**, as recommended — mirrors
-   `inject-virtio-spice.sh`'s two-script pattern (B.4 stands unchanged). `CLAUDE.md`'s original
+   `inject-virtio-spice.sh`'s two-script pattern (B.4 stands unchanged). `../CLAUDE.md`'s original
    Phase 4 open question #1 is resolved in favor of this option.
 3. **Missing `$DD_API_KEY` fails loud before boot**, as recommended — `install-tools.sh` checks
    `$DD_API_KEY` is non-empty up front (when `datadog-agent` is listed in `tools.yaml`) and exits

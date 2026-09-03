@@ -73,7 +73,7 @@ work — not around another guess.
 
 ## The one question to resolve first, before anything else
 
-This project's entire "never run Setup.exe" rule (`CLAUDE.md`'s "Relationship to
+This project's entire "never run Setup.exe" rule (`../CLAUDE.md`'s "Relationship to
 `../windows-server-vm-automation/`" section) exists because of one specific, cited upstream bug:
 the sibling project's Setup.exe-driven install of Windows Server 2025/Windows 11 media hit a
 "press any key to boot from CD" VNC-keystroke timing race that turned out to be a known, open,
@@ -359,7 +359,7 @@ consistent with that being true but doesn't isolate it as its own confirmed vari
 ### Phase 3 — design proposal
 
 **Status: written, not yet executed.** Nothing below has been built or tested — this is the design
-proposal itself, per `CLAUDE.md`'s own "Claude Instructions" (explain the approach, assumptions,
+proposal itself, per `../CLAUDE.md`'s own "Claude Instructions" (explain the approach, assumptions,
 and risks before writing implementation). Structured as a phased execution plan with an explicit
 pass/fail gate at each step, mirroring `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`'s own proven format —
 each phase is cheap, isolates one specific question, and a failure at any gate is a real, named
@@ -388,7 +388,7 @@ Packer until (if at all) a later, post-install stage.
 
 #### Standing-rule conflict — flagged explicitly, not silently reversed
 
-`CLAUDE.md`'s own "Relationship to `../windows-server-vm-automation/`" section has a standing rule:
+`../CLAUDE.md`'s own "Relationship to `../windows-server-vm-automation/`" section has a standing rule:
 *"Do not reuse `Microsoft-Windows-Setup`... `boot_command`/VNC keystroke injection remain correctly
 banned regardless."* This proposal necessarily revisits that rule for Windows 11 specifically. Two
 things distinguish this from what the rule was actually written to prevent, worth stating plainly
@@ -398,7 +398,7 @@ rather than asserting the rule doesn't apply:
   prompt — exactly what this proposal's `_noprompt` ISO eliminates by construction, not works
   around by better timing. No `boot_command`, no VNC keystrokes, no race to lose.
 - `EarlyF6DriverInstall`'s own gate (this project's original, unrelated reason for abandoning
-  Setup.exe entirely in Sessions 3-6, per `CLAUDE.md`'s "RECONSIDERATION CLOSED" note) was hit
+  Setup.exe entirely in Sessions 3-6, per `../CLAUDE.md`'s "RECONSIDERATION CLOSED" note) was hit
   under a *different* boot medium (a self-built `boot.wim` index 2 attached as a plain disk, not
   the real installation ISO) and a different failure mode entirely (a driver-installation gate
   firing unconditionally partway through Setup, not a boot-time prompt). Whether that specific gate

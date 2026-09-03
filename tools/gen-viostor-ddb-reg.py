@@ -8,7 +8,7 @@ Originally written for viostor (virtio-blk) specifically, to clear
 INACCESSIBLE_BOOT_DEVICE (0x7B); recipe transcribed directly from virt-v2v's actual
 source (libguestfs/libguestfs-common, mlcustomize/inject_virtio_win.ml,
 add_guestor_to_registry/cdb_regedits/ddb_regedits), not reconstructed from memory -
-see PHASE2_ENGINEERING_LOG.md Finding 29 for the full verification trail.
+see project_documentation/PHASE2_ENGINEERING_LOG.md Finding 29 for the full verification trail.
 
 Key correction versus this project's own first attempt (Findings 7-8, which failed
 silently): DriverDatabase lives at the SYSTEM hive ROOT (a sibling of ControlSet001),

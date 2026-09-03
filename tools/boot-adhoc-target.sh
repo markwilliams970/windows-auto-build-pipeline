@@ -7,7 +7,7 @@
 #
 # Device model matches make-bootable.sh's own target-disk attachment and
 # packer/boot-and-provision.pkr.hcl's disk_interface = "virtio" exactly: virtio-blk-pci,
-# not virtio-scsi-pci. See PHASE3_ENGINEERING_LOG.md's 2026-08-24/2026-08-25 sessions for
+# not virtio-scsi-pci. See project_documentation/PHASE3_ENGINEERING_LOG.md's 2026-08-24/2026-08-25 sessions for
 # why this distinction matters - booting a pre-injection disk via register-vm.sh (which
 # always assumes virtio-scsi-pci + vioscsi, per its own header) produces an inconsistent
 # INACCESSIBLE_BOOT_DEVICE/indefinite-hang failure that looks like a pipeline defect but

@@ -20,7 +20,7 @@
 # controller), virtio-net NIC, qxl-vga + a real SPICE channel (not VNC) - the config
 # inject-virtio-spice.sh already proved boots and works, so libvirt's own PCI address
 # allocation for the scsi controller doesn't need to reproduce inject-virtio-spice.sh's own
-# raw addr=0x6 QEMU flags exactly. Finding 3A-3 (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)
+# raw addr=0x6 QEMU flags exactly. Finding 3A-3 (project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)
 # found that a virtio-scsi-pci controller's negotiated PCI hardware ID depends on whether it
 # has a drive attached (legacy/transitional DEV_1004) or not (modern DEV_1048), not on its
 # exact bus address - and Windows' own driver binding is keyed to that hardware ID, already
@@ -82,7 +82,7 @@ QCOW2_PATH="${2:-$DEFAULT_QCOW2}"
 # hand-running image-apply/*.sh stages directly (e.g. while iterating on apply-image.sh/
 # make-bootable.sh changes) never reaches that step. Pointing this script at such a disk
 # silently produces the INACCESSIBLE_BOOT_DEVICE/indefinite-hang failure class documented in
-# PHASE3_ENGINEERING_LOG.md's 2026-08-24/2026-08-25 sessions - fail loud instead of guessing.
+# project_documentation/PHASE3_ENGINEERING_LOG.md's 2026-08-24/2026-08-25 sessions - fail loud instead of guessing.
 # Checked via inject-virtio-spice.sh's own completion marker
 # (C:\virtio-spice-injected.marker, written only after its Stage 2 verification fully
 # succeeds), read offline via the same qemu-nbd/ntfs-3g mount pattern every image-apply/*.sh

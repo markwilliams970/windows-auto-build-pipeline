@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Phase 3A (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): live-installs and confirms vioscsi/netkvm/
+# Phase 3A (project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): live-installs and confirms vioscsi/netkvm/
 # QXL+SPICE on an already-built, already-WinRM-reachable disk - written OS-agnostic (takes
 # server2019/server2022/server2025/windows11 like every other image-apply/*.sh script). Confirmed
 # via 2 independent clean runs per OS (6 total, as of Server 2022/2025/Windows 11 - Server 2019 not
-# yet exercised, see WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md Phase E): Windows 11 exercises all
+# yet exercised, see project_documentation/WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md Phase E): Windows 11 exercises all
 # three capabilities (storage, NIC, SPICE); Server 2022/2025/2019 exercise two of three (storage,
 # SPICE) by design, not gap - NIC swap is deliberately scoped out for them (see below):
 #
@@ -42,7 +42,7 @@
 # reference VM (not just theory): the user's own long-used windows11vm-t14 already runs this exact
 # qxldod build (Driver Date 11/20/2020, Version 10.0.0.21000) with a working Start Menu.
 #
-# Three hard-won lessons this script exists to encode, not re-derive (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md
+# Three hard-won lessons this script exists to encode, not re-derive (project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md
 # Findings 3A-1, 3A-2, 3A-3):
 #   1. A driver must be live-PnP-installed against an actually-present device (Get-PnpDevice
 #      Status: OK), not just staged into the driver store via `pnputil /add-driver` - staging
@@ -100,7 +100,7 @@ SPICE_PORT="${SPICE_PORT:-5902}"
 VNC_DISPLAY="${VNC_DISPLAY:-1}"
 
 SPICE_TOOLS_EXE="${ISO_CACHE_DIR}/spice-guest-tools-latest.exe"
-[[ -f "$SPICE_TOOLS_EXE" ]] || { echo "ERROR: $SPICE_TOOLS_EXE not found - download it from https://www.spice-space.org/download/windows/spice-guest-tools/spice-guest-tools-latest.exe and cache it under ${ISO_CACHE_DIR}/ first (see WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)" >&2; exit 1; }
+[[ -f "$SPICE_TOOLS_EXE" ]] || { echo "ERROR: $SPICE_TOOLS_EXE not found - download it from https://www.spice-space.org/download/windows/spice-guest-tools/spice-guest-tools-latest.exe and cache it under ${ISO_CACHE_DIR}/ first (see project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)" >&2; exit 1; }
 [[ -f "$VIRTIO_WIN_ISO" ]] || { echo "ERROR: $VIRTIO_WIN_ISO not found" >&2; exit 1; }
 
 RUN_ID="$(basename "$TARGET_QCOW2" .qcow2)"
@@ -188,7 +188,7 @@ wait_for_winrm() {
   # second still burned the full 600s timeout before this fix).
   local qemu_pid="$1"
   local qemu_log="$2"
-  log "Waiting for WinRM on 127.0.0.1:${WINRM_PORT} (up to ${WINRM_TIMEOUT_SEC}s) - transient first-probe failures are expected and retried (PHASE3_ENGINEERING_LOG.md Phase 3.3)"
+  log "Waiting for WinRM on 127.0.0.1:${WINRM_PORT} (up to ${WINRM_TIMEOUT_SEC}s) - transient first-probe failures are expected and retried (project_documentation/PHASE3_ENGINEERING_LOG.md Phase 3.3)"
   local deadline=$(( $(date +%s) + WINRM_TIMEOUT_SEC ))
   while [[ "$(date +%s)" -lt "$deadline" ]]; do
     if ! kill -0 "$qemu_pid" 2>/dev/null; then
@@ -338,7 +338,7 @@ cleanup_stage1() {
   # the trap's own last command (kill -9 ... || true, which always succeeds) becomes the WHOLE
   # SCRIPT's exit status once the EXIT trap finishes, silently turning a real failure (e.g. a
   # winrm_ps timeout) into a reported success for anything driving this script. Found and fixed
-  # in install-tools.sh's own copy of this pattern first (PHASE4_TOOLS_INSTALLER_PLAN.md's Phase E
+  # in install-tools.sh's own copy of this pattern first (project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md's Phase E
   # testing, 2026-09-03), then confirmed this script carries the identical latent bug - dormant
   # here only because every completed real run on record has had its graceful shutdown succeed,
   # so this trap's hard-kill fallback has never actually been the thing that ended a run.
@@ -550,7 +550,7 @@ if (\$qxlOk.Count -eq 0) { throw 'QXL display device not Status:OK on any matchi
 if (-not \$qxlDrv -or \$qxlDrv.DriverVersion -ne '10.0.0.21000') { throw \"QXL bound to unexpected driver version '\$(\$qxlDrv.DriverVersion)' - expected qxldod 10.0.0.21000; classic qxl driver may have won ranking instead (see Finding 3A-4)\" }
 Write-Output \"qxldod confirmed bound: DriverVersion \$(\$qxlDrv.DriverVersion), DriverDate \$(\$qxlDrv.DriverDate)\"
 
-# Known first-boot start-order race (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): vdservice can be
+# Known first-boot start-order race (project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): vdservice can be
 # Stopped on its very first boot despite StartType Automatic, because it starts before the
 # QXL/virtio-serial channel is fully up. Nudge it rather than leaving it to chance - a real,
 # already-diagnosed benign race, not a new defect to investigate each time.

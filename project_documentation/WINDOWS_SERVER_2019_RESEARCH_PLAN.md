@@ -6,7 +6,7 @@
 `image-apply/*.sh`, or `image-apply/lib/common.sh` has been touched. This is a scoping pass to
 answer one question: does adding Windows Server 2019 as a fourth target OS look like a low-risk,
 "same as Server 2022" addition to the already-production-ready offline-apply pipeline, or does it
-carry real open questions that need resolving first? Per `CLAUDE.md`'s "Research-first discipline"
+carry real open questions that need resolving first? Per `../CLAUDE.md`'s "Research-first discipline"
 standard, this was a real multi-angle search pass (Microsoft Learn/Docs, the Microsoft Evaluation
 Center, GitHub primary sources for `virtio-win`, Microsoft Q&A threads, community deployment
 walkthroughs) — not a single query, and every claim below is marked as either **confirmed** against
@@ -27,7 +27,7 @@ promoted from inferred to confirmed, and the new "Finding 9" for what's genuinel
 2019 Evaluation ISO is gated behind a Microsoft registration form, not a scriptable download, so the
 WIM edition index (Finding 3) couldn't be directly verified yet. The user completed that form
 directly and handed off the resulting ISO; it's now cached in `../iso_cache/`
-(`ISO_CACHE_INVENTORY.md` updated) and the WIM index has been directly verified (index 2 =
+(`../ISO_CACHE_INVENTORY.md` updated) and the WIM index has been directly verified (index 2 =
 `ServerStandardEval`, Server Desktop Experience — see Finding 3, updated in place below). **No
 research-phase open questions remain.** Phase B (design + implementation plan) is next.
 
@@ -51,7 +51,7 @@ Following this project's own "search multiple angles, not one query" convention:
    (`WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`) already establishes this is a QEMU-version behavior,
    not a Windows-version behavior — carried forward as an explicit inference, flagged as such below.
 6. **DCOM/RPC "boot storm" race** — direct fetch of the primary Microsoft Q&A thread this project's
-   own Finding 3A-5 (`CLAUDE.md`) already cites for Server 2022, checked specifically for whether it
+   own Finding 3A-5 (`../CLAUDE.md`) already cites for Server 2022, checked specifically for whether it
    (or any other primary source found) implicates Server 2019 too.
 7. **Setup.exe involvement** — no new search needed; this project's Server 2022/2025 pipeline never
    invokes Setup.exe at all (pure offline apply), so this is a structural, not empirical, question —
@@ -69,7 +69,7 @@ Windows Server 2019 evaluation media is still officially published at
 [microsoft.com/en-us/evalcenter/evaluate-windows-server-2019](https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server-2019)
 (direct fetch performed, not just a search snippet). Datacenter and Standard editions, ISO and VHD
 formats, 180-day evaluation period (longer than this project has needed for any single build —
-irrelevant to a fresh-apply-every-time pipeline anyway, per `CLAUDE.md`'s "never cache a previously
+irrelevant to a fresh-apply-every-time pipeline anyway, per `../CLAUDE.md`'s "never cache a previously
 applied disk" rule). The page shows **no retirement notice** — it does steer evaluators toward
 Server 2022 as the newer option, but the 2019 download itself is live and functional as of this
 research pass. This directly updates my own prior assumption going in (that 2019 eval media might
@@ -77,7 +77,7 @@ already be pulled, given how old the release is) — it is not pulled.
 
 Not yet done: an actual `curl -sL -o /dev/null -w '%{http_code} %{url_effective}'` verification of
 the resolved fwlink and a checksum/`.meta`/`.sha256` sidecar, matching this project's own
-`ISO_CACHE_INVENTORY.md` convention. That's a concrete first step if this project proceeds (see
+`../ISO_CACHE_INVENTORY.md` convention. That's a concrete first step if this project proceeds (see
 Recommendations).
 
 ### 2. Offline WIM apply + bcdboot mechanism — **confirmed, no Server-2019-specific quirk found**
@@ -89,7 +89,7 @@ Windows Server 2019 Reference Image" walkthrough) describe `DISM /Apply-Image` f
 identical in shape to what this project already has proven for Server 2022/2025. No source found
 describes anything Server-2019-specific about this step; DISM/bcdboot's own behavior here predates
 Server 2019 by several releases and postdates it by several more (this matches this project's own
-"least brittle" ranking of this layer under CLAUDE.md's Version-sensitivity section). **No evidence
+"least brittle" ranking of this layer under ../CLAUDE.md's Version-sensitivity section). **No evidence
 found, in either direction, that offline apply is harder on 2019 than 2022** — consistent with this
 being the same primitive Microsoft has documented unchanged across Server 2016 through 2025.
 
@@ -99,7 +99,7 @@ being the same primitive Microsoft has documented unchanged across Server 2016 t
 writeup immediately below, kept for the record) and handed off the resulting ISO, which was cached
 into `../iso_cache/2019-17763.3650.221105-1748.rs5_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso`
 (build 17763.3650, matching the Extended-Support-eligible Server 2019 v1809 release line), with a
-`.sha256`/`.meta` sidecar pair added and a new row in `ISO_CACHE_INVENTORY.md`, matching the existing
+`.sha256`/`.meta` sidecar pair added and a new row in `../ISO_CACHE_INVENTORY.md`, matching the existing
 convention for every other cached ISO.
 
 This project's own non-negotiable verification recipe (`7z e ... sources/install.wim`, then
@@ -148,7 +148,7 @@ registration form (name/email/company), unlike Server 2022, Server 2025, Windows
 landing page with a registration form**, not a downloadable ISO. This is corroborated by
 independent community sources found via search (Microsoft Q&A: "To download Windows Server 2019,
 you need to register first, then download and install"). This is a genuine procedural difference
-from every other source in `ISO_CACHE_INVENTORY.md`: the 2022/2025/Windows 11/`virtio-win` fwlinks
+from every other source in `../ISO_CACHE_INVENTORY.md`: the 2022/2025/Windows 11/`virtio-win` fwlinks
 all resolve directly to a downloadable file with a real `curl`-checkable HTTP 200, no human
 interaction required (confirmed by that file's own "Re-download links, verified live" table).
 Server 2019 does not currently offer that path.
@@ -225,10 +225,10 @@ approach.
 
 ### 5. PCI hardware ID stability — **substantially strengthened, Research Pass 2; still not independently boot-tested for 2019**
 
-`CLAUDE.md`'s own Finding 3A-3 already establishes that `virtio-scsi-pci` PCI hardware ID
+`../CLAUDE.md`'s own Finding 3A-3 already establishes that `virtio-scsi-pci` PCI hardware ID
 negotiation (`VEN_1AF4&DEV_1048` modern vs. `DEV_1004` legacy/transitional) is a function of **QEMU
 version and device topology** (bare controller vs. drive-attached), not Windows version — this was
-explicitly generalized in `CLAUDE.md`'s "Version-sensitivity and brittleness" section as a QEMU-side
+explicitly generalized in `../CLAUDE.md`'s "Version-sensitivity and brittleness" section as a QEMU-side
 risk, independent of which guest OS is involved.
 
 Finding 4's byte-for-byte confirmation above directly extracted the exact `PCI\VEN_1AF4&DEV_...`
@@ -296,7 +296,7 @@ clean, unbroken E2E builds for both Server 2022 and Server 2025 on 2026-08-25/26
   the shared `apply-image.sh` level, which Server 2019 inherits automatically — this is genuinely
   good news, and removes a source of risk Pass 1 didn't know to account for.
 - The DCOM/RPC boot-storm race itself — the thing `ServicesPipeTimeout` actually targets — is
-  real and Microsoft-documented (the primary source `CLAUDE.md`'s Finding 3A-5 cites,
+  real and Microsoft-documented (the primary source `../CLAUDE.md`'s Finding 3A-5 cites,
   [learn.microsoft.com/.../5836440](https://learn.microsoft.com/en-us/answers/questions/5836440/intermittent-failure-of-start-menu-search-function),
   re-checked again this pass: still scoped explicitly to "Windows Server 2022" in every quoted
   diagnostic statement, Server 2019 still not mentioned in either direction). Whether this specific
@@ -345,7 +345,7 @@ already present either way.
 Server 2022/2025's production pipeline never invokes Setup.exe at all — this project's entire
 Server-2022/2025 track is pure offline apply (`wimlib` + `bcdboot`/WinPE + offline `hivex` +
 offline unattend drop), per the standing "no `Microsoft-Windows-Setup`" rule for Server SKUs in
-`CLAUDE.md`. Server 2019 would use the identical mechanism, so this gate is **structurally
+`../CLAUDE.md`. Server 2019 would use the identical mechanism, so this gate is **structurally
 irrelevant** to a Server 2019 addition — no research finding changes this; it's a property of which
 pipeline this project would run 2019 through, not of 2019 itself. (Contrast with Windows 11, where
 Setup.exe involvement is load-bearing precisely because the offline-only path hit a hard,
@@ -386,7 +386,7 @@ today."
 | VirtIO driver subfolder | `2k19` — **CONFIRMED present in the pinned `virtio-win-0.1.285.iso`, byte-identical (`sha256sum`-verified) to `2k22`'s driver binaries and INF text** | `2k22`/`2k25` — confirmed present in pinned ISO | `w11` — confirmed present in pinned ISO |
 | PCI hardware ID risk | Driver-side hardware IDs confirmed identical to 2k22 (hash-verified INF read); QEMU-negotiation side not independently boot-tested | Confirmed via Finding 3A-3, generalizes across Server SKUs | Confirmed via Finding 3A-3 |
 | DCOM "boot storm" mitigation | **Moot as an open question — `ServicesPipeTimeout=120000` is unconditional in `make-bootable.sh`, which Server 2019 would run through unmodified; applies automatically, no decision needed** | Present, applied unconditionally; the crash this project actually chased was later found to be a separate ACL bug, now fixed at the `apply-image.sh` level | Not evaluated (no roles/services layer applies to Windows 11) |
-| Media availability | **RESOLVED — gated behind a Microsoft registration form (name/email/company), unlike the other three sources, which resolve directly with no human interaction; the user completed the form directly and the ISO is now cached (`../iso_cache/2019-17763.3650.221105-1748...iso`, `ISO_CACHE_INVENTORY.md` updated). No longer blocking.** | Confirmed live and cached, direct fwlink | Confirmed live and cached, though the fwlink has already drifted to a newer 25H2 build than what's cached (per `ISO_CACHE_INVENTORY.md`'s own caution) |
+| Media availability | **RESOLVED — gated behind a Microsoft registration form (name/email/company), unlike the other three sources, which resolve directly with no human interaction; the user completed the form directly and the ISO is now cached (`../iso_cache/2019-17763.3650.221105-1748...iso`, `../ISO_CACHE_INVENTORY.md` updated). No longer blocking.** | Confirmed live and cached, direct fwlink | Confirmed live and cached, though the fwlink has already drifted to a newer 25H2 build than what's cached (per `../ISO_CACHE_INVENTORY.md`'s own caution) |
 | Support lifecycle | Extended Support until 2029-01-09 — confirmed, no near-term deprecation risk | Actively supported | Actively supported |
 | Unattend.xml specialize pass | No regression found; expected to work identically | Confirmed working (Finding 41/42) | Confirmed working (own Setup.exe-driven answer file) |
 
@@ -402,7 +402,7 @@ Ordered as a dependency chain, mirroring how Server 2022 was actually brought up
 2. ~~Cache the ISO.~~ **DONE 2026-09-02.** Cached as
    `../iso_cache/2019-17763.3650.221105-1748.rs5_release_svc_refresh_SERVER_EVAL_x64FRE_en-us.iso`,
    checksum computed fresh (no prior sidecar to verify against), `.meta`/`.sha256` sidecars written,
-   `ISO_CACHE_INVENTORY.md` updated with a row matching the existing convention (with an explicit
+   `../ISO_CACHE_INVENTORY.md` updated with a row matching the existing convention (with an explicit
    note that this source has no scriptable re-download link, unlike the other four).
 3. ~~Verify the WIM edition index directly.~~ **DONE 2026-09-02, see Finding 3 above.** Index 2 =
    `ServerStandardEval`, Server (Desktop Experience) — confirmed via `wimlib-imagex info` against the
@@ -495,7 +495,7 @@ research-phase open questions from both passes are now closed:**
    **Closed, confirmed yes** — Research Pass 2's direct `7z l` + `diff` + `sha256sum` check (Finding
    4/5). No longer open.
 
-**Assumptions carried into the Feasibility verdict above, stated explicitly per `CLAUDE.md`'s own
+**Assumptions carried into the Feasibility verdict above, stated explicitly per `../CLAUDE.md`'s own
 "identify assumptions" instruction:**
 
 - That this project's host QEMU version and virtio-win driver version remain unchanged between now
@@ -507,7 +507,7 @@ research-phase open questions from both passes are now closed:**
   in 2022), but not independently exercised as part of either research pass, which focused on the
   offline-apply mechanism rather than re-verifying the already-proven-elsewhere provisioning layer.
 - ~~That a non-Microsoft-first-party mirror of Server 2019 media carries the same provenance/checksum
-  trust this project's own `ISO_CACHE_INVENTORY.md` convention otherwise guarantees.~~ **Moot** — the
+  trust this project's own `../ISO_CACHE_INVENTORY.md` convention otherwise guarantees.~~ **Moot** — the
   user acquired the ISO directly from Microsoft's own Evaluation Center, so no mirror-trust question
   actually arose.
 

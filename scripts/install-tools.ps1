@@ -1,4 +1,4 @@
-# Phase 4 tool installer (PHASE4_TOOLS_INSTALLER_PLAN.md). Runs from the mounted delivery ISO
+# Phase 4 tool installer (project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md). Runs from the mounted delivery ISO
 # built by image-apply/install-tools.sh, which stages each installer under a normalized filename
 # (7zip.msi, putty.msi, winscp.exe, notepadplusplus.msi, chrome.msi, datadog-agent.msi) so this
 # script never needs to glob-match an unpredictable, version-numbered upstream filename - only
@@ -127,7 +127,7 @@ function Get-ToolStatus {
 }
 
 function Install-Tool {
-    # Create/Update, idempotent. Two different idempotency rules (see PHASE4_TOOLS_INSTALLER_PLAN.md
+    # Create/Update, idempotent. Two different idempotency rules (see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md
     # B.3): the five floating-latest tools skip if ANY version is already present (re-running this
     # script is a no-op for them, never a forced upgrade); datadog-agent skips only if the present
     # version exactly matches tools.yaml's pinned agent_version, otherwise reinstalls to converge
@@ -233,7 +233,7 @@ if ($config.Tools.Count -eq 0) {
 }
 
 # Defense-in-depth: image-apply/install-tools.sh already checks this host-side before ever
-# booting the VM (fails loud before boot, per PHASE4_TOOLS_INSTALLER_PLAN.md's Phase C decision
+# booting the VM (fails loud before boot, per project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md's Phase C decision
 # #3) - this guest-side check mirrors run-services.ps1's own domain-controller/app-server
 # mutual-exclusion check, which is also enforced in two places for the same reason (defense in
 # depth in case this script is ever invoked directly, bypassing install-tools.sh).

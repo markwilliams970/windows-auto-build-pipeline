@@ -39,7 +39,7 @@ TARGET_QCOW2="${BUILD_DIR}/${BUILD_ID}.qcow2"
 
 log "=== Build: ${OS} -> ${TARGET_QCOW2} ==="
 
-# Windows 11 takes a completely different path as of Phase 3.4 (PHASE3_ENGINEERING_LOG.md):
+# Windows 11 takes a completely different path as of Phase 3.4 (project_documentation/PHASE3_ENGINEERING_LOG.md):
 # a single Setup.exe-driven script covers partitioning, image install, bootability, and
 # specialize/oobeSystem in one unattended qemu session, confirmed via real WinRM inline -
 # there is no Packer handoff afterward (Windows 11 has zero Phase 3 roles to provision,
@@ -48,17 +48,17 @@ log "=== Build: ${OS} -> ${TARGET_QCOW2} ==="
 # apply-image.sh / make-bootable.sh / apply-unattend.sh / Packer sequence as always, no
 # exception (CLAUDE.md's absolute ban on Microsoft-Windows-Setup for those two OSes).
 if [[ "$OS" == "windows11" ]]; then
-  log "[1/2] windows11-setup-install.sh (Setup.exe-driven - see PHASE3_ENGINEERING_LOG.md Phase 3.4)"
+  log "[1/2] windows11-setup-install.sh (Setup.exe-driven - see project_documentation/PHASE3_ENGINEERING_LOG.md Phase 3.4)"
   if [[ -n "$COMPUTER_NAME_ARG" ]]; then
     "${REPO_ROOT}/image-apply/windows11-setup-install.sh" "$TARGET_QCOW2" "$COMPUTER_NAME_ARG"
   else
     "${REPO_ROOT}/image-apply/windows11-setup-install.sh" "$TARGET_QCOW2"
   fi
 
-  log "[2/2] inject-virtio-spice.sh (Phase 3A - see WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)"
+  log "[2/2] inject-virtio-spice.sh (Phase 3A - see project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)"
   "${REPO_ROOT}/image-apply/inject-virtio-spice.sh" "$OS" "$TARGET_QCOW2"
 
-  log "[Phase 4] install-tools.sh (see PHASE4_TOOLS_INSTALLER_PLAN.md)"
+  log "[Phase 4] install-tools.sh (see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md)"
   "${REPO_ROOT}/image-apply/install-tools.sh" "$OS" "$TARGET_QCOW2" "${TOOLS_YAML_PATH:-${REPO_ROOT}/tools.yaml}"
 
   log "Build complete: ${TARGET_QCOW2} (Windows 11 - virtio-scsi/virtio-net/qxl+SPICE, tools installed, no Packer handoff, no roles to provision)"
@@ -110,7 +110,7 @@ fi
 packer validate "${PACKER_ARGS[@]}" "$PACKER_DIR"
 packer build "${PACKER_ARGS[@]}" "$PACKER_DIR"
 
-# Phase 3A (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): runs against Packer's own final,
+# Phase 3A (project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md): runs against Packer's own final,
 # already-role-provisioned artifact (not the pre-Packer TARGET_QCOW2 above) - vioscsi +
 # QXL/SPICE for every OS; NIC stays on the existing, already-proven offline-hivex netkvm
 # mechanism this disk already booted on during the Packer run just above (untouched, per
@@ -121,10 +121,10 @@ packer build "${PACKER_ARGS[@]}" "$PACKER_DIR"
 # from this file's basename (RUN_ID) - a fixed "${OS}.qcow2" name would have collided there
 # too, one level down, even after the Packer output_directory fix above.
 PROVISIONED_QCOW2="${PACKER_OUTPUT_DIR}/${BUILD_ID}.qcow2"
-log "[Phase 3A] inject-virtio-spice.sh (vioscsi + QXL/SPICE - see WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)"
+log "[Phase 3A] inject-virtio-spice.sh (vioscsi + QXL/SPICE - see project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)"
 "${REPO_ROOT}/image-apply/inject-virtio-spice.sh" "$OS" "$PROVISIONED_QCOW2"
 
-log "[Phase 4] install-tools.sh (see PHASE4_TOOLS_INSTALLER_PLAN.md)"
+log "[Phase 4] install-tools.sh (see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md)"
 "${REPO_ROOT}/image-apply/install-tools.sh" "$OS" "$PROVISIONED_QCOW2" "${TOOLS_YAML_PATH:-${REPO_ROOT}/tools.yaml}"
 
 log "Build complete: ${PROVISIONED_QCOW2} (virtio-scsi/virtio-net/qxl+SPICE, roles provisioned, tools installed - image-apply's own pre-Packer copy at ${TARGET_QCOW2} is now stale, superseded by this one)"

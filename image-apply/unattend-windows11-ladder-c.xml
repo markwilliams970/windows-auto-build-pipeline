@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Bisection ladder Variant C - PHASE3_ENGINEERING_LOG.md Finding 13/14's next step. Variant D
+  Bisection ladder Variant C - project_documentation/PHASE3_ENGINEERING_LOG.md Finding 13/14's next step. Variant D
   (specialize + OOBE-skip + AutoLogon + ONLY lightweight FirstLogonCommands: pnputil + marker
   echo, both confirmed completed successfully before the crash) still reproduced the identical
   0x50/Ntfs.sys -> 0x1E crash sequence - ruling out FirstLogonCommands *content* as the trigger,

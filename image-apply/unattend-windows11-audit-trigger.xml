@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Phase 1 test artifact for WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md - NOT the real Windows 11
+  Phase 1 test artifact for project_documentation/WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md - NOT the real Windows 11
   unattend.xml (that's unattend-windows11.xml, unchanged). This file exists only to answer
   the plan's single biggest open question: does this project's already-proven offline-drop
   delivery mechanism (%WINDIR%\Panther\unattend.xml) also trigger Audit Mode, the same way it

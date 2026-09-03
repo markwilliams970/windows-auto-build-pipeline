@@ -19,7 +19,7 @@
 # after confirming, twice independently, that OVMF's own NVRAM boot order handles
 # disk-vs-CD-ROM selection correctly on its own once Windows registers a real "Windows
 # Boot Manager" entry - no static override needed at all. See
-# PHASE3_ENGINEERING_LOG.md's Phase 3.4 "design reconsideration" entry for the full
+# project_documentation/PHASE3_ENGINEERING_LOG.md's Phase 3.4 "design reconsideration" entry for the full
 # evidentiary trail (direct TianoCore boot-log confirmation of Boot0009 "Windows Boot
 # Manager" on both reboots, both attempts). The retired eject-based mechanism and its
 # own calibration convenience script (image-apply/historical/calibrate-eject-timing.sh)

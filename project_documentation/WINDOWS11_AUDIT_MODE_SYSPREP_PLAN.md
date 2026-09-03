@@ -134,7 +134,7 @@ of approximating it.
 Per Microsoft's own docs, **none of this tooling is gated behind an OEM license** — Audit Mode is
 built into every Windows image, and Sysprep is "included in all Windows images." The access
 question that matters here isn't licensing, it's mechanism: this project's whole pipeline is built
-on never running Setup.exe (CLAUDE.md's own standing rule, and the entire reason this project
+on never running Setup.exe (../CLAUDE.md's own standing rule, and the entire reason this project
 exists instead of just fixing the sibling project's interactive-installer approach). Audit Mode is
 normally entered either interactively (`Ctrl+Shift+F3` during a live OOBE) or via an unattend
 setting that a Setup.exe-driven install consumes. **Whether the offline-drop delivery mechanism
@@ -193,7 +193,7 @@ of being the pipeline's last offline touch.
 
 ### Avoiding live keystroke automation
 
-CLAUDE.md's own standing engineering preference is against fragile, timing-dependent live
+../CLAUDE.md's own standing engineering preference is against fragile, timing-dependent live
 automation where a documented, non-interactive mechanism exists (see its `boot_command`/VNC-keystroke
 ban, and the QMP-screendump convention's own framing of interactive driving as a fallback, not a
 default). Two candidates, needing their own verification:
@@ -212,7 +212,7 @@ default). Two candidates, needing their own verification:
    a known-viable fallback, not a hypothetical, but should be the second choice, not the first.
 
 **If (2) is ever used, or any future phase needs `tools/qmp-click.py` (mouse clicks, not just
-keystrokes)**: see CLAUDE.md's "VM screen inspection" section for the required USB tablet device
+keystrokes)**: see ../CLAUDE.md's "VM screen inspection" section for the required USB tablet device
 flags — this is a project-wide gotcha, not specific to Windows 11 or to this plan, so it's
 documented there rather than duplicated here.
 

@@ -3,7 +3,7 @@
   windows-auto-build-pipeline: offline-dropped unattend.xml for the specialize/oobeSystem
   passes only. Windows 11 Enterprise Evaluation variant of unattend-server2025.xml - same proven
   structure (confirmed working end-to-end for Server 2025 and Server 2022,
-  PHASE2_ENGINEERING_LOG.md Session 11/Finding 41 and Session 12/Finding 42), only the driver path
+  project_documentation/PHASE2_ENGINEERING_LOG.md Session 11/Finding 41 and Session 12/Finding 42), only the driver path
   (w11 instead of 2k25/2k22) and ComputerName differ. See unattend-server2025.xml's own header
   comment for the full rationale behind this file's structure.
 

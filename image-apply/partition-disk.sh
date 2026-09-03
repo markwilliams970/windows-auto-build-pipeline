@@ -3,7 +3,7 @@
 #
 # GPT layout matches Microsoft's own documented manufacturing layout for UEFI Windows
 # installs (100MiB ESP / 16MiB MSR / rest Windows), the same layout used throughout
-# PHASE2_ENGINEERING_LOG.md's hand-run sessions. mkntfs needs the Windows partition's
+# project_documentation/PHASE2_ENGINEERING_LOG.md's hand-run sessions. mkntfs needs the Windows partition's
 # real start sector to write a boot-correct BPB (Finding 2 - qemu-nbd-attached partition
 # sub-devices don't expose geometry mkntfs can auto-detect); this script queries it from
 # sgdisk's own output after creating the partition rather than hardcoding the value the

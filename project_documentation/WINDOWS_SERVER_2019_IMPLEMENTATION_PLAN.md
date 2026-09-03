@@ -188,14 +188,14 @@ for Phase D as a batch of small, low-risk edits — not because it's required fo
 
 ### Documentation (not code) — deliberately deferred to the end of Phase E, not done now
 
-`CLAUDE.md` describes Server 2022/2025/Windows 11 throughout as the three (soon four) target OSes,
+`../CLAUDE.md` describes Server 2022/2025/Windows 11 throughout as the three (soon four) target OSes,
 with substantial narrative about each one's proven history. Per this project's own established
-pattern — every prior OS's `CLAUDE.md` narrative was written *after* real, evidence-backed success,
-never speculatively ahead of it — this plan deliberately does **not** propose editing `CLAUDE.md`'s
+pattern — every prior OS's `../CLAUDE.md` narrative was written *after* real, evidence-backed success,
+never speculatively ahead of it — this plan deliberately does **not** propose editing `../CLAUDE.md`'s
 prose during Phase D. `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` and this document (Phase B) are the
-correct place for pre-implementation design/tracking; `CLAUDE.md` gets a real update only once Phase
+correct place for pre-implementation design/tracking; `../CLAUDE.md` gets a real update only once Phase
 E's two builds succeed, mirroring exactly how Server 2022's Session 12 and Windows 11's Phase 3.4/3.5
-earned their own `CLAUDE.md` narrative sections only after the fact.
+earned their own `../CLAUDE.md` narrative sections only after the fact.
 
 ---
 
@@ -311,7 +311,7 @@ Phase A/B's research and design work found no reason to expect any). If either b
 non-cosmetic bug (the kind Phase 3 Session 2 found for Server 2022/2025 — sudoers scoping, nbd
 attach-timing races, etc.), that becomes its own documented finding, not a silent workaround.
 
-**Only after both builds succeed**: the deferred `CLAUDE.md` documentation pass (adding Server 2019
+**Only after both builds succeed**: the deferred `../CLAUDE.md` documentation pass (adding Server 2019
 as a fourth production-ready target OS throughout, updating the Repository Structure sketch,
 Development Approach narrative, etc.) — matching this project's own established pattern of writing
 that narrative after proof, not ahead of it.
@@ -328,6 +328,6 @@ All five decision points reviewed and confirmed by the user, no changes requeste
    keeping verbatim: revisit *if* a real diagnostic need for a rapid-iteration harness comes up during
    Phase D/E, not proactively extended now.
 4. **Phase E build order**: `ad-ds` first, then `iis`/`sql-server` — confirmed as proposed.
-5. **`CLAUDE.md` documentation timing**: deferred until after both Phase E builds succeed — confirmed.
+5. **`../CLAUDE.md` documentation timing**: deferred until after both Phase E builds succeed — confirmed.
 
 **Phase D (implementation) starts next**, following the D1-D5 sequence above unchanged.

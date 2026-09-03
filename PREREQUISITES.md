@@ -54,7 +54,7 @@ sudo modprobe nbd max_part=8
 
 [`jpz4085/BCD-SYS`](https://github.com/jpz4085/BCD-SYS) (GPL-3.0) is the tool this project uses to
 build the Windows BCD store and boot files directly from Linux — see
-`PHASE2_BOOTSTRAP_ARCHITECTURE.md`. It isn't packaged for any distro; clone it directly:
+`project_documentation/PHASE2_BOOTSTRAP_ARCHITECTURE.md`. It isn't packaged for any distro; clone it directly:
 
 ```
 git clone https://github.com/jpz4085/BCD-SYS.git tools/vendor/BCD-SYS

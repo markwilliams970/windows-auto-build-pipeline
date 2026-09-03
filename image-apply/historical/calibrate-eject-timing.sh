@@ -3,7 +3,7 @@
 # project. windows11-setup-install.sh dropped the entire eject-timing mechanism this
 # script existed to calibrate, in favor of removing the static bootindex= override
 # and letting OVMF's own NVRAM boot order handle disk-vs-CD selection - confirmed
-# working twice independently (PHASE3_ENGINEERING_LOG.md, Phase 3.4's "design
+# working twice independently (project_documentation/PHASE3_ENGINEERING_LOG.md, Phase 3.4's "design
 # reconsideration" entry). There is nothing left for this script to calibrate: no
 # eject happens anymore, so no eject timing needs measuring. Left in the repo rather
 # than deleted per this project's own standard of keeping negative-branch/superseded
@@ -77,7 +77,7 @@ qemu-img create -f qcow2 "$TARGET_QCOW2" 64G >/dev/null
 # media root - mkisofs must be pointed at a file with that exact name, not the
 # template's own on-disk name, or Setup silently falls back to its interactive
 # language-selection screen with no error at all (caught the hard way while testing
-# this script - see PHASE3_ENGINEERING_LOG.md Phase 3.4).
+# this script - see project_documentation/PHASE3_ENGINEERING_LOG.md Phase 3.4).
 cp "$TEMPLATE" "${WORK_DIR}/autounattend.xml"
 mkisofs -quiet -o "$ANSWER_ISO" -J -r -V "AUTOUNATTEND" "${WORK_DIR}/autounattend.xml"
 cp /usr/share/OVMF/OVMF_VARS_4M.fd "$OVMF_VARS_RUN"

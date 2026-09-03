@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 4 tool installer stage (PHASE4_TOOLS_INSTALLER_PLAN.md). Runs after inject-virtio-spice.sh
+# Phase 4 tool installer stage (project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md). Runs after inject-virtio-spice.sh
 # in build.sh, against the final, already-role-provisioned, already-SPICE-injected artifact - by
 # this point storage is virtio-scsi and NIC is virtio-net for every OS (Phase 3A ran unconditionally
 # just before this), so this script needs no OS branching in its own QEMU device model at all,
@@ -10,7 +10,7 @@
 # and pinning them would just relocate the staleness problem this project's own
 # "Version-sensitivity and brittleness" standard already warns about. Instead this script resolves
 # and downloads each one's CURRENT version fresh, from the Linux host, on every single invocation -
-# see PHASE4_TOOLS_INSTALLER_PLAN.md's A.1/A.3 revision (2026-09-03) for the full reasoning,
+# see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md's A.1/A.3 revision (2026-09-03) for the full reasoning,
 # including why this stays host-side rather than delegating the download to the guest (guest-side
 # download would reintroduce the exact "hidden dependency" - live internet access from inside the
 # guest at exactly the right unattended moment - that got Chocolatey rejected in this project's own
@@ -87,7 +87,7 @@ DD_AGENT_VERSION="$(parse_datadog_agent_version)"
 NEEDS_DATADOG=false
 for t in "${SELECTED_TOOLS[@]}"; do [[ "$t" == "datadog-agent" ]] && NEEDS_DATADOG=true; done
 
-# Fail loud, before ever starting QEMU - Phase C decision #3 (PHASE4_TOOLS_INSTALLER_PLAN.md).
+# Fail loud, before ever starting QEMU - Phase C decision #3 (project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md).
 if [[ "$NEEDS_DATADOG" == "true" && "$MODE" == "Install" && -z "${DD_API_KEY:-}" ]]; then
   echo "ERROR: tools.yaml lists datadog-agent but \$DD_API_KEY is unset - refusing to boot the VM and install the Agent unconfigured. Set DD_API_KEY or remove datadog-agent from ${TOOLS_YAML_PATH}." >&2
   exit 1
@@ -107,7 +107,7 @@ MANIFEST="${STAGING_DIR}/manifest.txt"
 
 # --- per-tool "find the current installer" resolvers, each setting DL_URL (+ DL_VERSION where
 # knowable) - every one of these was verified against a real, live HTTP request during
-# PHASE4_TOOLS_INSTALLER_PLAN.md's research pass, not guessed. See that doc's A.3 table for the
+# project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md's research pass, not guessed. See that doc's A.3 table for the
 # full citation trail (SourceForge redirects, a GitHub API call, an HTML scrape, Google's own
 # permanent URL, and Datadog's documented versioned-MSI convention).
 
@@ -156,7 +156,7 @@ resolve_datadog_agent() {
   [[ -n "$DD_AGENT_VERSION" ]] || { echo "ERROR: datadog.agent_version not set in ${TOOLS_YAML_PATH}" >&2; return 1; }
   # URL pattern confirmed against Datadog's own Chef cookbook source (chef-datadog's
   # _install-windows.rb/attributes/default.rb), then live-verified against real published
-  # versions - see PHASE4_TOOLS_INSTALLER_PLAN.md A.3.
+  # versions - see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md A.3.
   DL_URL="https://windows-agent.datadoghq.com/ddagent-cli-${DD_AGENT_VERSION}.msi"
   DL_VERSION="$DD_AGENT_VERSION"
 }
@@ -291,7 +291,7 @@ QEMU_ARGS=(
   -drive "file=${TARGET_QCOW2},if=none,id=target,format=qcow2"
   # Explicit pcie-root-port placement (same addr/chassis/port as inject-virtio-spice.sh's own
   # Stage 2, which is what actually made this disk boot on virtio-scsi in the first place) -
-  # NOT an implicit/default bus placement. Finding 3A-3 (WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)
+  # NOT an implicit/default bus placement. Finding 3A-3 (project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md)
   # found that PCI topology, not just drive presence, affects which hardware ID a virtio-scsi-pci
   # controller negotiates - an implicit placement here negotiated a different ID than what's
   # registered in the guest's DriverDatabase, producing an INACCESSIBLE_BOOT_DEVICE-style failure

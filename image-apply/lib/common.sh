@@ -2,12 +2,12 @@
 # Shared config/helpers for image-apply/*.sh. Source this, don't execute it.
 #
 # OS-specific values below (WIM image index, virtio-win driver subfolder, disk size,
-# ComputerName prefix) are transcribed directly from PHASE2_ENGINEERING_LOG.md's own
+# ComputerName prefix) are transcribed directly from project_documentation/PHASE2_ENGINEERING_LOG.md's own
 # independently-verified findings for each OS - not assumed to generalize from one
 # to the next, per this project's own "verify before trusting" standard:
 #   - Server 2022 index 2 / Server 2025 index 2: Session 12 Finding 42, Finding 0
 #   - Windows 11 index 1 (only image in the WIM): Session 13 Finding 43
-#   - Server 2019 index 2: WINDOWS_SERVER_2019_RESEARCH_PLAN.md Finding 3 (verified via
+#   - Server 2019 index 2: project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md Finding 3 (verified via
 #     `wimlib-imagex info` during Phase A research, not a live bring-up session - the one
 #     value here with a different provenance than the other three, called out explicitly
 #     per this project's own standard of not overstating a citation's origin)

@@ -2,7 +2,7 @@
 <!--
   windows-auto-build-pipeline: offline-dropped unattend.xml for the specialize/oobeSystem
   passes only. Windows Server 2022 variant of unattend-server2025.xml - same proven structure
-  (confirmed working end-to-end for Server 2025, PHASE2_ENGINEERING_LOG.md Session 11/Finding 41),
+  (confirmed working end-to-end for Server 2025, project_documentation/PHASE2_ENGINEERING_LOG.md Session 11/Finding 41),
   only the driver path (2k22 instead of 2k25) and ComputerName differ. See unattend-server2025.xml's
   own header comment for the full rationale behind this file's structure (why PnpCustomizationsNonWinPE
   isn't used, why pnputil runs live via FirstLogonCommands instead, etc.) - not repeated here.

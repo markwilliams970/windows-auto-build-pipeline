@@ -127,7 +127,7 @@ if [[ ! -f "${DRIVER_CACHE_DIR}/netkvm/netkvmp.exe" ]]; then
   7z e -y -o"${DRIVER_CACHE_DIR}/netkvm" "$VIRTIO_WIN_ISO" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvm.inf" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvm.sys" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvm.cat" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvmp.exe" "NetKVM/${DRIVER_SUBFOLDER}/amd64/netkvmco.exe"
 fi
 
-# Unmounted before the driver-file overwrite, deliberately - see PHASE3_ENGINEERING_LOG.md's
+# Unmounted before the driver-file overwrite, deliberately - see project_documentation/PHASE3_ENGINEERING_LOG.md's
 # "Update 5" finding (2026-08-24). Writing viostor.sys/netkvm.sys through this ntfs-3g uid=/gid=
 # mount (as a plain `cp`, the original approach) silently resets the file's real NTFS security
 # descriptor to the mount's own generic default, re-breaking the exact bug apply-image.sh's own

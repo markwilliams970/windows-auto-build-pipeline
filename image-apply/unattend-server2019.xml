@@ -3,9 +3,9 @@
   windows-auto-build-pipeline: offline-dropped unattend.xml for the specialize/oobeSystem
   passes only. Windows Server 2019 variant of unattend-server2022.xml - same proven structure,
   only the driver path (2k19 instead of 2k22) and ComputerName differ. Unlike the 2022/2025/
-  Windows 11 templates (each transcribed from a live PHASE2_ENGINEERING_LOG.md bring-up
+  Windows 11 templates (each transcribed from a live project_documentation/PHASE2_ENGINEERING_LOG.md bring-up
   session), this file was produced during Phase B design work
-  (WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md), not a live session - log filenames below use a
+  (project_documentation/WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md), not a live session - log filenames below use a
   "server2019" prefix rather than a fabricated "sessionNN" number for that reason. See
   unattend-server2025.xml's own header comment for the full rationale behind this file's
   structure (why PnpCustomizationsNonWinPE isn't used, why pnputil runs live via
@@ -13,7 +13,7 @@
 
   Order 4-8 (WinRM enable) is split into five separate SynchronousCommand entries, one operation
   each - NOT combined into one script, and this split is the actual fix, not a stylistic choice
-  (PHASE3_ENGINEERING_LOG.md, 2026-09-02 Phase E1 - the full bisection trail lives there, this is
+  (project_documentation/PHASE3_ENGINEERING_LOG.md, 2026-09-02 Phase E1 - the full bisection trail lives there, this is
   the short version). The original single combined script hung on Server 2019 specifically; ~15
   diagnostic boots via dev/run-server2019-specialize-test.sh isolated the actual mechanism:
 

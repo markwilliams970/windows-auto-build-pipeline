@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Phase 3.2 test artifact for WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md - NOT a production
+  Phase 3.2 test artifact for project_documentation/WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md - NOT a production
   autounattend.xml. Deliberately minimal: only the windowsPE pass (disk partitioning, image
   selection, EULA acceptance) needed to drive Setup.exe through a real, hands-off install onto a
   real target disk. No specialize/oobeSystem automation at all - reaching a real post-install boot

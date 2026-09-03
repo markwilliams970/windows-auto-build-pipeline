@@ -38,8 +38,8 @@ approach doesn't work.
   once), specialized via an offline-dropped `unattend.xml`, and only then booted for the first
   time, via Packer, straight into a WinRM-reachable, already-configured machine. Server 2019 was
   added after the other two OSes proved the mechanism out — see "Summary of prior work" below;
-  its own design/research trail lives in `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` and
-  `WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`.
+  its own design/research trail lives in `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md` and
+  `project_documentation/WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`.
 - **Windows 11**: a Setup.exe-driven install using a Microsoft-patched, prompt-free install ISO
   (the `_noprompt` boot files Microsoft has shipped for over a decade, applied via a hand-built
   QEMU invocation with explicit UEFI boot-order control) plus an answer-file ISO — one unattended
@@ -82,11 +82,12 @@ worth knowing both because it explains some of the design and because it's where
   a VNC viewer plus a manual screenshot — see `tools/qmp-screenshot.py`.
 
 The full engineering trail — every finding, every dead end, every root cause — lives in
-`PHASE2_ENGINEERING_LOG.md`, `PHASE3_ENGINEERING_LOG.md`,
-`WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`, `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, and — for
+`project_documentation/PHASE2_ENGINEERING_LOG.md`, `project_documentation/PHASE3_ENGINEERING_LOG.md`,
+`project_documentation/WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`, `project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, and — for
 Server 2019 specifically, added after the original three OSes were already production-ready —
-`WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (research/feasibility), `WINDOWS_SERVER_2019_IMPLEMENTATION_
-PLAN.md` (design), and `PHASE3_ENGINEERING_LOG.md`'s own later sessions (bring-up, including two
+`project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (research/feasibility),
+`project_documentation/WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md` (design), and
+`project_documentation/PHASE3_ENGINEERING_LOG.md`'s own later sessions (bring-up, including two
 real, non-obvious bugs found and fixed: a `Get-NetIPAddress | Where-Object` pipe that hangs
 indefinitely when run via `FirstLogonCommands` on Server 2019 specifically, and a second, subtler
 one where any two WSMan-configuration changes run in the same PowerShell process — not any single
@@ -128,7 +129,7 @@ exact links or builds are still current (see "Risks and limitations" below).
 sources, its Evaluation download is gated behind a Microsoft registration form (name/email/company)
 rather than a direct, scriptable fwlink — confirmed by tracing the actual redirect target. Acquiring
 it (or re-acquiring it, if the cached copy is ever lost) requires a human to complete that form in a
-browser first; see `WINDOWS_SERVER_2019_RESEARCH_PLAN.md`'s Finding 3 for the full detail and the
+browser first; see `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md`'s Finding 3 for the full detail and the
 `ISO_CACHE_INVENTORY.md` row for exactly what's cached today.
 
 ## Running a build
@@ -241,7 +242,7 @@ image-apply/install-tools.sh <server2019|server2022|server2025|windows11> <qcow2
 
 Full design/research trail and real Phase E test results (a complete Create/Read/Update/Delete
 cycle confirmed against a real Server 2022 build, for every tool including the Datadog Agent's own
-version-convergence path): `PHASE4_TOOLS_INSTALLER_PLAN.md`.
+version-convergence path): `project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md`.
 
 ## Inspecting a running build
 
@@ -346,27 +347,27 @@ Read this before relying on this pipeline for anything beyond disposable lab use
 
 - **Server 2019 is production-ready** (2026-09-02) — the fourth target OS, added after the original
   three via a formal, gated process (research → design → design review → implementation → E2E
-  testing, all five phases documented in `WINDOWS_SERVER_2019_RESEARCH_PLAN.md`,
-  `WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`, and `PHASE3_ENGINEERING_LOG.md`). Both required
+  testing, all five phases documented in `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md`,
+  `project_documentation/WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md`, and `project_documentation/PHASE3_ENGINEERING_LOG.md`). Both required
   builds (`ad-ds` and `iis`/`sql-server`) are independently confirmed end-to-end through the real
   production pipeline, at the same evidentiary bar as every other OS. `dev/
   run-server2019-specialize-test.sh` (new fast-iteration harness, distinct from
   `dev/role-test.pkr.hcl` — it iterates on the specialize/`FirstLogonCommands` step itself, not
   role scripts) was purpose-built to chase down two real, Server-2019-specific bugs found and fixed
-  along the way; see `PHASE3_ENGINEERING_LOG.md`'s Phase E sessions for the full bisection trail.
+  along the way; see `project_documentation/PHASE3_ENGINEERING_LOG.md`'s Phase E sessions for the full bisection trail.
 - **Phase 4 (Tooling) is implemented and tested** (2026-09-03) — see "Installing tools" above for
   usage. `tools.yaml`-driven, wired into `build.sh` for all four OSes; five of the six tools fetch
   fresh from each vendor host-side on every build rather than being pinned (they churn too fast to
   usefully pin the way OS ISOs are), with the Datadog Agent as the one deliberate pinned exception.
   Full CRUD (Create/Read/Update/Delete) and idempotency confirmed against a real Server 2022 build
-  for all six tools — see `PHASE4_TOOLS_INSTALLER_PLAN.md`. Not yet exercised on Server 2019/2025
+  for all six tools — see `project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md`. Not yet exercised on Server 2019/2025
   or Windows 11 (same code path, no OS branching, but genuinely untested there); real Datadog
   Agent connectivity was never confirmed (dummy API key used for testing).
 - **Phase 5 (lifecycle automation)**: build/verify/destroy workflow. Not started.
 - **Open engineering question**: whether Server 2019/2022/2025's existing offline-hivex NIC driver
   mechanism should ever be ported onto the newer live-swap technique used for Windows 11's VirtIO
   NIC — currently left as-is (offline-hivex) since it's already proven and the swap would be a
-  breaking change to a working mechanism; flagged in `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, not
+  breaking change to a working mechanism; flagged in `project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`, not
   scheduled.
 - A preflight script that checks cached-media WIM edition metadata and virtio driver hardware IDs
   against what's hardcoded in `image-apply/lib/common.sh`/`tools/gen-viostor-ddb-reg.py`, and fails

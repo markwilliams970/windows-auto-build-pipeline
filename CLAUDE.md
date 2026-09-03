@@ -9,7 +9,7 @@ project, `../windows-server-vm-automation/`, for the same reason: Datadog Agent 
 Windows/AD/IIS/SQL Server monitoring integration validation, simulating realistic enterprise and
 regulated-cloud (FedRAMP/GovCloud-style) customer environments.
 
-**Read `HANDOFF_FROM_UNATTENDED_INSTALL.md` before doing anything else.** It explains in detail
+**Read `project_documentation/HANDOFF_FROM_UNATTENDED_INSTALL.md` before doing anything else.** It explains in detail
 why this project exists as a separate thing rather than a fix inside the sibling repo: the sibling
 project's Windows Server 2022 build (interactive Setup driven by `autounattend.xml`, with Packer
 typing keystrokes over VNC to catch the install media's "press any key to boot" prompt) works
@@ -30,13 +30,13 @@ life of the original install, not per clone). Every build applies the WIM fresh,
 
 # Implementation Status
 
-**Phase 1** (architecture) is done: this document plus `HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
+**Phase 1** (architecture) is done: this document plus `project_documentation/HANDOFF_FROM_UNATTENDED_INSTALL.md`, including sourced prior-art research confirming the offline `DISM`/`bcdboot` approach for all three target OSes.
 
-**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** for its own success criterion — offline image application → bootable → specialized → real, unattended WinRM connectivity — confirmed end-to-end for **all three original target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation) when hand-run (see its entry under Development Approach below, and `PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). `image-apply/`'s real scripts formalizing that recipe were written and confirmed during Phase 3's own Session 2 for Server 2022/2025 specifically; Session 3 then ran the same scripts against Windows 11 and found real, blocking problems the hand-run recipe never hit — see `PHASE3_ENGINEERING_LOG.md` Session 3 and `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`. This exact mechanism later generalized to a fourth OS, Server 2019 (2026-09-02), with zero changes to any of `partition-disk.sh`/`apply-image.sh`/`make-bootable.sh` - see "Implementation Status" above.
+**Phase 2** (the offline-apply installation mechanism itself, where almost all of the real, unsolved work was) is **done** for its own success criterion — offline image application → bootable → specialized → real, unattended WinRM connectivity — confirmed end-to-end for **all three original target OSes** (Windows Server 2025, Windows Server 2022, Windows 11 Enterprise Evaluation) when hand-run (see its entry under Development Approach below, and `project_documentation/PHASE2_ENGINEERING_LOG.md`'s Session 11/Finding 41, Session 12/Finding 42, and Session 13/Finding 43 for the full trail). `image-apply/`'s real scripts formalizing that recipe were written and confirmed during Phase 3's own Session 2 for Server 2022/2025 specifically; Session 3 then ran the same scripts against Windows 11 and found real, blocking problems the hand-run recipe never hit — see `project_documentation/PHASE3_ENGINEERING_LOG.md` Session 3 and `project_documentation/WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`. This exact mechanism later generalized to a fourth OS, Server 2019 (2026-09-02), with zero changes to any of `partition-disk.sh`/`apply-image.sh`/`make-bootable.sh` - see "Implementation Status" above.
 
-**Phase 3** (role provisioning) is **done**, including the production pipeline — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server), through both a fast-iteration test harness (`dev/`) and the real production path (`image-apply/`'s scripts + `packer/boot-and-provision.pkr.hcl` + `build.sh`, taking a blank disk all the way to a provisioned VM with no hand-run steps). See its entry under Development Approach below and `PHASE3_ENGINEERING_LOG.md` for the full trail across both sessions. **Phases 4-5** are not yet started.
+**Phase 3** (role provisioning) is **done**, including the production pipeline — the same three roles (IIS, AD DS, SQL Server) reused unchanged from the sibling project are confirmed live against both Windows Server 2025 and Windows Server 2022, under two mutually-exclusive profiles (domain-controller vs. app-server), through both a fast-iteration test harness (`dev/`) and the real production path (`image-apply/`'s scripts + `packer/boot-and-provision.pkr.hcl` + `build.sh`, taking a blank disk all the way to a provisioned VM with no hand-run steps). See its entry under Development Approach below and `project_documentation/PHASE3_ENGINEERING_LOG.md` for the full trail across both sessions. **Phases 4-5** are not yet started.
 
-**Windows 11 is also production-ready, as of Phase 3.4/3.5**, via a genuinely different mechanism than Server 2022/2025's Phase 2/3 pipeline above (Setup.exe-driven, `image-apply/windows11-setup-install.sh`, no Packer handoff, no roles - Windows 11 doesn't get AD DS/IIS/SQL Server). See the "RESOLVED" note under Phase 3's own section below and `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries for the full trail - six independent clean production runs total.
+**Windows 11 is also production-ready, as of Phase 3.4/3.5**, via a genuinely different mechanism than Server 2022/2025's Phase 2/3 pipeline above (Setup.exe-driven, `image-apply/windows11-setup-install.sh`, no Packer handoff, no roles - Windows 11 doesn't get AD DS/IIS/SQL Server). See the "RESOLVED" note under Phase 3's own section below and `project_documentation/PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries for the full trail - six independent clean production runs total.
 
 **Windows Server 2019 is also production-ready, as of 2026-09-02** - the fourth target OS, added
 well after the original three via its own formal, gated project (not a phase of this document's own
@@ -46,9 +46,9 @@ existing Phase 2 offline-apply mechanism and Phase 3 role-provisioning scripts *
 unchanged** - the entire addition was config-table entries (`image-apply/lib/common.sh`, one new
 `image-apply/unattend-server2019.xml` template) plus two real, Server-2019-specific bugs found and
 fixed in the specialize/`FirstLogonCommands` path (neither existing in Server 2022/2025's own proven
-recipe). Full trail: `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (Phase A: research/feasibility),
-`WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md` (Phase B/C: design + design review), and
-`PHASE3_ENGINEERING_LOG.md`'s later 2026-09-02 sessions (Phase D: implementation, Phase E: E2E
+recipe). Full trail: `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md` (Phase A: research/feasibility),
+`project_documentation/WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md` (Phase B/C: design + design review), and
+`project_documentation/PHASE3_ENGINEERING_LOG.md`'s later 2026-09-02 sessions (Phase D: implementation, Phase E: E2E
 testing - both required builds, `ad-ds` and `iis`/`sql-server`, independently confirmed end-to-end
 through the real production pipeline).
 
@@ -71,12 +71,12 @@ stale here.
   isn't fully conclusive from two data points. Non-fatal, Server-2019-gated diagnostic
   instrumentation (`scripts/verify-post-reboot.ps1`, gated on `-TargetOS server2019`, zero effect on
   Server 2022/2025) is already in place and will keep gathering real timing data on every future
-  Server 2019 `ad-ds` build with no further effort - see `PHASE3_ENGINEERING_LOG.md`'s Phase E
+  Server 2019 `ad-ds` build with no further effort - see `project_documentation/PHASE3_ENGINEERING_LOG.md`'s Phase E
   sessions (2026-09-02) for the full trail.
 
 Previously resolved: Windows 11's `register-vm.sh` device-model case (NIC-swap branch unconfirmed by
 a real boot) was resolved 2026-09-01 - see Phase 3A's own section below and
-`PHASE3_ENGINEERING_LOG.md`'s corresponding session entry for the full evidentiary trail.
+`project_documentation/PHASE3_ENGINEERING_LOG.md`'s corresponding session entry for the full evidentiary trail.
 
 ---
 
@@ -112,7 +112,7 @@ reinvent wherever the two overlap:
   entire mechanism is what this project exists to replace. **Server 2022/2025: this ban is absolute,
   no exception. Windows 11: partially relaxed — see the second "RECONSIDERED" note below.**
 
-  **RECONSIDERATION CLOSED as of `PHASE2_ENGINEERING_LOG.md`'s Findings 15-28: rule is back in
+  **RECONSIDERATION CLOSED as of `project_documentation/PHASE2_ENGINEERING_LOG.md`'s Findings 15-28: rule is back in
   force, do not reuse `Microsoft-Windows-Setup`.** This rule was temporarily relaxed when Setup.exe
   looked like a promising pivot — the UEFI "press any key" landmine turned out to be specific to
   `media=cdrom` boot, not Setup.exe itself, so a self-built Setup.exe boot medium (`boot.wim` index
@@ -126,7 +126,7 @@ reinvent wherever the two overlap:
   this rule originally specified. `boot_command`/VNC keystroke injection remain correctly banned
   regardless, for the original reason (they solve a boot-prompt problem that doesn't exist here).
 
-  **RECONSIDERED AGAIN, Windows 11 only, as of `PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section
+  **RECONSIDERED AGAIN, Windows 11 only, as of `project_documentation/PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section
   (end of Session 4): the ban on `Microsoft-Windows-Setup` is relaxed for Windows 11 specifically —
   Server 2022/2025 stay fully banned from it, unchanged, no exception.** This is not a reversal on a
   whim: the fully-offline approach this rule protects (apply → bootable → specialize → real first
@@ -139,7 +139,7 @@ reinvent wherever the two overlap:
   the complete evidentiary record before assuming this note alone justifies anything.
 
   **What's actually different this time, so this doesn't quietly re-open the door Findings 19/24/
-  25/27/28 closed**: `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` (Phase 3) proposes driving Setup.exe
+  25/27/28 closed**: `project_documentation/WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md` (Phase 3) proposes driving Setup.exe
   via an ISO patched with Microsoft's own, officially-shipped `_noprompt` boot files
   (`efisys_noprompt.bin`/`cdboot_noprompt.efi` — genuine 15-year-old Microsoft tooling, verified
   present on this project's own cached install media, not a community hack) — this *eliminates* the
@@ -151,7 +151,7 @@ reinvent wherever the two overlap:
   relaxation does not readmit them; the whole point of the new approach is that no keystroke race
   exists to drive in the first place. Whether `EarlyF6DriverInstall` or some other Setup.exe gate
   refires under this different boot-medium shape is explicitly unconfirmed and is exactly what
-  `WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`'s own Phase 3.1-3.2 gates test before anything is
+  `project_documentation/WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md`'s own Phase 3.1-3.2 gates test before anything is
   trusted — treat this note as permission to attempt the plan, not confirmation the plan works.
 
 ---
@@ -190,7 +190,7 @@ Each real build applies the WIM fresh. The only exception is the `dev/`-style fa
 harness explicitly used for testing *provisioning script* changes during development, which is
 allowed to clone from a frozen baseline the same way the sibling project's `dev/` harness does —
 that's a development convenience, never the actual build workflow, and the distinction matters
-(see `HANDOFF_FROM_UNATTENDED_INSTALL.md`'s eval-expiration section for exactly why).
+(see `project_documentation/HANDOFF_FROM_UNATTENDED_INSTALL.md`'s eval-expiration section for exactly why).
 
 ---
 
@@ -216,7 +216,7 @@ resulting partitions.
 
 ## Making the disk bootable
 
-**Two-tier plan — see `PHASE2_BOOTSTRAP_ARCHITECTURE.md` for the full comparison and rationale.**
+**Two-tier plan — see `project_documentation/PHASE2_BOOTSTRAP_ARCHITECTURE.md` for the full comparison and rationale.**
 
 **First attempt: BCD-SYS** (`github.com/jpz4085/BCD-SYS`), an actively-maintained open source tool
 that constructs the BCD store and copies boot files to the ESP directly from the Linux host, via
@@ -229,7 +229,7 @@ before depending on it, same standard as everything else in this project.
 WinPE environment under QEMU just long enough to run the real `bcdboot W:\Windows /s S: /bootex`
 once, then never boot that WinPE environment again. This is Microsoft's own documented mechanism
 (`DISM /Apply-Image` then `bcdboot`, run from WinPE), confirmed against real-world deployment
-guides for all three target OSes (see `HANDOFF_FROM_UNATTENDED_INSTALL.md`'s "Prior art / community
+guides for all three target OSes (see `project_documentation/HANDOFF_FROM_UNATTENDED_INSTALL.md`'s "Prior art / community
 research" section) — not a guess, and not something to reimplement from scratch.
 
 **The fallback's one genuinely open question**: whether WinPE's own boot is affected by the same
@@ -284,7 +284,7 @@ Several small tools implement this, in `tools/`:
 default pointer is a relative PS/2 mouse, which `qmp-click.py`'s absolute-position clicks cannot
 drive at all in this project's WinPE/Setup/Audit-Mode environments (confirmed directly: relative
 `"rel"` QMP input-send-event calls succeed with no error, but the guest's on-screen cursor never
-moves — `windows-auto-build-pipeline` `PHASE3_ENGINEERING_LOG.md` Session 4/Finding 10). The sibling
+moves — `windows-auto-build-pipeline` `project_documentation/PHASE3_ENGINEERING_LOG.md` Session 4/Finding 10). The sibling
 project (`../windows-server-vm-automation/register-vm.sh`) hit and fixed the identical problem for
 its own VNC/SPICE console access via libvirt domain XML: `<input type='tablet' bus='usb'/>`, with
 its own comment explaining why — *"Without this, libvirt defaults to a relative PS/2 mouse, which
@@ -353,7 +353,7 @@ configured), plus additional packages this project specifically needs:
 - `pywinrm` (`pip3 install pywinrm`) for `python3`'s own `winrm` module — Windows 11's Setup.exe-
   driven build path uses this directly for its own WinRM confirmation step, rather than reaching
   into any unrelated virtualenv (a mistake made once during Phase 3.4's own interactive testing and
-  corrected before the production script was committed - see PHASE3_ENGINEERING_LOG.md). Confirmed
+  corrected before the production script was committed - see project_documentation/PHASE3_ENGINEERING_LOG.md). Confirmed
   already present system-wide on this host as of Phase 3.4; a fresh host needs it installed
   explicitly.
 
@@ -381,7 +381,7 @@ monitoring-integration goals; whatever Windows 11 actually needs for Phase 3 (if
 Datadog Agent itself, tracked as Phase 4) isn't decided yet — don't assume it mirrors the Server
 roles. `services.yaml`'s existing `ad-ds`/`sql-server` entries being Server-only, unenforced-at-runtime
 gap (`run-services.ps1` only skips a role when its script is missing, not when it's inapplicable to
-the current OS) is real and already flagged in `PHASE2_ENGINEERING_LOG.md`'s Session 13 next-steps —
+the current OS) is real and already flagged in `project_documentation/PHASE2_ENGINEERING_LOG.md`'s Session 13 next-steps —
 this is the same fact, now stated as project direction rather than just an implementation gotcha to
 watch for.
 
@@ -414,7 +414,11 @@ windows-auto-build-pipeline/
 
 ├── README.md
 ├── CLAUDE.md
-├── HANDOFF_FROM_UNATTENDED_INSTALL.md   # read this first
+├── project_documentation/      # PHASE2_ENGINEERING_LOG.md, PHASE3_ENGINEERING_LOG.md, all the
+│   │                             # WINDOWS_*/WINDOWS11_* plan docs, etc. - PREREQUISITES.md and
+│   │                             # ISO_CACHE_INVENTORY.md stay at repo root (operational
+│   │                             # reference, not phased design/history)
+│   └── HANDOFF_FROM_UNATTENDED_INSTALL.md   # read this first
 ├── services.yaml                         # copied/adapted from the sibling project
 ├── build.sh                              # real: orchestrates image-apply/*.sh then Packer, then
 │                                            # inject-virtio-spice.sh (Phase 3A, all four OSes)
@@ -423,7 +427,7 @@ windows-auto-build-pipeline/
 │                                            # from ../windows-server-vm-automation/register-vm.sh
 
 ├── image-apply/                # real, confirmed production for Server 2019/2022/2025
-│   │                             # (PHASE3_ENGINEERING_LOG.md Session 2; Server 2019 added
+│   │                             # (project_documentation/PHASE3_ENGINEERING_LOG.md Session 2; Server 2019 added
 │   │                             # 2026-09-02 with zero changes to these scripts, config-table
 │   │                             # entries only). Windows 11 no longer uses this offline-apply
 │   │                             # sequence at all as of Phase 3.4 - it has its
@@ -475,7 +479,7 @@ windows-auto-build-pipeline/
 │   ├── gen-viostor-ddb-reg.py  # generates the source-verified .reg file that offline-registers
 │   │                             # a virtio PCI driver (viostor/netkvm) into a SYSTEM hive's
 │   │                             # DriverDatabase, per virt-v2v's own recipe - see
-│   │                             # PHASE2_ENGINEERING_LOG.md Finding 29
+│   │                             # project_documentation/PHASE2_ENGINEERING_LOG.md Finding 29
 │   ├── sudoers-windows-auto-build-pipeline  # scoped NOPASSWD sudoers rules for the disk-prep
 │   │                             # commands this pipeline needs (qemu-nbd, sgdisk, mkfs.vfat/
 │   │                             # mkntfs, mount/umount, ntfsinfo/ntfsfix) - pinned to /dev/nbd*
@@ -555,7 +559,7 @@ Deliver:
 - workflow documentation
 - prior-art research confirming the chosen approach before committing to it
 
-**Status:** done — this document, `HANDOFF_FROM_UNATTENDED_INSTALL.md`, and the sourced research within it confirming `DISM /Apply-Image` + `bcdboot` (run from WinPE) for all three target OSes.
+**Status:** done — this document, `project_documentation/HANDOFF_FROM_UNATTENDED_INSTALL.md`, and the sourced research within it confirming `DISM /Apply-Image` + `bcdboot` (run from WinPE) for all three target OSes.
 
 ---
 
@@ -565,11 +569,11 @@ Implement:
 
 - Disk partitioning directly from this Linux host (`qemu-nbd` + `sgdisk`/`parted` + `mkfs.ntfs`/`mkfs.vfat`), no boot required
 - WIM application (`wimlib`) onto the formatted NTFS partition
-- Disk bootability via BCD-SYS (first attempt, no boot required) or, as fallback, a minimal self-built WinPE boot environment used exactly once per build to run `bcdboot` — see `PHASE2_BOOTSTRAP_ARCHITECTURE.md`
+- Disk bootability via BCD-SYS (first attempt, no boot required) or, as fallback, a minimal self-built WinPE boot environment used exactly once per build to run `bcdboot` — see `project_documentation/PHASE2_BOOTSTRAP_ARCHITECTURE.md`
 - An offline specialize/unattend pass (`\Windows\Panther\unattend.xml` dropped directly onto the offline-mounted image: computer name, WinRM enablement) and driver injection (offline `hivex`/`hivexregedit` registry edits, following the `virt-v2v` pattern), applied to the offline image before its first real boot
 - Handoff to Packer's `disk_image = true` mode (no ISO, no `boot_command`) for the first real boot and WinRM confirmation
 
-This single phase covers meaningfully more sub-milestones than the sibling project's equivalent phase did, because the install *mechanism* itself is the actual unsolved problem here (the sibling project's Phase 2 could take Packer's ISO-boot approach as a given; this one can't). Suggested internal sequence, each gating the next (see `PHASE2_BOOTSTRAP_ARCHITECTURE.md` for full rationale):
+This single phase covers meaningfully more sub-milestones than the sibling project's equivalent phase did, because the install *mechanism* itself is the actual unsolved problem here (the sibling project's Phase 2 could take Packer's ISO-boot approach as a given; this one can't). Suggested internal sequence, each gating the next (see `project_documentation/PHASE2_BOOTSTRAP_ARCHITECTURE.md` for full rationale):
 
 1. Partition + apply + attempt BCD-SYS against the resulting partition, then boot the disk directly under QEMU/OVMF (no WinPE, no interactive installer). Succeeds if Windows Boot Manager comes up and Windows begins loading. This resolves the project's single biggest open question — making the disk bootable at all — without needing a second boot cycle to do it.
 2. If step 1 fails: fall back to a self-built WinPE boot medium (attached as a plain disk, not `media=cdrom`) running the real `bcdboot`, per the original plan — this also resolves whether WinPE avoids the "press any key" UEFI landmine that blocks the sibling project's Server 2025/Windows 11 tracks, but only needs testing if BCD-SYS doesn't pan out first.
@@ -583,7 +587,7 @@ A Windows Server 2025 VM (per explicit direction — its eval media/checksum/WIM
 Server 2025, Windows Server 2022, and Windows 11 Enterprise Evaluation. Offline image application →
 bootable → specialized → real, unattended, externally-reachable WinRM connectivity, no manual
 interaction, no Setup.exe involved anywhere, confirmed independently for each OS with the underlying
-tooling requiring zero changes between them. Read `PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS
+tooling requiring zero changes between them. Read `project_documentation/PHASE2_ENGINEERING_LOG.md`'s "STATUS AND NEXT STEPS
 ON RESUMPTION (Session 13)" section before doing anything else here — **per the explicit phase-gating
 rule below, Phase 3 can now begin.** Sub-milestone 1 (make the disk bootable) remains **solved, three
 times over**:
@@ -679,7 +683,7 @@ driver subfolder, a new `image-apply/unattend-windows11.xml`). One new operation
 powers off, which `ntfs-3g` correctly detects and falls back to read-only for; harmless, but worth
 knowing before attempting a future offline read-write edit of a Windows 11 disk.
 
-**Phase 2 is done.** See `PHASE2_ENGINEERING_LOG.md` for the complete, detailed record across all
+**Phase 2 is done.** See `project_documentation/PHASE2_ENGINEERING_LOG.md` for the complete, detailed record across all
 thirteen sessions — it's long, but everything needed to resume Phase 3 without re-deriving any of this
 is there.
 
@@ -692,7 +696,7 @@ Server 2025, Windows Server 2022, *and* Windows 11 Enterprise Evaluation to each
 bootstrap successfully (offline apply → bootable → specialized → real WinRM connection, no manual
 steps) under this project's mechanism, precisely to avoid investing in the service layer on the
 assumption that Phase 2's mechanism generalizes across all three OSes before actually confirming it
-does. All three are now confirmed independently — see `PHASE2_ENGINEERING_LOG.md` Findings 41
+does. All three are now confirmed independently — see `project_documentation/PHASE2_ENGINEERING_LOG.md` Findings 41
 (Server 2025), 42 (Server 2022), and 43 (Windows 11) for the full verification trail on each.
 
 **Scope note: Phase 3 as specified below (AD DS, IIS, SQL Server) is Server-20XX-specific.** Windows
@@ -712,7 +716,7 @@ The same three roles (IIS, AD DS, SQL Server) that work against the sibling proj
 reused scripts work.** `image-apply/`'s real scripts (`lib/common.sh`, `partition-disk.sh`,
 `apply-image.sh`, `make-bootable.sh`, `apply-unattend.sh`) and the production
 `packer/boot-and-provision.pkr.hcl` + `build.sh` orchestrator now exist, transcribed directly from
-`PHASE2_ENGINEERING_LOG.md`'s proven recipe rather than reconstructed from memory. Confirmed
+`project_documentation/PHASE2_ENGINEERING_LOG.md`'s proven recipe rather than reconstructed from memory. Confirmed
 end-to-end from a completely blank disk through to a WinRM-reachable, role-provisioned VM for both
 target OSes:
 
@@ -728,7 +732,7 @@ profile combinations against.
 Getting from "the recipe is proven" to "the recipe is a real script" surfaced five more real,
 non-obvious bugs (sudoers scoping, nbd attach-timing races, a boot-order idempotency gap that
 permanently poisons a disk's one-shot Windows Setup passes if hit, and a missing driver-package file
-`pnputil` needs but offline `DriverDatabase` registration doesn't) — see `PHASE3_ENGINEERING_LOG.md`
+`pnputil` needs but offline `DriverDatabase` registration doesn't) — see `project_documentation/PHASE3_ENGINEERING_LOG.md`
 Session 2 for the full record of each, plus Session 1's original `cpu_model` finding. **Still open,
 not blocking Server 2022/2025 (confirmed production-ready, six independent successful builds across
 both OSes):** `image-apply/build-winpe-medium.sh` (documenting how to rebuild the WinPE bootability
@@ -741,22 +745,22 @@ bugs above).
 not just "untested but presumably fine"**: an interactive OOBE screen unattend settings alone can't
 suppress, and a real kernel-level NTFS BSOD, both root-caused to Windows actually processing a valid
 `unattend.xml` (not the offline write that delivers it). Server 2022/2025 show none of this. See
-`PHASE3_ENGINEERING_LOG.md` Session 3 (Findings 7-9) for the full trail.
+`project_documentation/PHASE3_ENGINEERING_LOG.md` Session 3 (Findings 7-9) for the full trail.
 
 **HARD STOP on the fully-offline (Setup.exe-free) Windows 11 pathway, by explicit direction, as of
 Session 4.** Both architectural options this project considered — staying fully offline (Option A)
 and inserting a live Audit Mode + Sysprep cycle matching Microsoft's own OEM manufacturing flow
-(Option B, `WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`) — were pursued to a real, evidence-backed
+(Option B, `project_documentation/WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md`) — were pursued to a real, evidence-backed
 conclusion and both terminate at the identical BSOD. A full audit ruled out this project's own code,
 host environment, and input media as the cause (byte-identical to the one hand-run build that did
 succeed); multi-angle research found no community precedent for the exact combination. See
-`PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) for the complete record.
+`project_documentation/PHASE3_ENGINEERING_LOG.md`'s "HARD STOP" section (end of Session 4) for the complete record.
 **Server 2022/2025's production pipeline is unaffected and remains confirmed production-ready** —
 none of the Windows-11-specific work is in its code path. Next step for Windows 11 is a new research
 question (how unattended Windows 11 builds are actually done successfully elsewhere), not a further
 variant of Option A/B — not yet started as of this entry.
 
-**RESOLVED as of `PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries: Windows 11 is now
+**RESOLVED as of `project_documentation/PHASE3_ENGINEERING_LOG.md`'s Phase 3.4/3.5 entries: Windows 11 is now
 production-ready too**, via the Setup.exe-driven path this research question led to (see the
 "RECONSIDERED AGAIN, Windows 11 only" note above under "Relationship to
 `../windows-server-vm-automation/`" for why Setup.exe is back in play for Windows 11 specifically).
@@ -767,7 +771,7 @@ builds). `build.sh` routes `windows11` through this script directly, with no Pac
 Phase 3 roles apply to Windows 11).
 
 **Phase 3A (new, cross-cutting, done as of 2026-08-23): VirtIO storage/NIC/SPICE display drivers,
-`WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`.** Not a continuation of Phase 3.1-3.5's own numbered
+`project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`.** Not a continuation of Phase 3.1-3.5's own numbered
 sequence (that closed with Windows 11 production-ready, above) - a distinct addition layered on top
 of already-proven builds. Real, committed production tooling exists
 (`image-apply/inject-virtio-spice.sh`, OS-parameterized) and is confirmed done for **all three target
@@ -853,7 +857,7 @@ timestamped builds). **`dev/role-test.pkr.hcl` (the separate fast-iteration harn
 fixed-per-OS `output_directory` pattern - fixed 2026-08-26** with its own `run_id` variable, adapted
 for the harness's genuinely different requirement (rapid repeated iteration, so a stale-prior-run
 cleanup replaces the old unconditional `rm -rf` rather than accumulating a directory per run forever).
-See `PHASE3_ENGINEERING_LOG.md`'s corresponding entry for the fix and how it was verified (`packer
+See `project_documentation/PHASE3_ENGINEERING_LOG.md`'s corresponding entry for the fix and how it was verified (`packer
 validate` plus an isolated sandbox test of the cleanup logic - not yet exercised by a real end-to-end
 Packer build, since this harness's own Phase 2 reference disks no longer exist on disk, a separate,
 pre-existing gap).
@@ -908,7 +912,7 @@ the storage-only path Server 2022/2025 already proved. All three target OSes exi
 "Server 2019: fourth target OS added" below.
 
 **`register-vm.sh` now enforces its own precondition instead of just assuming it, and two real bugs
-found via a genuine E2E run are fixed (2026-08-25/26, `PHASE3_ENGINEERING_LOG.md`'s corresponding
+found via a genuine E2E run are fixed (2026-08-25/26, `project_documentation/PHASE3_ENGINEERING_LOG.md`'s corresponding
 sessions have the full trail):** `inject-virtio-spice.sh` now writes a completion marker
 (`C:\virtio-spice-injected.marker`) only once its own Stage 2 verification fully succeeds;
 `register-vm.sh` checks for it offline before ever defining a domain, and fails loud (naming
@@ -934,9 +938,9 @@ wasn't rebuilt this session - the device-model gap noted above was closed in a l
 
 Added well after the original three OSes were already production-ready, via its own formal, gated
 project (A: research, B: design, C: design review, D: implementation, E: E2E testing) rather than as
-part of this phase's own original numbered work - `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` and
-`WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md` carry Phases A-C in full; this section is the durable
-summary of D/E, alongside `PHASE3_ENGINEERING_LOG.md`'s own 2026-09-02 sessions for the complete
+part of this phase's own original numbered work - `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md` and
+`project_documentation/WINDOWS_SERVER_2019_IMPLEMENTATION_PLAN.md` carry Phases A-C in full; this section is the durable
+summary of D/E, alongside `project_documentation/PHASE3_ENGINEERING_LOG.md`'s own 2026-09-02 sessions for the complete
 trail (research, ISO acquisition, implementation, and four separate debugging arcs: the WinRM hang,
 its own root-cause bisection, the ADWS-timing question, and the two full production builds).
 
@@ -1100,7 +1104,7 @@ about. What shipped instead: `image-apply/install-tools.sh` resolves and downloa
 Chocolatey "hidden dependency" problem this section already rejects below), on every single build.
 The Datadog Agent is the one deliberate exception - still pinned, but as a version string in
 `tools.yaml` (`datadog.agent_version`) rather than a cached/checksummed binary. See
-`PHASE4_TOOLS_INSTALLER_PLAN.md`'s A.1/A.3 revision for the full reasoning and the real,
+`project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md`'s A.1/A.3 revision for the full reasoning and the real,
 live-verified fetch mechanism for each of the six tools.
 
 - **`tools.yaml`** (new, sibling to `services.yaml`, same flat-list-with-comments convention):
@@ -1182,7 +1186,7 @@ ISO, QEMU boot/WinRM/graceful-shutdown), wired into `build.sh` after `inject-vir
 all four OSes. Confirmed end-to-end against a real Server 2022 build: full CRUD (Create/Read/
 Update/Delete) plus idempotency for all six tools, including the Datadog Agent's own
 version-convergence path (install at one pinned version, change the pin, re-run, confirm it
-upgrades to the new pinned version in place) - see `PHASE4_TOOLS_INSTALLER_PLAN.md`'s "Phase D:
+upgrades to the new pinned version in place) - see `project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md`'s "Phase D:
 Implementation" and "Phase E: Testing" sections for the complete trail, including two real bugs
 found and fixed along the way: a PCI topology mismatch in `install-tools.sh`'s own first QEMU
 invocation (it used implicit bus placement instead of matching `inject-virtio-spice.sh` Stage 2's
@@ -1299,7 +1303,7 @@ Asked and answered directly (2026-08-23, during Phase 3A work) because it's a re
 this project's own history already has concrete evidence for, not a hypothetical to gesture at.
 Ranked by how brittle each layer actually is, most fragile first:
 
-**Most brittle — PCI/driver hardware-ID assumptions.** `WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`'s
+**Most brittle — PCI/driver hardware-ID assumptions.** `project_documentation/WINDOWS11_VIRTIO_SPICE_DRIVERS_PLAN.md`'s
 Finding 3A-3 (discovered on this project's own first genuinely clean, single-pass Phase 3A run) found
 that a bare `virtio-scsi-pci` controller and the identical controller with a backing drive attached
 negotiate *different* PCI hardware IDs (`VEN_1AF4&DEV_1048` modern vs. `DEV_1004` legacy/transitional)
@@ -1315,9 +1319,9 @@ easily reintroduce in a different form.
 
 **Second — WIM image index (`os_wim_index` in `image-apply/lib/common.sh`).** Hardcoded per OS
 (Server 2019/2022/2025 index 2, Windows 11 index 1), each verified exactly once against one specific
-pinned ISO (`PHASE2_ENGINEERING_LOG.md` Session 12 Finding 42, Session 13 Finding 43; Server 2019's
+pinned ISO (`project_documentation/PHASE2_ENGINEERING_LOG.md` Session 12 Finding 42, Session 13 Finding 43; Server 2019's
 own index verified 2026-09-02 via `wimlib-imagex info`, preferred over the older `7z`/`strings`
-technique for the same job - see `WINDOWS_SERVER_2019_RESEARCH_PLAN.md` Finding 3) via direct
+technique for the same job - see `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md` Finding 3) via direct
 extraction, never assumed, per this project's own "verify before trusting" standard. A new Server
 20XX servicing baseline or Windows 11 release reordering editions within the WIM breaks this
 silently: `wimapply` would apply the wrong SKU with no error, since there's no validation that the
@@ -1334,7 +1338,7 @@ re-verification there requires a human to re-acquire the file first, not just re
 
 **Third — Setup.exe's own OOBE/hardware-compatibility-bypass behavior (Windows 11's Setup.exe path
 only).** Already has one real, documented precedent of Microsoft changing this class of behavior
-out from under existing tooling: an NTLite forum thread (cited during `PHASE3_ENGINEERING_LOG.md`
+out from under existing tooling: an NTLite forum thread (cited during `project_documentation/PHASE3_ENGINEERING_LOG.md`
 Session 3's research pass) documents a Windows 11 24H2 regression where `windowsPE`-pass unattend
 settings are silently ignored by WinPE Setup. This project's own `windows11-setup-install.sh` depends
 on `LabConfig` bypass registry keys and specific OOBE-skip settings continuing to work exactly as
@@ -1398,7 +1402,7 @@ producing a silently-wrong or silently-broken disk after one.
 - **A bash `trap ... EXIT` cleanup function must capture `$?` as its own first statement and
   `exit` with that saved value at the end — never let the trap's own last command decide the
   script's exit status.** Found the hard way during Phase 4 testing (2026-09-03,
-  `PHASE4_TOOLS_INSTALLER_PLAN.md`'s "Phase D: Implementation"): every one of this project's
+  `project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md`'s "Phase D: Implementation"): every one of this project's
   QEMU-driving scripts' cleanup traps (`install-tools.sh`, `inject-virtio-spice.sh`'s
   `cleanup_stage1`/`cleanup_stage2`, `windows11-setup-install.sh`'s `cleanup`) ended their
   hard-kill fallback with `kill -9 "$QEMU_PID" 2>/dev/null || true` as the trap's last command —

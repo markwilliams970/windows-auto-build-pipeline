@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fast-iteration harness for debugging Server 2019's Enable-PSRemoting hang
-# (PHASE3_ENGINEERING_LOG.md, 2026-09-02 Phase E1 session) - NOT the same tool as
+# (project_documentation/PHASE3_ENGINEERING_LOG.md, 2026-09-02 Phase E1 session) - NOT the same tool as
 # dev/role-test.pkr.hcl, which assumes WinRM already works and iterates on role
 # scripts. This one iterates on the specialize step itself (image-apply/
 # unattend-server2019.xml's FirstLogonCommands) against a disk that has never

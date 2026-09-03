@@ -15,7 +15,7 @@ doesn't automatically feed the specific gate that needs it (Finding 19), with a 
 not-yet-attempted fix lined up (Finding 21: `drvload` from our own `startnet.cmd` before Setup
 even launches, reusing Finding 12's already-proven technique). See
 `PHASE2_BOOTSTRAP_ARCHITECTURE.md` for the design reasoning that predicted the BCD-SYS approach and
-`CLAUDE.md` for current phase status.
+`../CLAUDE.md` for current phase status.
 
 This log follows the sibling project's engineering-log convention: symptom, diagnosis, root cause,
 fix, in the order they were actually hit, including the dead ends.
@@ -42,7 +42,7 @@ fix, in the order they were actually hit, including the dead ends.
 
 ## Finding 0: Windows Server 2025's WIM image index was never actually verified — only assumed
 
-**Symptom:** `CLAUDE.md`'s "Starting point" section claimed "the iso_cache/ entry, checksum, and
+**Symptom:** `../CLAUDE.md`'s "Starting point" section claimed "the iso_cache/ entry, checksum, and
 WIM image-name investigation for it already exist in the sibling project and can be reused
 directly." This is only true for the ISO cache entry and checksum.
 
@@ -52,7 +52,7 @@ Finding 5's reference table) documents a 4-image WIM index table, but it's expli
 to need or extract this information (blocked at the UEFI boot-key issue before ever reaching image
 selection).
 
-**Root cause:** A stale/inaccurate claim in `CLAUDE.md`, not caught until this session actually
+**Root cause:** A stale/inaccurate claim in `../CLAUDE.md`, not caught until this session actually
 needed the real 2025 data.
 
 **Fix:** Extracted directly via `wimlib-imagex info install.wim` against the real 2025 ISO
@@ -279,7 +279,7 @@ disabled, `virtio-blk-pci` disk), watched via `tools/qmp-screenshot.py`:
    specifically about the storage driver not being registered, not about the boot chain up to that
    point.
 
-**This confirms Phase 2 sub-milestone 1** (`CLAUDE.md`'s "make the disk bootable" success
+**This confirms Phase 2 sub-milestone 1** (`../CLAUDE.md`'s "make the disk bootable" success
 criterion) **for Windows Server 2025, via BCD-SYS, with zero WinPE boot cycles required** — the
 project's single biggest open technical question, resolved. The `PHASE2_BOOTSTRAP_ARCHITECTURE.md`
 recommendation to attempt BCD-SYS before the WinPE fallback is now empirically validated, not just
@@ -293,14 +293,14 @@ theoretically argued.
    immediate next step** — needed to clear the `0x7B` and reach a real WinRM-reachable boot.
 2. **Repeat this entire validated sequence for Windows Server 2022 and Windows 11 Enterprise
    Evaluation** before any Phase 3 work starts, per the explicit phase-gating decision already
-   recorded in `CLAUDE.md` and memory — Server 2025 was the first proving ground, not the only
+   recorded in `../CLAUDE.md` and memory — Server 2025 was the first proving ground, not the only
    target that needs to work.
 3. **`hivexregedit` is a separate package from `hivexsh`** — `libhivex-bin` provides
    `hivexsh`/`hivexget`/`hivexml` only; `hivexregedit` comes from `libwin-hivex-perl`. Easy to miss
-   (already documented in `PREREQUISITES.md`).
+   (already documented in `../PREREQUISITES.md`).
 4. **BCD-SYS's own preflight needs `fatattr` and `pev`/`readpe` (for `peres`)**, described as
    "optional" in its docs but required in practice for even `--help` to run without erroring
-   (already documented in `PREREQUISITES.md`).
+   (already documented in `../PREREQUISITES.md`).
 5. **Consider adding BCD-SYS artifact verification** (decode/sanity-check the device-locator GUIDs
    automatically) as a wrapper step in this project's own tooling, rather than trusting a clean
    `bcd-sys.sh` exit code alone — Finding 5 showed a "successful" run can still produce a broken
@@ -611,7 +611,7 @@ far only to plain WinPE.
    assumption, flagged as such**).
 3. Reuse the sibling project's **already-validated-for-Server-2022** `autounattend.xml` content
    near-verbatim: `Microsoft-Windows-PnpCustomizationsWinPE`'s `DriverPaths` (viostor/vioscsi +
-   NetKVM), computer name, WinRM-enabling `FirstLogonCommands` — the exact mechanism CLAUDE.md
+   NetKVM), computer name, WinRM-enabling `FirstLogonCommands` — the exact mechanism ../CLAUDE.md
    currently says **not** to reuse ("do not reuse: anything related to ... autounattend.xml's
    `Microsoft-Windows-Setup` component"), a restriction written when Setup.exe looked permanently
    off the table. **That restriction needs a deliberate, explicit revisit** given this new
@@ -752,7 +752,7 @@ this project already has for the *main OS disk's* still-unsolved driver-injectio
 briefly looked like a new, Setup-specific landmine.
 
 **Root cause:** re-reading Finding 12 closely before treating this as a real finding
-(`CLAUDE.md`'s "verify before trusting" standard) showed the discrepancy immediately: Finding 12's
+(`../CLAUDE.md`'s "verify before trusting" standard) showed the discrepancy immediately: Finding 12's
 working WinPE test had **the WinPE boot medium itself on `disk 0`, AHCI-attached** — only the
 *separate target* main OS disk was `virtio-blk-pci` (`disk 1`). This session's `qemu-system-x86_64`
 invocation attached the boot medium itself via `-device virtio-blk-pci`, which needs a boot-critical
@@ -1605,10 +1605,10 @@ Setup.exe pivot's five-way dead end.
 
 **What this does and doesn't prove yet:** this proves Phase 2's core technical blocker — offline
 driver injection clearing 0x7B without any interactive Setup.exe involvement — is solved. It does
-**not** yet prove the full Phase 2 success criterion (`CLAUDE.md`'s "installs and becomes
+**not** yet prove the full Phase 2 success criterion (`../CLAUDE.md`'s "installs and becomes
 WinRM-reachable without manual interaction"): this boot used no `unattend.xml`/specialize pass at
 all, so it correctly stopped at interactive OOBE rather than an automated WinRM-reachable state.
-The remaining Phase 2 work is exactly what `CLAUDE.md`'s Build step 6 already specifies — an offline
+The remaining Phase 2 work is exactly what `../CLAUDE.md`'s Build step 6 already specifies — an offline
 specialize/unattend pass (`\Windows\Panther\unattend.xml`, computer name, WinRM enablement) applied
 before this same first real boot — not a new unknown.
 
@@ -1644,18 +1644,18 @@ boot of any kind.
    reused this session — partition + `wimapply` + BCD-SYS or WinPE `bcdboot` + this session's
    corrected driver injection, from scratch, to confirm the fix generalizes and isn't accidentally
    dependent on some quirk already baked into that specific disk from its Session 2 history.
-2. **Build the offline specialize/unattend pass** (`CLAUDE.md`'s Build step 6): drop a
+2. **Build the offline specialize/unattend pass** (`../CLAUDE.md`'s Build step 6): drop a
    `\Windows\Panther\unattend.xml` onto the offline-mounted image before first boot (computer name,
    WinRM enablement — the sibling project's own `autounattend.xml` `specialize`/`oobeSystem` content
    is a proven starting point for the actual settings, even though its *delivery mechanism* here is
    different: offline file placement, not Setup.exe consuming it during install). This is what turns
    "boots to OOBE" into Phase 2's actual success criterion, a real unattended WinRM connection.
 3. **Consider whether to formalize this session's ad hoc sequence into real `image-apply/` scripts**
-   (`partition-disk.sh`, `apply-image.sh`, `make-bootable.sh`, per `CLAUDE.md`'s repository sketch) —
+   (`partition-disk.sh`, `apply-image.sh`, `make-bootable.sh`, per `../CLAUDE.md`'s repository sketch) —
    `image-apply/` is still empty of actual implementation as of this session; everything so far has
    been ad hoc Bash run directly per session, appropriate for the R&D phase this has been, but now
    that the core mechanism is proven end-to-end, scripting it may be due. Not done this session -
-   flagged as a decision point, not a default next action, per `CLAUDE.md`'s "explain the design,
+   flagged as a decision point, not a default next action, per `../CLAUDE.md`'s "explain the design,
    ask before generating significant implementation code" instruction.
 4. **Once WinRM-reachable for Server 2025**, repeat for Server 2022 and Windows 11 per the explicit
    phase-gating requirement — Phase 3 does not start until all three OSes are proven.
@@ -1857,7 +1857,7 @@ reused. Both disks are now valid known-good references.
 
 **Recommended next steps, in order (unchanged in substance from Session 7's list, #1 now done):**
 1. ~~Re-verify end-to-end on a completely fresh disk~~ — **done this session (Finding 30).**
-2. **Build the offline specialize/unattend pass** (`CLAUDE.md`'s Build step 6): drop a
+2. **Build the offline specialize/unattend pass** (`../CLAUDE.md`'s Build step 6): drop a
    `\Windows\Panther\unattend.xml` onto the offline-mounted image before first boot (computer name,
    WinRM enablement — the sibling project's own `autounattend.xml` `specialize`/`oobeSystem` content
    is a proven starting point for the actual settings, even though its *delivery mechanism* here is
@@ -2064,7 +2064,7 @@ the one that has it.
 ## STATUS AND NEXT STEPS ON RESUMPTION (Session 9)
 
 **Where things stand:** Phase 2's success criterion (a real, unattended WinRM connection, per
-`CLAUDE.md`'s Build step 7) is **not yet met**, but real, concrete progress was made toward it:
+`../CLAUDE.md`'s Build step 7) is **not yet met**, but real, concrete progress was made toward it:
 
 1. **Bootability (Findings 29/30) — now confirmed a third independent time**, on yet another
    from-scratch disk.
@@ -2465,7 +2465,7 @@ produces a disk that boots unattended all the way to a real, externally-reachabl
 session. This is not a partial or simulated result: `hostname` and `Get-NetAdapter` were both executed
 *over the wire* against a genuinely fresh, never-before-booted disk.
 
-**What's NOT yet done, per `CLAUDE.md`'s explicit phase-gating rule**: this success criterion has only
+**What's NOT yet done, per `../CLAUDE.md`'s explicit phase-gating rule**: this success criterion has only
 been demonstrated for **Windows Server 2025**. Phase 3 (the service/provisioning layer) does not start
 until Windows Server 2022 and Windows 11 Enterprise Evaluation have *each independently* repeated this
 same full sequence successfully. Nothing about Server 2022/Windows 11 has been attempted yet - the
@@ -2494,7 +2494,7 @@ project's own standards say to confirm, not assume.
    8-10: the full recipe is proven end-to-end for one OS, not just individual sub-steps. Worth doing
    before starting Server 2022/Windows 11, so that repeating the sequence for those doesn't mean
    re-typing the same ad hoc Bash a fourth and fifth time - a real decision point to raise with whoever
-   is directing this project next, not a default action per `CLAUDE.md`'s Claude Instructions.
+   is directing this project next, not a default action per `../CLAUDE.md`'s Claude Instructions.
 
 **Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
 - `win2025-session11.qcow2` - **the reference "it works end-to-end" disk.** Bootable, specialized
@@ -2640,7 +2640,7 @@ successes are not three.
    (Server 2025 twice effectively, Server 2022 once) with the only real per-OS variation being a handful
    of input values, which is exactly the shape of thing worth parameterizing into a real script rather
    than continuing to copy/paste session-specific Bash. A real decision point to raise, not a default
-   action, per `CLAUDE.md`'s Claude Instructions.
+   action, per `../CLAUDE.md`'s Claude Instructions.
 
 **Persistent state that DOES survive** (under `image-apply/output/`, not `/tmp`):
 - `win2022-session12.qcow2` - **the reference "it works end-to-end" disk for Server 2022.** Bootable,
@@ -2766,15 +2766,15 @@ partition → `wimapply` → offline `viostor` boot-driver injection → WinPE `
 connectivity - with the underlying tooling (`tools/gen-viostor-ddb-reg.py`, the WinPE bootability
 medium, the `FirstLogonCommands` structure) requiring **zero changes** across any of the three; only
 per-OS input values (image index, driver subfolder, `unattend.xml` content) ever differed. Per
-`CLAUDE.md`'s explicit phase-gating rule, **Phase 3 (Windows Configuration / role provisioning) can now
+`../CLAUDE.md`'s explicit phase-gating rule, **Phase 3 (Windows Configuration / role provisioning) can now
 begin.**
 
 **Immediate next steps, in order:**
-1. **Read `CLAUDE.md`'s Phase 3 section in full before starting anything there** - it reuses
+1. **Read `../CLAUDE.md`'s Phase 3 section in full before starting anything there** - it reuses
    `services.yaml` and `scripts/run-services.ps1`/`install-iis.ps1`/`install-ad.ps1`/
    `install-sql-server.ps1`/`verify-post-reboot.ps1` from the sibling project **unchanged**; nothing new
    to implement, only to confirm those scripts work unmodified against this project's offline-applied
-   disks (which they should, per `CLAUDE.md`'s own framing - "none of it cares how Windows got onto the
+   disks (which they should, per `../CLAUDE.md`'s own framing - "none of it cares how Windows got onto the
    disk, only that there's a booted VM with WinRM reachable" - now genuinely true for all three OSes).
    Remember the sibling project's own `install-iis.ps1` OS-detection branch
    (`(Get-ComputerInfo).OsProductType -eq "Server"`) has never been exercised against a real Windows 11
@@ -2785,7 +2785,7 @@ begin.**
    `make-bootable.sh`, `apply-unattend.sh`) is now a very strong candidate to do before or alongside
    starting Phase 3 - the recipe has been hand-run identically four times across three OSes with only a
    handful of parameterizable input values differing each time. This is a real decision point to raise,
-   not a default action, per `CLAUDE.md`'s Claude Instructions - but the case for it is now about as
+   not a default action, per `../CLAUDE.md`'s Claude Instructions - but the case for it is now about as
    strong as it will ever get. (**Done** - see `PHASE3_ENGINEERING_LOG.md` Session 2, and for Windows
    11 specifically, its separate Phase 3.4 entry once the Setup.exe-driven approach replaced this
    recipe for that one OS.)

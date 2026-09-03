@@ -4,7 +4,7 @@ A reusable discipline for projects that involve genuine unsolved-problem enginee
 CRUD/feature work, but systems where the right mechanism isn't known in advance and has to be found,
 tested, and proven. Adapt the specifics; keep the shape.
 
-Copy this into a new project's own instructions file (e.g. `CLAUDE.md`, `AGENTS.md`) and edit the
+Copy this into a new project's own instructions file (e.g. `../CLAUDE.md`, `AGENTS.md`) and edit the
 placeholders, or keep it as a standing reference and cite it. It's deliberately written as
 principles + concrete practices, not a checklist to rubber-stamp — the value is in actually
 following the reasoning, not in ticking boxes.

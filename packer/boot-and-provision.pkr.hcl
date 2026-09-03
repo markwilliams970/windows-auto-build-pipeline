@@ -8,7 +8,7 @@
 # real build applies the WIM fresh, per CLAUDE.md's "Ephemeral Infrastructure, Still"
 # principle), so there is no reference disk to protect here.
 #
-# IMPORTANT, confirmed the hard way (PHASE3_ENGINEERING_LOG.md, 2026-09-02 Phase E1 session):
+# IMPORTANT, confirmed the hard way (project_documentation/PHASE3_ENGINEERING_LOG.md, 2026-09-02 Phase E1 session):
 # this "no backing file" design intent does NOT mean source_qcow2 reflects the guest's
 # provisioned state after a FAILED build. Rebooting source_qcow2 after a provisioner failure
 # showed the disk still in its pre-Packer, never-booted state (AD-Domain-Services InstallState
@@ -21,7 +21,7 @@
 # stage failures (partition-disk.sh/apply-image.sh/make-bootable.sh), since those really do
 # write directly to the file on disk.
 #
-# cpu_model = "host" is set from the start - PHASE3_ENGINEERING_LOG.md Finding 1 found
+# cpu_model = "host" is set from the start - project_documentation/PHASE3_ENGINEERING_LOG.md Finding 1 found
 # that omitting it (the qemu builder's own default) leaves QEMU on a generic, feature-
 # minimal CPU model that Windows Server 2025 could not reliably bring WinRM up under
 # within any reasonable timeout, even though Server 2022 tolerated it. Carrying this
@@ -49,7 +49,7 @@ variable "target_os" {
 # output_directory below so repeated builds of the same OS never collide. Before this
 # variable existed, output_directory was fixed per-OS ("output/${target_os}"), so a second
 # build of the same OS always failed with "Output directory ... already exists" - a real,
-# confirmed bug, not a hypothetical (see PHASE3_ENGINEERING_LOG.md/CLAUDE.md's own account of
+# confirmed bug, not a hypothetical (see project_documentation/PHASE3_ENGINEERING_LOG.md/CLAUDE.md's own account of
 # the run that hit it).
 variable "build_id" {
   type        = string

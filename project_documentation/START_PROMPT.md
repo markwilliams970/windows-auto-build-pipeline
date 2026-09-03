@@ -5,8 +5,8 @@
 > production pipeline for Server 2022/2025, and Windows 11 — after the offline-apply mechanism hit
 > an unresolved BSOD — got its own Setup.exe-driven build path (`image-apply/
 > windows11-setup-install.sh`), now production-ready and confirmed via six independent clean
-> builds. **Do not use this file to resume work.** Read `CLAUDE.md` (current per-phase status) and
-> `PHASE3_ENGINEERING_LOG.md`'s final entries instead — see `README.md`'s own "Resuming work"
+> builds. **Do not use this file to resume work.** Read `../CLAUDE.md` (current per-phase status) and
+> `PHASE3_ENGINEERING_LOG.md`'s final entries instead — see `../README.md`'s own "Resuming work"
 > section for the up-to-date reading order. This file is left in place as a real historical
 > artifact of how Phase 2 resumption prompts were written at the time, not maintained further.
 >
@@ -23,7 +23,7 @@ this order:
    Read the Session 7 section (Finding 29) in full — it's the most important finding in the whole
    log, and everything before it (Sessions 3-6, the entire Setup.exe pivot and its abandonment) is
    now historical context for *why* this path was returned to, not the current blocker.
-2. `CLAUDE.md` — project goals, architectural principles (no golden image, ever — the eval-media
+2. `../CLAUDE.md` — project goals, architectural principles (no golden image, ever — the eval-media
    expiration reasoning is a hard constraint), tool responsibilities, and the phased development
    plan. Its Phase 2 status line and the "Do not reuse" note under "Relationship to
    `../windows-server-vm-automation/`" both have update markers pointing back at the engineering
@@ -33,7 +33,7 @@ this order:
    design reasoning, not historical context.
 4. `HANDOFF_FROM_UNATTENDED_INSTALL.md` — the original prior-art research (why this project exists,
    what the sibling project already solved vs. couldn't). Still accurate; nothing here has changed.
-5. `PREREQUISITES.md` — host tooling this project needs beyond the sibling project. Already
+5. `../PREREQUISITES.md` — host tooling this project needs beyond the sibling project. Already
    installed on this host; only relevant again if working from a different machine.
 
 ---
@@ -96,7 +96,7 @@ current working path breaks and Setup.exe starts looking attractive again — tr
    registry semantics, not against any disk-specific quirk, so it should generalize — but this
    hasn't actually been confirmed on a disk partitioned + `wimapply`'d from scratch this session.
    Do this before building anything else on top.
-3. **Build the offline specialize/unattend pass** (`CLAUDE.md`'s Build step 6): drop a
+3. **Build the offline specialize/unattend pass** (`../CLAUDE.md`'s Build step 6): drop a
    `\Windows\Panther\unattend.xml` onto the offline-mounted image before first boot (computer name,
    WinRM enablement). The sibling project's own `autounattend.xml` `specialize`/`oobeSystem` content
    is a proven starting point for the actual *settings* — but the *delivery mechanism* here is
@@ -107,8 +107,8 @@ current working path breaks and Setup.exe starts looking attractive again — tr
    actual implementation — everything through Session 7 has been ad hoc Bash run directly per
    session, appropriate for the R&D phase this has been. Now that the core mechanism is proven
    end-to-end, scripting it (`partition-disk.sh`, `apply-image.sh`, `make-bootable.sh`, per
-   `CLAUDE.md`'s repository sketch) may be due — but this is a real decision point, not a default
-   next action. Per `CLAUDE.md`'s Claude Instructions, explain the design and check in before
+   `../CLAUDE.md`'s repository sketch) may be due — but this is a real decision point, not a default
+   next action. Per `../CLAUDE.md`'s Claude Instructions, explain the design and check in before
    generating significant implementation code.
 5. **Once WinRM-reachable for Server 2025**, repeat for Server 2022 and Windows 11 Enterprise
    Evaluation — Phase 3 does not start until all three OSes are independently proven, per the
@@ -213,7 +213,7 @@ current working path breaks and Setup.exe starts looking attractive again — tr
 This directory **is** a git repository. Check `git status`/`git log` fresh at the start of this
 session rather than trusting any note here about what was committed — this file describes state as
 of when it was last edited, not necessarily the true current state. As of Session 7 being written,
-`PHASE2_ENGINEERING_LOG.md`, `README.md`, `CLAUDE.md`, this file, and the new
+`PHASE2_ENGINEERING_LOG.md`, `../README.md`, `../CLAUDE.md`, this file, and the new
 `tools/gen-viostor-ddb-reg.py` have all been added/updated to reflect Finding 29, and are expected
 to be committed as a normal end-of-session commit. Still ask before committing *new* changes (or
 squashing vs. several commits).

@@ -3,7 +3,7 @@
 # stock efisys.bin/cdboot.efi (which show the "Press any key to boot from CD..."
 # prompt) for their efisys_noprompt.bin/cdboot_noprompt.efi counterparts - genuine,
 # 15-year-old Microsoft tooling that ships on the stock ISO itself (not a community
-# hack; see WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md Phase 2), then rebuilds the ISO
+# hack; see project_documentation/WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md Phase 2), then rebuilds the ISO
 # via the verified xorriso dual-boot-catalog recipe (same doc, Phase 2 point 4).
 #
 # This eliminates the UEFI boot-prompt keystroke race entirely, by construction -
@@ -66,7 +66,7 @@ fi
 
 BOOT_DIR="${EXTRACT_DIR}/efi/microsoft/boot"
 for f in efisys.bin efisys_noprompt.bin cdboot.efi cdboot_noprompt.efi; do
-  [[ -f "${BOOT_DIR}/${f}" ]] || { echo "ERROR: expected ${BOOT_DIR}/${f} not found - is this really Windows 11 media with the _noprompt files? (see WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md Phase 2)" >&2; exit 1; }
+  [[ -f "${BOOT_DIR}/${f}" ]] || { echo "ERROR: expected ${BOOT_DIR}/${f} not found - is this really Windows 11 media with the _noprompt files? (see project_documentation/WINDOWS11_NEXT_APPROACH_RESEARCH_PLAN.md Phase 2)" >&2; exit 1; }
 done
 [[ -f "${EXTRACT_DIR}/boot/etfsboot.com" ]] || { echo "ERROR: expected ${EXTRACT_DIR}/boot/etfsboot.com not found" >&2; exit 1; }
 

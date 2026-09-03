@@ -1,6 +1,6 @@
 # Phase 3 fast-iteration harness - NOT the production build pipeline (that
 # still needs image-apply/'s real scripts formalized, per
-# PHASE2_ENGINEERING_LOG.md's Session 13 next-steps - a separate, not-yet-made
+# project_documentation/PHASE2_ENGINEERING_LOG.md's Session 13 next-steps - a separate, not-yet-made
 # decision). This boots a disposable copy-on-write overlay on top of one of
 # Phase 2's own confirmed-good, WinRM-reachable reference disks
 # (image-apply/output/win2022-session12.qcow2 / win2025-session11.qcow2) so
@@ -134,7 +134,7 @@ source "qemu" "role_test" {
   # sibling project's dev harness uses. This project's offline viostor driver
   # injection (tools/gen-viostor-ddb-reg.py) was registered against a real
   # virtio-blk-pci hardware ID (VEN_1AF4&DEV_1001, confirmed via QMP
-  # query-pci - see PHASE2_ENGINEERING_LOG.md Finding 12/around line 692) and
+  # query-pci - see project_documentation/PHASE2_ENGINEERING_LOG.md Finding 12/around line 692) and
   # every boot in the engineering log attached the target disk as
   # virtio-blk-pci specifically. virtio-scsi presents a different device
   # entirely and would reintroduce INACCESSIBLE_BOOT_DEVICE.

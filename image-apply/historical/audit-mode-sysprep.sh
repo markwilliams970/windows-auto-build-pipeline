@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 # RETIRED - kept as historical record only, no longer called by anything in this
-# project. This was Option B's real script (WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md),
+# project. This was Option B's real script (project_documentation/WINDOWS11_AUDIT_MODE_SYSPREP_PLAN.md),
 # CLOSED - HARD STOP as of Session 4: both this and the fully-offline Option A
 # terminate at the identical Windows 11 first-boot BSOD, root-caused to neither
 # approach's own code/environment/media. Superseded end to end by the Setup.exe-driven
-# approach (image-apply/windows11-setup-install.sh) - see PHASE3_ENGINEERING_LOG.md's
+# approach (image-apply/windows11-setup-install.sh) - see project_documentation/PHASE3_ENGINEERING_LOG.md's
 # Phase 3.4/3.5 entries. Moved to image-apply/historical/ to make clear it's not live
 # tooling; content below is unmodified from when it was live.
 #
 # Build step 5.5 (windows11 only): boot once into Audit Mode and run Sysprep
 # (/generalize /oobe /shutdown) fully unattended, before the real customer-facing
 # unattend.xml is ever dropped - matching Microsoft's own real OEM manufacturing flow
-# (PHASE3_ENGINEERING_LOG.md Session 3/Finding 9) instead of skipping straight from
+# (project_documentation/PHASE3_ENGINEERING_LOG.md Session 3/Finding 9) instead of skipping straight from
 # offline image prep to what this project used to treat as the real first boot. Runs
 # between make-bootable.sh and apply-unattend.sh in build.sh's orchestration.
 #
-# Confirmed working via PHASE3_ENGINEERING_LOG.md Session 4:
+# Confirmed working via project_documentation/PHASE3_ENGINEERING_LOG.md Session 4:
 #   - Finding 10: the offline-drop delivery mechanism (%WINDIR%\Panther\unattend.xml)
 #     triggers real Audit Mode entry - no OOBE screen, built-in Administrator auto-logon,
 #     the real Sysprep GUI auto-launches, exactly matching Microsoft's documented
@@ -129,7 +129,7 @@ mkdir -p "$WIN_MNT"
 MOUNT_LOG="$(mktemp)"
 sudo mount -t ntfs-3g -o uid="$(id -u)",gid="$(id -g)" "${NBD_DEV}p3" "$WIN_MNT" 2>"$MOUNT_LOG" || true
 if grep -qi "read-only" "$MOUNT_LOG"; then
-  echo "ERROR: disk mounted read-only - PHASE3_ENGINEERING_LOG.md Session 3's signature of an unclean shutdown. Sysprep's own /shutdown should leave a clean volume; this indicates a crash, not a normal completion." >&2
+  echo "ERROR: disk mounted read-only - project_documentation/PHASE3_ENGINEERING_LOG.md Session 3's signature of an unclean shutdown. Sysprep's own /shutdown should leave a clean volume; this indicates a crash, not a normal completion." >&2
   cat "$MOUNT_LOG" >&2
   rm -f "$MOUNT_LOG"
   exit 1
