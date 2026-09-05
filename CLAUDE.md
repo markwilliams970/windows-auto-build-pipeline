@@ -6,8 +6,8 @@
 
 This project builds the same kind of fully reproducible Windows lab environment as its sibling
 project, `../windows-server-vm-automation/`, for the same reason: Datadog Agent testing,
-Windows/AD/IIS/SQL Server monitoring integration validation, simulating realistic enterprise and
-regulated-cloud (FedRAMP/GovCloud-style) customer environments.
+Windows/AD/IIS/SQL Server monitoring integration validation, simulating realistic enterprise
+customer environments.
 
 **Read `project_documentation/HANDOFF_FROM_UNATTENDED_INSTALL.md` before doing anything else.** It explains in detail
 why this project exists as a separate thing rather than a fix inside the sibling repo: the sibling

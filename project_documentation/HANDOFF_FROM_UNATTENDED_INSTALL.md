@@ -34,8 +34,8 @@ Server 2022/2025 still use exactly the offline-apply approach this document desc
 
 `windows-server-vm-automation` builds a disposable, reproducible Windows lab environment
 (Windows Server, and eventually Windows 11 client machines) on KVM/libvirt, for Datadog Agent
-integration testing — simulating realistic enterprise and regulated-cloud (FedRAMP/GovCloud-style)
-customer environments. The explicit, stated design goal there (and here) is **not** a golden
+integration testing — simulating realistic enterprise customer environments. The explicit,
+stated design goal there (and here) is **not** a golden
 image: every build starts from a clean install source and produces one disposable,
 already-specialized disk, every time. That's a hard requirement carried forward into this
 project too — see "Why not just build a golden image and clone it" below for exactly why that

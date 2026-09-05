@@ -13,8 +13,8 @@ building it — see "Risks and limitations" below before relying on it for anyth
 
 The original motivation is Datadog Agent testing against realistic Windows environments —
 Windows/Active Directory/IIS/SQL Server monitoring integration, simulating the kind of enterprise
-and regulated-cloud (FedRAMP/GovCloud-style) customer setups those integrations actually run
-against in the wild. That requires real, disposable Windows Server and Windows 11 VMs that can be
+customer setups those integrations actually run against in the wild. That requires real,
+disposable Windows Server and Windows 11 VMs that can be
 built and torn down repeatedly, not a single hand-maintained golden image — a golden image can't
 be cloned safely here anyway, because Windows evaluation media's activation countdown doesn't
 reset on clone, and the `sysprep`/rearm mechanism that could extend it is capped at a small number
