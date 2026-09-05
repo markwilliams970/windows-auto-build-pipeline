@@ -1,0 +1,34 @@
+[project]
+name = "windows-pipeline"
+version = "0.1.0"
+description = "CLI for windows-auto-build-pipeline: create, register, verify, and destroy disposable Windows lab VMs"
+requires-python = ">=3.10"
+# pywinrm: not used by this package's own code (which only orchestrates
+# image-apply/*.sh as subprocesses) - it's a real, declared dependency because
+# those scripts' own nested `python3` calls (winrm_ps, in
+# inject-virtio-spice.sh/windows11-setup-install.sh/install-tools.sh) need it
+# on whatever python3 they resolve to, and an activated windows-pipeline venv
+# puts its own python3 first on PATH for everything those scripts invoke.
+# Declaring it here (rather than relying on PREREQUISITES.md's system-wide
+# install, or routing subprocess calls around this venv) keeps the venv
+# self-contained - see util.py's run() docstring for the failure this fixes.
+dependencies = ["pywinrm"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+# Shell completion is opt-in, not a hard dependency - argcomplete is only ever
+# imported defensively (cli/main.py), so the CLI works identically without it.
+completion = ["argcomplete"]
+
+[project.scripts]
+windows-pipeline = "windows_pipeline.cli.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

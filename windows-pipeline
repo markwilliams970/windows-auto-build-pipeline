@@ -1,0 +1,22 @@
+#!/usr/bin/env python3
+"""windows-pipeline CLI entry point.
+
+Thin shim so the tool can be run directly from a repository checkout without
+an install step (matching windows11-lab's own windows11-lab shim convention -
+CLAUDE.md's "reuse the pattern, not necessarily the exact files"). Prepends
+src/ to sys.path only if windows_pipeline isn't already importable (e.g. via
+`pip install -e .`), so this keeps working either way.
+"""
+
+import sys
+from pathlib import Path
+
+try:
+    import windows_pipeline  # noqa: F401
+except ImportError:
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+
+from windows_pipeline.cli.main import main
+
+if __name__ == "__main__":
+    sys.exit(main())

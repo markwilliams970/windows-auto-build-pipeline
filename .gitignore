@@ -34,3 +34,12 @@ tools/vendor/
 # Python bytecode cache, regenerated automatically by any interpreter run
 # against tools/*.py - never source.
 __pycache__/
+*.pyc
+
+# windows-pipeline (Phase 5 CLI) packaging/build artifacts - matching
+# ../windows11-lab's own .gitignore for the identical setuptools layout.
+*.egg-info/
+.venv/
+build/
+dist/
+.pytest_cache/

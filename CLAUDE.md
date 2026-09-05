@@ -420,11 +420,21 @@ windows-auto-build-pipeline/
 │   │                             # reference, not phased design/history)
 │   └── HANDOFF_FROM_UNATTENDED_INSTALL.md   # read this first
 ├── services.yaml                         # copied/adapted from the sibling project
-├── build.sh                              # real: orchestrates image-apply/*.sh then Packer, then
-│                                            # inject-virtio-spice.sh (Phase 3A, all four OSes)
-├── register-vm.sh                        # real: defines a libvirt domain from a finished build's
-│                                            # disk (virsh list/virt-manager visibility) - adapted
-│                                            # from ../windows-server-vm-automation/register-vm.sh
+├── pyproject.toml                        # windows-pipeline (Phase 5) - the project's single CLI
+│                                            # entry point; build.sh/register-vm.sh are retired,
+│                                            # see project_documentation/PHASE5_ENGINEERING_LOG.md
+├── windows-pipeline                      # zero-install dev shim (run from a checkout with no
+│                                            # `pip install` step) - mirrors ../windows11-lab's own
+│                                            # shim convention
+├── src/windows_pipeline/                 # the CLI's own code - orchestration only, every real
+│   │                                        # operation still shells out to image-apply/*.sh /
+│   │                                        # packer/*.hcl unchanged
+│   ├── cli/main.py                       # argparse subcommands + argcomplete wiring
+│   ├── commands/                         # create.py, list_cmd.py, register_vm.py, vm_control.py
+│   │                                        # (start/stop), destroy.py, verify.py
+│   ├── state.py                          # HostRecord/StateStore - flat, one JSON record per host
+│   │                                        # ID, no history (see Phase 5's own section above)
+│   ├── config.py, identity.py, common_sh.py, libvirt_util.py, winrm_util.py, util.py
 
 ├── image-apply/                # real, confirmed production for Server 2019/2022/2025
 │   │                             # (project_documentation/PHASE3_ENGINEERING_LOG.md Session 2; Server 2019 added
@@ -1215,7 +1225,71 @@ Success criteria:
 
 The environment can be repeatedly created and destroyed.
 
-**Status:** not started — same as the sibling project's own Phase 5.
+**Status: done (2026-09-05).** Scope grew beyond the three lines above, by explicit user direction
+partway through design: rather than bolt `verify`/`destroy` onto the existing `build.sh`/
+`register-vm.sh` pair, the whole lifecycle (build, register, start, stop, verify, destroy, list) is
+now one installable Python CLI, **`windows-pipeline`** (`pyproject.toml`, `src/windows_pipeline/`),
+and `build.sh`/`register-vm.sh` are retired - a full repo-wide reference search confirmed zero
+functional/executable dependents on either before removal. Full design rationale, the research this
+project's own "search before you build" standard called for (libvirt destroy conventions from
+`vagrant-libvirt`/`terraform-provider-libvirt`; why Goss/Testinfra/Chef InSpec were evaluated and
+rejected for `verify`), and three real, non-obvious bugs found and fixed along the way - see
+`project_documentation/PHASE5_ENGINEERING_LOG.md` for the complete trail, this is only the summary:
+
+- **Identity redesign**: a host-side-unique ID (`<netbios-lowercase>-<timestamp>-<uuid8>`, e.g.
+  `win2022prod-20260904-1314-a1b2c3d4`), generated once by `create` and reused everywhere on the host
+  side (qcow2 basename, Packer `build_id`, NVRAM filename, libvirt domain name), decoupled from the
+  guest's own fixed-per-OS NetBIOS `ComputerName` - fixes a real limitation of the old scheme (every
+  rebuild of the same OS produced the identical libvirt domain name, so only one could ever be
+  registered at a time).
+- **State store**: one flat JSON record per host ID (`HostRecord`/`StateStore`), tracking only
+  *current* state (`creating -> built|failed -> registered -> running|stopped`, and then gone -
+  `destroy` deletes the record outright rather than writing a terminal `destroyed` state, an explicit
+  user preference against keeping a tombstone) - deliberately not a history/graph, unlike
+  `../windows11-lab`'s own `ImageGraph` model, which that project needs for golden-image cloning and
+  this one doesn't (see "Ephemeral Infrastructure, Still" above). `../windows11-lab` was referenced
+  for CLI/packaging *mechanics* only (argparse subcommands, a pip-installable console script, atomic
+  JSON writes) - not its data model.
+- **`create`/`list`**: ports `build.sh`'s body unchanged underneath. Found and fixed a real bug that
+  cost a long diagnostic detour (boot-storm/PnP/NLA/Defender theories all disproven with direct
+  evidence before the actual cause surfaced): `pywinrm` wasn't a declared dependency of the new
+  package, so an activated `windows-pipeline` venv's own `python3` shadowed the system one that
+  `image-apply/*.sh`'s own WinRM checks need, and every check silently crashed on import - looking
+  exactly like a hung WinRM/Windows problem. Fixed properly (declared as a real dependency in
+  `pyproject.toml`), not by routing subprocess calls around the venv (a first fix attempt in that
+  direction was explicitly rejected as reintroducing a hidden dependency).
+- **`register-vm`/`start`/`stop`**: ports `register-vm.sh`'s device model and precondition check
+  (extracted into its own reusable `image-apply/check-virtio-spice-marker.sh`) unchanged. Host ID
+  *is* the libvirt domain name now - no separate `vm_name` argument or mtime-guessing needed.
+- **`destroy`**: sequence adopted directly from `vagrant-libvirt`'s own proven order (stop if
+  running -> delete snapshots -> remove managed-save -> undefine with `--nvram` -> purge disk
+  artifacts only if `--purge-disk`, kept by default). Found and fixed a real bug the first live run
+  surfaced: `--purge-disk` only knew about the one qcow2 path in the state record, silently leaving
+  Packer's scratch efivars file, its whole output directory, and both `inject-virtio-spice.sh`'s and
+  `install-tools.sh`'s own per-run work directories on disk - fixed by enumerating every known
+  per-host-ID location across the pipeline before purging. DHCP lease cleanup is a documented,
+  deliberate non-goal (libvirt doesn't do it on undefine, and this project's `virsh` has no command
+  to force one either - confirmed directly, not assumed).
+- **`verify`**: four check groups (connectivity/OS identity, AD DS/IIS/SQL Server role detection,
+  VirtIO/SPICE device health, Tools/Datadog Agent health), each a small PowerShell snippet over
+  WinRM matching this project's own established pattern - not a verification framework (Goss/
+  Testinfra/Chef InSpec were all evaluated and rejected as adding a real dependency for no functional
+  gain over what this project's scripts already do by hand). Found and fixed two real PowerShell/
+  WinRM bugs testing against a live VM: `pywinrm` can report a non-zero exit code even with fully
+  valid stdout when a `-ErrorAction SilentlyContinue` query includes a non-existent named item
+  (discarding real data if trusted); `ConvertTo-Json` serializes a `ServiceControllerStatus` enum as
+  its underlying int on Windows PowerShell 5.1, not the string `"Running"` a naive comparison would
+  expect. Validated against both a deliberately-foreign VM (the sibling project's `win2022-dc` -
+  correctly failed checks it should fail) and a genuine build from this project (`win2025app` -
+  correctly passed real, functional checks).
+- **Packaging**: `argcomplete`-based shell completion as a true optional extra, with a live
+  state-store-backed completer for every `host_id` argument - verified with a real completion
+  request, not just import-success. `../windows11-lab`'s own `install.sh` pattern (install into an
+  isolated location so the repo clone becomes disposable) was considered and rejected - doesn't
+  apply here, since `windows-pipeline` orchestrates `image-apply/*.sh`/`packer/*.hcl`, which must
+  live in this specific checkout.
+
+See `README.md`'s own "Using windows-pipeline" section for end-user usage of all seven commands.
 
 ---
 

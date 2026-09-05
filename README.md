@@ -132,10 +132,45 @@ it (or re-acquiring it, if the cached copy is ever lost) requires a human to com
 browser first; see `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md`'s Finding 3 for the full detail and the
 `ISO_CACHE_INVENTORY.md` row for exactly what's cached today.
 
-## Running a build
+## Using windows-pipeline
+
+Every part of this project's lifecycle — apply an image, boot it, register it with libvirt,
+start/stop it, check its health, tear it down — is driven through one CLI, `windows-pipeline`. It's
+an orchestration layer only: every real operation (partitioning, `wimlib` apply, `bcdboot`, Packer,
+driver injection, tool install) still runs exactly the same `image-apply/*.sh` scripts and
+`packer/boot-and-provision.pkr.hcl` this project has always used — `windows-pipeline` just tracks
+state across them and gives them one consistent interface. Full design rationale and the real bugs
+found building it: `project_documentation/PHASE5_ENGINEERING_LOG.md`.
+
+### Installing it
 
 ```
-./build.sh <server2019|server2022|server2025|windows11> [services_yaml_path] [computer_name]
+python3 -m venv .venv
+.venv/bin/pip install -e .
+source .venv/bin/activate   # or just call .venv/bin/windows-pipeline directly, unactivated
+```
+
+This installs `windows-pipeline` as an editable package into a local virtualenv — editable because
+the CLI orchestrates `image-apply/*.sh`/`packer/*.hcl` in this specific checkout and can't be
+relocated the way a fully standalone tool could be; there's no `install.sh` that copies it anywhere
+else, since that would misrepresent how it actually works. `pywinrm` is pulled in automatically (a
+real, declared dependency — see the Phase 5 log for why this specifically had to be a declared
+dependency and not an assumption about what's on the system `python3`).
+
+For tab completion of every `host_id` argument (pulled live from `windows-pipeline`'s own state
+store, not just static flag names):
+
+```
+.venv/bin/pip install -e ".[completion]"
+eval "$(register-python-argcomplete windows-pipeline)"   # add to your shell's rc file
+```
+
+Completion is a true optional extra — the CLI works identically without it.
+
+### Building an image
+
+```
+windows-pipeline create <server2019|server2022|server2025|windows11> [--services PATH] [--tools PATH] [--computer-name NAME]
 ```
 
 - `server2019` / `server2022` / `server2025` run the full offline-apply pipeline (partition → apply
@@ -143,17 +178,31 @@ browser first; see `project_documentation/WINDOWS_SERVER_2019_RESEARCH_PLAN.md`'
   automatically run `image-apply/inject-virtio-spice.sh` against Packer's own final,
   role-provisioned disk — so a real build's disk always ends up on virtio-scsi + QXL/SPICE, not just
   on request (NIC stays on the existing, already-proven offline-hivex VirtIO NIC mechanism,
-  untouched). `services_yaml_path` (optional, defaults to `services.yaml`) selects which roles get
+  untouched). `--services` (optional, defaults to `services.yaml`) selects which roles get
   provisioned — see "Roles" below.
 - `windows11` runs the Setup.exe-driven install, then the same `inject-virtio-spice.sh` step (storage
   *and* NIC swapped to VirtIO this time, plus SPICE) — no Packer handoff, no roles.
-- `computer_name` (optional) overrides the default computer name baked into the unattend/answer
-  file for that OS.
+- `--computer-name` (optional) overrides the default computer name baked into the unattend/answer
+  file for that OS. This is the guest's own NetBIOS name only — it has nothing to do with the host
+  ID discussed next.
+- `--tools` (optional, defaults to `$TOOLS_YAML_PATH` or `./tools.yaml`) — see "Installing tools"
+  below.
+
+`create` prints a **host ID** on success (e.g. `win2022prod-20260904-1314-a1b2c3d4`) — a unique
+identifier for this specific build, generated fresh every run (`<netbios-lowercase>-<timestamp>-
+<uuid8>`), decoupled from the guest's own fixed-per-OS computer name. Every other `windows-pipeline`
+command takes this ID as its argument. `windows-pipeline list` shows every ID `windows-pipeline`
+currently knows about, along with its OS, guest computer name, and lifecycle state (`built` →
+`registered` → `running`/`stopped` → gone once destroyed):
+
+```
+windows-pipeline list
+```
 
 Example, a Windows Server 2025 IIS+SQL Server app-server build:
 
 ```
-./build.sh server2025 dev/services-app-server.yaml
+windows-pipeline create server2025 --services dev/services-app-server.yaml
 ```
 
 Rough timings from real logged production runs on this project's own development host (expect
@@ -165,19 +214,20 @@ role-provisioning phase specifically, not counting offline-apply or driver injec
 ~7 minutes; IIS/SQL Server, ~18 minutes, notably faster than Server 2025's own historical run for
 the identical profile, not investigated further (plausibly host-load/caching differences between
 sessions rather than a real per-OS difference). A completed build leaves a `.qcow2` disk image
-under `image-apply/output/builds/` for Windows 11, or under `packer/output/<os>-<timestamp>/` (a
-unique directory per build — see the note below) for Server 2019/2022/2025, with the disk itself
-already on virtio-scsi/virtio-net/QXL+SPICE and confirmed reachable over WinRM.
+under `image-apply/output/builds/` for Windows 11, or under `packer/output/<host-id>/` (a unique
+directory per build, named for the host ID `create` printed) for Server 2019/2022/2025, with the
+disk itself already on virtio-scsi/virtio-net/QXL+SPICE and confirmed reachable over WinRM.
 
-Each real build gets its own unique build ID (`<os>-<timestamp>`), used for both the disk's own
-filename and Packer's output directory — so repeated builds of the same OS never collide on a shared
-path (an early version of this pipeline had a real bug here: a fixed `packer/output/<os>/` directory
-that a second build of the same OS would fail against; fixed 2026-08-23, see `CLAUDE.md`'s Phase 3A
-entry for the full account).
+Repeated builds of the same OS never collide on a shared path — every real build's own host ID is
+unique by construction (an early version of this pipeline had a real bug here: a fixed
+`packer/output/<os>/` directory that a second build of the same OS would fail against; fixed
+2026-08-23, see `CLAUDE.md`'s Phase 3A entry for the full account; the host-ID scheme described
+above generalizes that same fix and gives it a stable, human-readable identity usable everywhere
+downstream, see `project_documentation/PHASE5_ENGINEERING_LOG.md`).
 
 ## Roles (Server 2019/2022/2025 only)
 
-`services.yaml` (or a path passed as `build.sh`'s second argument) is a flat, commented list of
+`services.yaml` (or a path passed via `create`'s `--services` flag) is a flat, commented list of
 roles to provision: `iis`, `ad-ds`, `sql-server`. `ad-ds` (domain controller) and `iis`/`sql-server`
 (app server) are mutually exclusive profiles — `dev/services-domain-controller.yaml` and
 `dev/services-app-server.yaml` are ready-made examples of each. Windows 11 gets none of these
@@ -187,7 +237,7 @@ SKUs are. All three Server SKUs share the identical, unmodified role-provisionin
 
 ## Installing tools (7-Zip, PuTTY, WinSCP, Chrome, Notepad++, Datadog Agent)
 
-Every real build now finishes with a Phase 4 tool-install stage, wired into `build.sh`
+Every real build now finishes with a Phase 4 tool-install stage, wired into `windows-pipeline create`
 automatically for all four OSes — nothing extra to run for a normal build.
 
 `tools.yaml` (repo root) is a flat, commented list, same convention as `services.yaml`:
@@ -217,12 +267,12 @@ installs exactly the version named in `tools.yaml`'s `datadog.agent_version`, si
 can matter for monitoring-integration test comparability across builds.
 
 **The Datadog Agent needs a real API key.** Set `DD_API_KEY` in the environment before running
-`build.sh` (or `image-apply/install-tools.sh` directly) whenever `datadog-agent` is listed in
-`tools.yaml` — the build fails loud, before ever starting a VM, if it's listed with no key set.
-Comment that line out in `tools.yaml` to build without it, no other change needed.
+`windows-pipeline create` (or `image-apply/install-tools.sh` directly) whenever `datadog-agent` is
+listed in `tools.yaml` — the build fails loud, before ever starting a VM, if it's listed with no key
+set. Comment that line out in `tools.yaml` to build without it, no other change needed.
 
 ```
-DD_API_KEY=<your key> ./build.sh server2022
+DD_API_KEY=<your key> windows-pipeline create server2022
 ```
 
 **Running the tool installer against an already-built disk, without a full rebuild:**
@@ -262,33 +312,99 @@ not just headless automation.
 
 ## Registering a build with libvirt
 
-A finished build's disk is just a loose `.qcow2` file until it's registered as a libvirt domain —
-`register-vm.sh` does that, so it shows up in `virsh list --all` / virt-manager instead:
+A finished build's disk is just a loose `.qcow2` file until it's registered as a libvirt domain:
 
 ```
-./register-vm.sh <server2019|server2022|server2025|windows11> [qcow2_path] [vm_name]
+windows-pipeline register-vm <host_id> [--cpus N] [--memory-mb N] [--network NAME] [--efi-firmware-code PATH]
 ```
 
-`qcow2_path` defaults to the most recently built disk for that OS; `vm_name` defaults to the disk's
-own baked-in computer name, lowercased. The registered domain's device model (virtio-scsi disk,
+`<host_id>` is the ID `windows-pipeline create` printed (also `windows-pipeline list`) — it becomes
+the libvirt domain name directly, e.g. `virsh list --all` shows `win2022prod-20260904-1314-a1b2c3d4`,
+not the guest's own `WIN2022PROD` computer name. Defaults match `register-vm.sh`'s own former
+production values (4 CPUs, 16384 MiB memory, the `default` libvirt network,
+`/usr/share/OVMF/OVMF_CODE_4M.fd`). The registered domain's device model (virtio-scsi disk,
 virtio-net NIC, QXL + a real loopback-only SPICE channel, USB tablet) matches what
-`inject-virtio-spice.sh` already proved boots. Re-running it after a fresh build for the same OS is
-the normal case — it cleanly re-registers over a shut-off domain of the same name. Start it and
-connect with:
+`inject-virtio-spice.sh` already proved boots, confirmed by a real `virsh start` boot, live-verified
+over WinRM, for **all four target OSes**: Server 2022 and Server 2025 (2026-08-26), Windows 11
+including its own NIC-swap code path (2026-09-01), and Server 2019 (2026-09-02, both role profiles).
+
+`register-vm` refuses to register a disk that hasn't actually been through
+`inject-virtio-spice.sh` (checked via a real on-disk completion marker, read offline — not just
+trusting `windows-pipeline`'s own state record) rather than silently applying the wrong device model
+to it. Re-registering after a fresh build reusing the same disk's name is handled the same way it
+always was — it cleanly re-registers over a shut-off domain, refusing if the existing one is still
+running.
+
+Start and stop it through `windows-pipeline` too (thin `virsh` wrappers that also keep its tracked
+state in sync):
 
 ```
-virsh -c qemu:///system start <vm_name>
-virt-viewer --connect qemu:///system <vm_name>
+windows-pipeline start <host_id>
+windows-pipeline stop <host_id> [--force] [--timeout SECONDS]
 ```
 
-This script's device model is confirmed by a real `virsh start` boot, live-verified over WinRM, for
-**all four target OSes**: Server 2022 and Server 2025 (2026-08-26), Windows 11 including its own
-NIC-swap code path (2026-09-01), and Server 2019 (2026-09-02, both role profiles). No open item
-remains here.
+`stop` is graceful by default (`virsh shutdown`, polled until the domain actually reports `shut off`,
+up to `--timeout` seconds, default 120) — never a hard kill unless `--force` is given, matching this
+project's own standing convention that a hard kill on a disk you intend to reuse fakes corruption
+symptoms. Connect to a running VM's console directly with:
 
-`register-vm.sh` also refuses to register a disk that hasn't actually been through
-`inject-virtio-spice.sh` yet (checked via an on-disk completion marker) rather than silently applying
-the wrong device model to it.
+```
+virt-viewer --connect qemu:///system <host_id>
+```
+
+## Verifying a VM's health
+
+```
+windows-pipeline verify <host_id> [--checks connectivity,roles,virtio,tools] [--format text|json]
+```
+
+Runs against an already-**running**, registered VM (`windows-pipeline start` it first) and reports
+one of four check groups, or all of them (the default):
+
+- `connectivity` — WinRM reachable, real OS caption, hostname.
+- `roles` — detects whichever of AD DS/IIS/SQL Server is actually present and checks it the way this
+  project's own build pipeline always has: NTDS/DNS/ADWS running plus a real `Get-ADDomain` call for
+  AD DS; `W3SVC` running plus a real HTTP 200 for IIS; `MSSQLSERVER` running plus a real SA login and
+  `SELECT 1` for SQL Server. Not gated on `services.yaml` — `verify` may run long after build time
+  against a VM whose provisioning history isn't in front of it, so it checks what's actually there.
+- `virtio` — the same disk/NIC/display/SPICE-agent checks `inject-virtio-spice.sh`'s own Stage 2
+  already performs, run again independently.
+- `tools` — the same registry-based detection `install-tools.ps1`'s own `Status` mode uses, for all
+  six possible tools, plus the Datadog Agent's own service-running check. Real limitation, stated
+  plainly rather than glossed over: Agent connectivity and host registration are **not** checked —
+  that needs a real `DD_API_KEY,` and this project has never had reason to exercise one in testing.
+
+Each check group is a small, self-contained PowerShell snippet sent over WinRM — the same shape
+every `image-apply/*.sh` script already uses, not a verification framework. (Goss, Testinfra, and
+Chef InSpec were all evaluated for this and rejected — see
+`project_documentation/PHASE5_ENGINEERING_LOG.md`'s Research section for why.) Results are also saved
+into `windows-pipeline`'s own state record for that host ID (`last_verified_at`/
+`last_verify_result`), visible via `windows-pipeline list --format json`.
+
+## Tearing down a VM
+
+```
+windows-pipeline destroy <host_id> [--purge-disk] [--force] [--timeout SECONDS]
+```
+
+Undefines the libvirt domain (stopping it first if it's running — gracefully unless `--force`),
+deletes snapshots and managed-save state if present (both would otherwise make `virsh undefine`
+fail outright), and removes `windows-pipeline`'s own tracking record for that host ID entirely — no
+tombstone kept.
+
+**The disk is kept by default.** A real build can take 15-50+ minutes to reproduce, so losing one to
+an accidental destroy is expensive — pass `--purge-disk` to actually delete it. When given,
+`--purge-disk` cleans up *everything* that build ever left behind across this pipeline's output
+directories (the qcow2 itself, Packer's own scratch efivars file and output directory, and both
+`inject-virtio-spice.sh`'s and `install-tools.sh`'s own per-run work directories) — not just the one
+path `windows-pipeline` happened to track, confirmed by a real `find` sweep during development (see
+the Phase 5 log for the bug this closed). Without `--force`, `destroy` prints exactly what it's
+about to delete and asks for confirmation first.
+
+One known, deliberate gap, documented rather than silently glossed over: `destroy` does not release
+the VM's DHCP lease. Neither libvirt nor this host's own `virsh` (10.0.0) offers a way to force one
+without hand-editing dnsmasq's own lease file as root — a real capability gap, not an oversight — so
+the lease is simply left to expire on its own.
 
 ## Risks and limitations
 
@@ -315,11 +431,19 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   2022/2025's fully offline path never invokes Setup.exe at all and is immune to that entire class
   of risk.
   
-- **No automated environment lifecycle yet.** There's no "destroy" or cleanup workflow — VMs and
-  their disk images are left in place until removed by hand. Build artifacts are large (Windows and
-  VirtIO ISOs alone are roughly 25 GiB cached across all four OSes, per `ISO_CACHE_INVENTORY.md`,
-  and each build's own disk image is tens of GB), so disk space needs active management on whatever
-  host this runs on.
+- **`windows-pipeline destroy` doesn't release DHCP leases**, and disk artifacts still need active
+  management even with lifecycle automation in place: build artifacts are large (Windows and VirtIO
+  ISOs alone are roughly 25 GiB cached across all four OSes, per `ISO_CACHE_INVENTORY.md`, and each
+  build's own disk image is tens of GB), and `destroy` keeps the disk by default (`--purge-disk`
+  opts in) precisely because a real build is expensive to reproduce — so a host running many builds
+  without ever passing `--purge-disk` will still accumulate disk usage over time.
+- **`windows-pipeline verify` checks what this project's own build pipeline already established as
+  its success bar, not a general-purpose Windows health audit.** It doesn't check Datadog Agent
+  connectivity or host registration (needs a real API key, never exercised here), doesn't check
+  anything beyond the four groups it has (no disk-space/event-log/patch-level checks, for instance),
+  and its role checks activate based on what's actually running on the guest rather than what
+  `services.yaml` originally requested — a role that failed to install silently just won't be
+  checked, rather than being reported as a missing role.
 - **Tool installer (`tools.yaml`) is implemented and tested on Server 2022 only.** Server
   2019/2025 and Windows 11 share the identical code path with no OS branching, so this is a
   lower-risk gap than most others here, but it's still an honest one — not yet confirmed. A real
@@ -356,14 +480,21 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   role scripts) was purpose-built to chase down two real, Server-2019-specific bugs found and fixed
   along the way; see `project_documentation/PHASE3_ENGINEERING_LOG.md`'s Phase E sessions for the full bisection trail.
 - **Phase 4 (Tooling) is implemented and tested** (2026-09-03) — see "Installing tools" above for
-  usage. `tools.yaml`-driven, wired into `build.sh` for all four OSes; five of the six tools fetch
-  fresh from each vendor host-side on every build rather than being pinned (they churn too fast to
-  usefully pin the way OS ISOs are), with the Datadog Agent as the one deliberate pinned exception.
-  Full CRUD (Create/Read/Update/Delete) and idempotency confirmed against a real Server 2022 build
-  for all six tools — see `project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md`. Not yet exercised on Server 2019/2025
-  or Windows 11 (same code path, no OS branching, but genuinely untested there); real Datadog
-  Agent connectivity was never confirmed (dummy API key used for testing).
-- **Phase 5 (lifecycle automation)**: build/verify/destroy workflow. Not started.
+  usage. `tools.yaml`-driven, wired into `windows-pipeline create` for all four OSes; five of the six
+  tools fetch fresh from each vendor host-side on every build rather than being pinned (they churn
+  too fast to usefully pin the way OS ISOs are), with the Datadog Agent as the one deliberate pinned
+  exception. Full CRUD (Create/Read/Update/Delete) and idempotency confirmed against a real Server
+  2022 build for all six tools — see `project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md`. Not yet
+  exercised on Server 2019/2025 or Windows 11 (same code path, no OS branching, but genuinely
+  untested there); real Datadog Agent connectivity was never confirmed (dummy API key used for
+  testing).
+- **Phase 5 (Lifecycle Automation) is done** (2026-09-05) — the `windows-pipeline` CLI (`create`,
+  `list`, `register-vm`, `start`, `stop`, `verify`, `destroy`), replacing `build.sh`/`register-vm.sh`
+  outright. See "Using windows-pipeline" above for usage and
+  `project_documentation/PHASE5_ENGINEERING_LOG.md` for the full design/implementation trail,
+  including three real bugs found and fixed along the way (a `pywinrm`/venv dependency-resolution
+  failure, an incomplete `--purge-disk` artifact sweep, and two `verify`-side PowerShell/WinRM
+  bugs — a `pywinrm` exit-code quirk and a `ConvertTo-Json` enum-serialization gotcha).
 - **Open engineering question**: whether Server 2019/2022/2025's existing offline-hivex NIC driver
   mechanism should ever be ported onto the newer live-swap technique used for Windows 11's VirtIO
   NIC — currently left as-is (offline-hivex) since it's already proven and the swap would be a
@@ -373,20 +504,12 @@ Read this before relying on this pipeline for anything beyond disposable lab use
   against what's hardcoded in `image-apply/lib/common.sh`/`tools/gen-viostor-ddb-reg.py`, and fails
   loudly before a build runs against drifted media, is identified as worthwhile but not yet built
   (`CLAUDE.md`'s "Version-sensitivity and brittleness" standard).
-- `register-vm.sh`'s device model (virtio-scsi + QXL/SPICE) is now confirmed by a real `virsh start`
-  boot, live-verified over WinRM (not just a screenshot), for **all four target OSes** — Server 2022
-  and Server 2025 (2026-08-26), Windows 11 including its own NIC-swap code path (2026-09-01), and
-  Server 2019 (2026-09-02). No open item remains here.
-- `register-vm.sh` now enforces its own precondition instead of assuming it: it refuses to register a
-  disk that hasn't actually been through `inject-virtio-spice.sh` (checked via an on-disk completion
-  marker), closing a real device-topology-mismatch bug that cost real debugging time before it was
-  caught.
-- ~~`dev/role-test.pkr.hcl` (the fast-iteration harness, separate from the production `build.sh`
-  path) has the same fixed-per-OS Packer output-directory pattern that caused the collision bug fixed
-  above in the production path~~ — **fixed 2026-08-26**, same `run_id`-threading approach as
-  `build.sh`'s own fix. Not yet exercised by a real end-to-end Packer build, since this harness's own
-  Phase 2 reference disks no longer exist on disk (a separate, pre-existing gap) - still true as of
-  Server 2019's own addition, which deliberately used a new, purpose-built harness instead
+- ~~`dev/role-test.pkr.hcl` (the fast-iteration harness, separate from the production build path)
+  has the same fixed-per-OS Packer output-directory pattern that caused a collision bug fixed in the
+  production path~~ — **fixed 2026-08-26**, same `run_id`-threading approach as the production fix.
+  Not yet exercised by a real end-to-end Packer build, since this harness's own Phase 2 reference
+  disks no longer exist on disk (a separate, pre-existing gap) - still true as of Server 2019's own
+  addition, which deliberately used a new, purpose-built harness instead
   (`dev/run-server2019-specialize-test.sh`) rather than extending this one.
 
 ## Acknowledgements
