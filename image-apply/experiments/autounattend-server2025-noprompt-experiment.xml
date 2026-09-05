@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  EXPERIMENT ARTIFACT - not production. Part of a one-off research spike testing whether
+  Windows 11's Setup.exe fix (image-apply/windows11-setup-install.sh: a _noprompt-patched
+  ISO + a hand-built qemu-system-x86_64 invocation, bypassing Packer's QEMU builder
+  entirely) also gets Windows Server 2025 media past the boot failure documented in the
+  sibling project's WINDOWS_SERVER_UNATTENDED_THRU_PHASE2.md Finding 15 and this project's
+  own project_documentation/PHASE2_ENGINEERING_LOG.md.
+
+  CLAUDE.md currently bans Microsoft-Windows-Setup for Server 2022/2025 "absolute, no
+  exception." This file exists only under image-apply/experiments/, is not referenced by
+  build.sh or any production script, and does not change that standing policy - see the
+  session that produced this file for the explicit, scoped authorization.
+
+  Adapted from two proven sources, not written from scratch:
+    - image-apply/autounattend-windows11-phase33.xml (windowsPE structure, no-bootindex
+      qemu pattern, FirstLogonCommands network-wait + WinRM-enable steps - all OS-agnostic
+      PowerShell, reused verbatim)
+    - ../windows-server-vm-automation/packer/answer_files/autounattend.xml.pkrtpl (the
+      Microsoft-Windows-Setup DiskConfiguration/ImageInstall shape proven against real
+      Server 2022 media - LabConfig TPM/SecureBoot/RAM/CPU bypasses removed, not
+      applicable to Server; ProductKey omitted, matching that template's own documented
+      reason - eval media's EDITIONID doesn't match the public KMS client key)
+
+  Deliberately no virtio drivers / DriverPaths (plain ide-hd/ide-cd/e1000 - Windows'
+  own inbox drivers, zero injection needed) - this pass isolates one variable only:
+  does Setup.exe even get past the boot hang. Driver injection is a separate, later
+  question if this succeeds.
+
+  /IMAGE/INDEX 2 = "Windows Server 2025 SERVERSTANDARD" (Desktop Experience, Eval) -
+  verified via wimlib-imagex info, project_documentation/PHASE2_ENGINEERING_LOG.md Finding 0. Reused
+  directly rather than re-verified, since that finding's own extraction is still the
+  ground truth for this exact cached ISO.
+-->
+<unattend xmlns="urn:schemas-microsoft-com:unattend">
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+      </UserData>
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>EFI</Type>
+              <Size>260</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>MSR</Type>
+              <Size>16</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>3</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>FAT32</Format>
+              <Label>System</Label>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>3</Order>
+              <PartitionID>3</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+        </Disk>
+        <WillShowUI>OnError</WillShowUI>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>3</PartitionID>
+          </InstallTo>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/INDEX</Key>
+              <Value>2</Value>
+            </MetaData>
+          </InstallFrom>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+    </component>
+  </settings>
+
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <ComputerName>WIN2025EXP</ComputerName>
+      <TimeZone>UTC</TimeZone>
+      <RegisteredOwner>Windows Lab</RegisteredOwner>
+    </component>
+  </settings>
+
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipUserOOBE>true</SkipUserOOBE>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>5</LogonCount>
+        <Username>Administrator</Username>
+        <Password>
+          <Value>TestP@ssw0rd123</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Log progress marker</Description>
+          <CommandLine>cmd.exe /c echo firstlogon-reached &gt; C:\server2025-experiment-firstlogon-marker.txt</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Set network category to Private</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$deadline = (Get-Date).AddSeconds(90); while (-not (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' })) { if ((Get-Date) -gt $deadline) { break }; Start-Sleep -Seconds 2 }; Get-NetConnectionProfile | Set-NetConnectionProfile -NetworkCategory Private *&gt;&gt; C:\server2025-experiment-netcat-log.txt"</CommandLine>
+        </SynchronousCommand>
+        <SynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <RequiresUserInput>false</RequiresUserInput>
+          <Description>Enable WinRM over HTTP</Description>
+          <CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Enable-PSRemoting -Force -SkipNetworkProfileCheck; Get-ChildItem WSMan:\localhost\Listener | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue; New-Item -Path WSMan:\localhost\Listener -Transport HTTP -Address * -Force; winrm set winrm/config/service/auth '@{Basic=\"true\"}'; winrm set winrm/config/service '@{AllowUnencrypted=\"true\"}'; winrm set winrm/config/client '@{TrustedHosts=\"*\"}'; New-NetFirewallRule -DisplayName 'WinRM-HTTP' -Direction Inbound -Protocol TCP -LocalPort 5985 -Action Allow -ErrorAction SilentlyContinue; Restart-Service WinRM *&gt;&gt; C:\server2025-experiment-winrm-log.txt"</CommandLine>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
+</unattend>
