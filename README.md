@@ -250,6 +250,7 @@ tools:
   - chrome
   - notepadplusplus
   - datadog-agent   # requires DD_API_KEY - see below
+  # - powershell7   # opt-in - uncomment to install PowerShell 7 alongside 5.1
 
 datadog:
   agent_version: "7.83.0"
@@ -265,6 +266,12 @@ fresh, from this Linux host (never from inside the guest), on every build; these
 usefully pin the way the OS ISOs are pinned. The Datadog Agent is the one deliberate exception: it
 installs exactly the version named in `tools.yaml`'s `datadog.agent_version`, since Agent version
 can matter for monitoring-integration test comparability across builds.
+
+**PowerShell 7 is opt-in.** `powershell7` ships commented out in `tools.yaml`; uncomment it (or add
+`- powershell7` to your own tools file) to install the latest stable PowerShell 7 MSI from GitHub.
+It installs `pwsh.exe` side-by-side - Windows PowerShell 5.1 stays the system default, and this
+pipeline's own WinRM provisioning keeps running under 5.1. `windows-pipeline verify` reports it
+but doesn't fail when it's absent.
 
 **The Datadog Agent needs a real API key.** Set `DD_API_KEY` in the environment before running
 `windows-pipeline create` (or `image-apply/install-tools.sh` directly) whenever `datadog-agent` is

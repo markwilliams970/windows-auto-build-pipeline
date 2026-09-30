@@ -5,7 +5,7 @@
 # just before this), so this script needs no OS branching in its own QEMU device model at all,
 # unlike inject-virtio-spice.sh.
 #
-# Five of the six tools (7zip/putty/winscp/chrome/notepadplusplus) are deliberately NOT pinned or
+# All tools except datadog-agent (7zip/putty/winscp/chrome/notepadplusplus/powershell7) are deliberately NOT pinned or
 # cached in ../iso_cache/ - they churn far faster than the Windows ISOs that convention exists for,
 # and pinning them would just relocate the staleness problem this project's own
 # "Version-sensitivity and brittleness" standard already warns about. Instead this script resolves
@@ -146,6 +146,17 @@ resolve_notepadplusplus() {
   DL_VERSION="$(echo "$url" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)*' | head -1)"
 }
 
+resolve_powershell7() {
+  # Opt-in only (commented out in tools.yaml by default). GitHub's releases/latest endpoint
+  # excludes prereleases, so this is always the current stable release (not necessarily LTS).
+  local json url
+  json=$(curl -sL --max-time 30 "https://api.github.com/repos/PowerShell/PowerShell/releases/latest")
+  url=$(echo "$json" | grep -oE '"browser_download_url": *"[^"]*PowerShell-[0-9.]+-win-x64\.msi"' | head -1 | sed -E 's/.*"(https[^"]+)"/\1/')
+  [[ -n "$url" ]] || { echo "ERROR: could not find a PowerShell win-x64 MSI asset in the latest GitHub release" >&2; return 1; }
+  DL_URL="$url"
+  DL_VERSION="$(echo "$url" | grep -oE 'PowerShell-[0-9.]+' | head -1 | sed 's/PowerShell-//; s/\.$//')"
+}
+
 resolve_chrome() {
   # Google's own permanent, always-latest-stable URL - no version parsing possible or needed.
   DL_URL="https://dl.google.com/chrome/install/GoogleChromeStandaloneEnterprise64.msi"
@@ -169,6 +180,7 @@ fetch_tool() {
     winscp) resolve_winscp ;;
     notepadplusplus) resolve_notepadplusplus ;;
     chrome) resolve_chrome ;;
+    powershell7) resolve_powershell7 ;;
     datadog-agent) resolve_datadog_agent ;;
     *) echo "ERROR: no resolver for tool '$name'" >&2; return 1 ;;
   esac
@@ -186,6 +198,7 @@ if [[ "$MODE" == "Install" ]]; then
       winscp)           fetch_tool "winscp" "winscp.exe" ;;
       notepadplusplus)  fetch_tool "notepadplusplus" "notepadplusplus.msi" ;;
       chrome)           fetch_tool "chrome" "chrome.msi" ;;
+      powershell7)      fetch_tool "powershell7" "powershell7.msi" ;;
       datadog-agent)    fetch_tool "datadog-agent" "datadog-agent.msi" ;;
       *) echo "WARNING: no known installer for tool '$t' listed in ${TOOLS_YAML_PATH} - skipping" >&2 ;;
     esac

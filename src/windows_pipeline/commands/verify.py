@@ -54,8 +54,12 @@ TOOL_DETECT_PATTERNS = {
     "winscp": "^WinSCP",
     "notepadplusplus": "^Notepad\\+\\+",
     "chrome": "^Google Chrome$",
+    "powershell7": "^PowerShell 7-x64$",
     "datadog-agent": "^Datadog Agent$",
 }
+
+# Opt-in tools (commented out in tools.yaml by default) - reported, but absence isn't a failure.
+OPTIONAL_TOOLS = {"powershell7"}
 
 
 def _check_connectivity(session) -> list[CheckResult]:
@@ -208,7 +212,13 @@ def _check_tools(session) -> list[CheckResult]:
         return [CheckResult("tools", False, "could not parse tool status output")]
 
     results = [
-        CheckResult(name, versions.get(name) is not None, f"version {versions.get(name)}" if versions.get(name) else "not installed")
+        CheckResult(
+            name,
+            versions.get(name) is not None or name in OPTIONAL_TOOLS,
+            f"version {versions.get(name)}" if versions.get(name)
+            else "not installed (optional)" if name in OPTIONAL_TOOLS
+            else "not installed",
+        )
         for name in TOOL_DETECT_PATTERNS
     ]
 

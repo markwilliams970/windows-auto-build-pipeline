@@ -1,6 +1,7 @@
 # Phase 4 tool installer (project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md). Runs from the mounted delivery ISO
 # built by image-apply/install-tools.sh, which stages each installer under a normalized filename
-# (7zip.msi, putty.msi, winscp.exe, notepadplusplus.msi, chrome.msi, datadog-agent.msi) so this
+# (7zip.msi, putty.msi, winscp.exe, notepadplusplus.msi, chrome.msi, powershell7.msi,
+# datadog-agent.msi) so this
 # script never needs to glob-match an unpredictable, version-numbered upstream filename - only
 # datadog-agent's tools.yaml-pinned version varies at the CRUD-idempotency level (see Install-Tool
 # below); the other five always install whichever version install-tools.sh happened to fetch this
@@ -56,6 +57,18 @@ $ToolSpecs = @{
         InstallArgs   = "/qn /norestart NOGOOGLEUPDATEPING=1"
         DetectPattern = "^Google Chrome$"
     }
+    "powershell7" = @{
+        # Opt-in only (commented out in tools.yaml by default). Installs pwsh.exe side-by-side -
+        # Windows PowerShell 5.1 is untouched and stays the default. Deliberately NOT passing
+        # ENABLE_PSREMOTING=1: that runs Enable-PSRemoting/Register-PSSessionConfiguration, which
+        # restarts WinRM underneath this very WinRM session (and is the documented StopPending
+        # hang trigger from the Server 2019 specialize investigation) - this pipeline's own WinRM
+        # calls use the plain WinRS shell and never need a PowerShell 7 remoting endpoint anyway.
+        File          = "powershell7.msi"
+        Type          = "msi"
+        InstallArgs   = "/qn /norestart ADD_PATH=1"
+        DetectPattern = "^PowerShell 7-x64$"
+    }
     "datadog-agent" = @{
         File          = "datadog-agent.msi"
         Type          = "msi"
@@ -108,7 +121,7 @@ function Read-ToolsYaml {
 
 function Get-ToolStatus {
     # Read. Registry Uninstall-key scan - see this file's own header for why Win32_Product is
-    # never used here. All six tools install system-wide, so HKCU paths aren't needed.
+    # never used here. All tools install system-wide, so HKCU paths aren't needed.
     param([string]$DetectPattern)
 
     $match = Get-ItemProperty -Path @(
@@ -128,7 +141,7 @@ function Get-ToolStatus {
 
 function Install-Tool {
     # Create/Update, idempotent. Two different idempotency rules (see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md
-    # B.3): the five floating-latest tools skip if ANY version is already present (re-running this
+    # B.3): the floating-latest tools skip if ANY version is already present (re-running this
     # script is a no-op for them, never a forced upgrade); datadog-agent skips only if the present
     # version exactly matches tools.yaml's pinned agent_version, otherwise reinstalls to converge
     # (relying on the MSI engine's own upgrade-in-place behavior for a same-UpgradeCode product).
