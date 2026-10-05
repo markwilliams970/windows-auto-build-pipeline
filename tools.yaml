@@ -10,11 +10,13 @@ tools:
   # - powershell7   # opt-in, NOT installed by default - uncomment to install PowerShell 7
   #                  # (pwsh.exe) side-by-side with the built-in Windows PowerShell 5.1, which
   #                  # stays the system default either way. Latest stable release from GitHub.
+  # - vscode        # opt-in, NOT installed by default - uncomment to install Visual Studio Code
+  #                  # (System Installer, all users, added to PATH). Latest stable from Microsoft.
 
 # Applies to all four target OSes uniformly - no per-OS exclusion list (unlike services.yaml's
 # Server-only roles). See project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md.
 #
-# 7zip/putty/winscp/chrome/notepadplusplus/powershell7 always install whatever is currently the latest
+# 7zip/putty/winscp/chrome/notepadplusplus/powershell7/vscode always install whatever is currently the latest
 # release from each vendor - install-tools.sh resolves this host-side, fresh, on every build
 # (see project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md's A.3/A.1-revision - these churn too fast to usefully pin).
 #

@@ -5,7 +5,7 @@
 # just before this), so this script needs no OS branching in its own QEMU device model at all,
 # unlike inject-virtio-spice.sh.
 #
-# All tools except datadog-agent (7zip/putty/winscp/chrome/notepadplusplus/powershell7) are deliberately NOT pinned or
+# All tools except datadog-agent (7zip/putty/winscp/chrome/notepadplusplus/powershell7/vscode) are deliberately NOT pinned or
 # cached in ../iso_cache/ - they churn far faster than the Windows ISOs that convention exists for,
 # and pinning them would just relocate the staleness problem this project's own
 # "Version-sensitivity and brittleness" standard already warns about. Instead this script resolves
@@ -157,6 +157,17 @@ resolve_powershell7() {
   DL_VERSION="$(echo "$url" | grep -oE 'PowerShell-[0-9.]+' | head -1 | sed 's/PowerShell-//; s/\.$//')"
 }
 
+resolve_vscode() {
+  # Opt-in only (commented out in tools.yaml by default). Microsoft's own permanent "latest stable,
+  # 64-bit System Installer" URL redirects to a version-numbered VSCodeSetup-x64-<ver>.exe; the
+  # System (not User) installer is what installs for all users under Program Files.
+  local redirect
+  redirect=$(curl -sIL --max-time 30 -o /dev/null -w '%{url_effective}' "https://update.code.visualstudio.com/latest/win32-x64/stable")
+  [[ "$redirect" == *VSCodeSetup-x64-*.exe ]] || { echo "ERROR: could not resolve the current VS Code System Installer URL (got: $redirect)" >&2; return 1; }
+  DL_URL="$redirect"
+  DL_VERSION="$(echo "$redirect" | grep -oE 'VSCodeSetup-x64-[0-9.]+' | sed 's/VSCodeSetup-x64-//; s/\.$//')"
+}
+
 resolve_chrome() {
   # Google's own permanent, always-latest-stable URL - no version parsing possible or needed.
   DL_URL="https://dl.google.com/chrome/install/GoogleChromeStandaloneEnterprise64.msi"
@@ -181,6 +192,7 @@ fetch_tool() {
     notepadplusplus) resolve_notepadplusplus ;;
     chrome) resolve_chrome ;;
     powershell7) resolve_powershell7 ;;
+    vscode) resolve_vscode ;;
     datadog-agent) resolve_datadog_agent ;;
     *) echo "ERROR: no resolver for tool '$name'" >&2; return 1 ;;
   esac
@@ -199,6 +211,7 @@ if [[ "$MODE" == "Install" ]]; then
       notepadplusplus)  fetch_tool "notepadplusplus" "notepadplusplus.msi" ;;
       chrome)           fetch_tool "chrome" "chrome.msi" ;;
       powershell7)      fetch_tool "powershell7" "powershell7.msi" ;;
+      vscode)           fetch_tool "vscode" "vscode.exe" ;;
       datadog-agent)    fetch_tool "datadog-agent" "datadog-agent.msi" ;;
       *) echo "WARNING: no known installer for tool '$t' listed in ${TOOLS_YAML_PATH} - skipping" >&2 ;;
     esac

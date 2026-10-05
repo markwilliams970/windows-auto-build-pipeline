@@ -55,11 +55,12 @@ TOOL_DETECT_PATTERNS = {
     "notepadplusplus": "^Notepad\\+\\+",
     "chrome": "^Google Chrome$",
     "powershell7": "^PowerShell 7-x64$",
+    "vscode": "^Microsoft Visual Studio Code$",
     "datadog-agent": "^Datadog Agent$",
 }
 
 # Opt-in tools (commented out in tools.yaml by default) - reported, but absence isn't a failure.
-OPTIONAL_TOOLS = {"powershell7"}
+OPTIONAL_TOOLS = {"powershell7", "vscode"}
 
 
 def _check_connectivity(session) -> list[CheckResult]:

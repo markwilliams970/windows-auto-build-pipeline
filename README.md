@@ -251,6 +251,7 @@ tools:
   - notepadplusplus
   - datadog-agent   # requires DD_API_KEY - see below
   # - powershell7   # opt-in - uncomment to install PowerShell 7 alongside 5.1
+  # - vscode        # opt-in - uncomment to install Visual Studio Code
 
 datadog:
   agent_version: "7.83.0"
@@ -272,6 +273,11 @@ can matter for monitoring-integration test comparability across builds.
 It installs `pwsh.exe` side-by-side - Windows PowerShell 5.1 stays the system default, and this
 pipeline's own WinRM provisioning keeps running under 5.1. `windows-pipeline verify` reports it
 but doesn't fail when it's absent.
+
+**Visual Studio Code is opt-in too.** Uncomment `vscode` in `tools.yaml` to install the latest
+stable VS Code System Installer from Microsoft - installed for all users, added to `PATH`, with the
+Explorer "Open with Code" menu entries. Like PowerShell 7, `verify` reports it but doesn't fail
+when it's absent.
 
 **The Datadog Agent needs a real API key.** Set `DD_API_KEY` in the environment before running
 `windows-pipeline create` (or `image-apply/install-tools.sh` directly) whenever `datadog-agent` is

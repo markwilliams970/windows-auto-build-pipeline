@@ -1,7 +1,7 @@
 # Phase 4 tool installer (project_documentation/PHASE4_TOOLS_INSTALLER_PLAN.md). Runs from the mounted delivery ISO
 # built by image-apply/install-tools.sh, which stages each installer under a normalized filename
 # (7zip.msi, putty.msi, winscp.exe, notepadplusplus.msi, chrome.msi, powershell7.msi,
-# datadog-agent.msi) so this
+# vscode.exe, datadog-agent.msi) so this
 # script never needs to glob-match an unpredictable, version-numbered upstream filename - only
 # datadog-agent's tools.yaml-pinned version varies at the CRUD-idempotency level (see Install-Tool
 # below); the other five always install whichever version install-tools.sh happened to fetch this
@@ -68,6 +68,19 @@ $ToolSpecs = @{
         Type          = "msi"
         InstallArgs   = "/qn /norestart ADD_PATH=1"
         DetectPattern = "^PowerShell 7-x64$"
+    }
+    "vscode" = @{
+        # Opt-in only (commented out in tools.yaml by default). VS Code's System Installer is Inno
+        # Setup, same as WinSCP. MERGETASKS starts with !runcode so the installer doesn't try to
+        # launch Code at the end - this runs in WinRM's non-interactive Session 0. The other tasks
+        # add Code to PATH and the Explorer "Open with Code" context menus. The DisplayName is
+        # exactly "Microsoft Visual Studio Code" for the System Installer (the per-user installer
+        # registers as "... (User)" under HKCU instead), hence the anchored pattern.
+        File          = "vscode.exe"
+        Type          = "inno"
+        InstallArgs   = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!runcode,addcontextmenufiles,addcontextmenufolders,addtopath"
+        UninstallArgs = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART"
+        DetectPattern = "^Microsoft Visual Studio Code$"
     }
     "datadog-agent" = @{
         File          = "datadog-agent.msi"
