@@ -57,7 +57,7 @@ os_driver_subfolder() {
 
 os_disk_size_gb() {
   case "$1" in
-    server2019|server2022|server2025) echo 40 ;;
+    server2019|server2022|server2025) echo 80 ;;
     windows11) echo 64 ;;
     *) echo "os_disk_size_gb: unknown OS '$1'" >&2; return 1 ;;
   esac
